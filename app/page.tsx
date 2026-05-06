@@ -470,10 +470,7 @@ const toggleDayInEdit = (day: string) => {
     </div>
   )
 }
-
-function TaskBox({ task, profiles, todayDate, onUpdate, onEdit }: any) {
-  const isLate = task.status !== 'concluido' && task.due_date && task.due_date < todayDate;
-  
+function TaskBox({ task, profiles, todayDate, onUpdate, onEdit, isLate }: any) {
   const toggle = async () => {
     const newStatus = task.status === 'concluido' ? 'pendente' : 'concluido'
     await supabase.from('tasks').update({ status: newStatus }).eq('id', task.id)
@@ -495,7 +492,8 @@ function TaskBox({ task, profiles, todayDate, onUpdate, onEdit }: any) {
       </button>
 
       <div className="flex-1 min-w-0">
-        <h3 className={`text-xl font-black leading-tight tracking-tight truncate ${task.status === 'concluido' ? 'line-through text-slate-400' : 'text-slate-900'}`}>{task.title}</h3>
+        <h3 className={`text-xl font-black leading-tight truncate ${task.status === 'concluido' ? 'line-through text-slate-400' : isLate ? 'text-red-900' : 'text-slate-900'}`}>
+          {task.title}</h3>
         {task.notes && <p className="text-sm font-bold mt-1 text-slate-600 line-clamp-1">{task.notes}</p>}
         <div className="flex flex-wrap gap-2 mt-2">
 <span className="bg-slate-900 text-white text-[9px] font-black px-2 py-1 rounded uppercase flex items-center gap-1 shadow-sm">
@@ -536,7 +534,6 @@ function DashboardCard({ label, val, color }: any) {
     </div>
   )
 }
-
 function Login() {
   const [email, setEmail] = useState(''); const [password, setPassword] = useState(''); const [isSignUp, setIsSignUp] = useState(false)
   const processAuth = async () => {
@@ -558,7 +555,6 @@ function Login() {
           </button>
         </div>
       </div>
-      {/* MODAL DE EDIÇÃO DE TAREFA */}
     </div>
   )
 }
