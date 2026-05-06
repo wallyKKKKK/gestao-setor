@@ -15,6 +15,7 @@ export default function App() {
   const [newName, setNewName] = useState('')
   const [editingTask, setEditingTask] = useState<any>(null); // Armazena a tarefa que está sendo editada
   const [showEditModal, setShowEditModal] = useState(false);
+  const [dashFilter, setDashFilter] = useState<'HOJE' | 'SEMANAL'>('HOJE');
 
   // Estados de Interface
   const [activeTab, setActiveTab] = useState('HOJE')
@@ -158,14 +159,45 @@ async function updateTask() {
   const daysMap = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'];
   const todayTag = daysMap[today.getDay()];
 
-  const stats = {
-  total: tasks.length,
-  concluidas: tasks.filter(t => t.status === 'concluido').length,
-  pendentes: tasks.filter(t => t.status === 'pendente').length,
-  atrasadas: tasks.filter(t => t.status !== 'concluido' && t.due_date && t.due_date < todayDate).length,
-  // A proteção || 0 impede erro se não houver tarefas
-  porcentagem: tasks.length > 0 ? Math.round((tasks.filter(t => t.status === 'concluido').length / tasks.length) * 100) : 0
-};
+  // Lógica para o Dashboard
+const stats = (() => {
+  const today = new Date();
+  today.setHours(0,0,0,0);
+  const daysMap = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'];
+  const todayTag = daysMap[today.getDay()];
+
+  // Função para saber se a semana da tarefa é a semana atual
+  const isCorrectWeek = (task: any) => {
+    if (!task.created_at || task.repeat_interval <= 1) return true;
+    const startDate = new Date(task.created_at);
+    const startMonday = new Date(startDate);
+    startMonday.setDate(startDate.getDate() - (startDate.getDay() === 0 ? 6 : startDate.getDay() - 1));
+    const diffInWeeks = Math.floor((today.getTime() - startMonday.getTime()) / (1000 * 3600 * 24 * 7));
+    return diffInWeeks % task.repeat_interval === 0;
+  };
+
+  // Filtra as tarefas baseadas no período escolhido (Hoje ou Semana)
+  const relevantTasks = tasks.filter(task => {
+    const taskDays = task.repeat_days ? task.repeat_days.split(',') : [];
+    
+    if (dashFilter === 'HOJE') {
+      return (taskDays.includes(todayTag) && isCorrectWeek(task)) || task.due_date === today.toISOString().split('T')[0];
+    } else {
+      // SEMANAL: Qualquer tarefa que tenha algum dia marcado e caia nesta semana do intervalo
+      return (taskDays.length > 0 && isCorrectWeek(task)) || (task.due_date && task.due_date >= today.toISOString().split('T')[0]);
+    }
+  });
+
+  const total = relevantTasks.length;
+  const concluidas = relevantTasks.filter(t => t.status === 'concluido').length;
+  
+  return {
+    total,
+    concluidas,
+    pendentes: total - concluidas,
+    porcentagem: total > 0 ? Math.round((concluidas / total) * 100) : 0
+  };
+})();
 
   const filteredTasks = tasks.filter(task => {
   const today = new Date();
@@ -204,6 +236,16 @@ async function updateTask() {
   return task.category === activeTab;
 });
 
+const toggleDayInEdit = (day: string) => {
+  if (!editingTask) return;
+  const currentDays = editingTask.repeat_days ? editingTask.repeat_days.split(',') : [];
+  const newDays = currentDays.includes(day) 
+    ? currentDays.filter(d => d !== day) 
+    : [...currentDays, day];
+  
+  setEditingTask({ ...editingTask, repeat_days: newDays.join(',') });
+};
+
   if (!user) return <Login />
 
   return (
@@ -241,27 +283,40 @@ async function updateTask() {
       </div>
 
       <main className="max-w-4xl mx-auto p-4">
-        {activeTab === 'DASHBOARD' ? (
-          /* DASHBOARD COMPLETO */
-          <div className="mt-6 space-y-6">
-            <h2 className="text-3xl font-black uppercase italic tracking-tighter flex items-center gap-3">
-               <TrendingUp className="text-blue-600" size={32}/> Performance do Setor
-            </h2>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <DashboardCard label="Total" val={stats.total} color="border-slate-900 bg-white" />
-              <DashboardCard label="Concluídas" val={stats.concluidas} color="border-green-600 bg-green-50 text-green-700" />
-              <DashboardCard label="Pendentes" val={stats.pendentes} color="border-blue-600 bg-blue-50 text-blue-700" />
-              <DashboardCard label="Atrasadas" val={stats.atrasadas} color="border-red-600 bg-red-50 text-red-600" />
-            </div>
-            <div className="bg-white p-8 rounded-[40px] border-4 border-slate-900 shadow-xl text-center">
-               <p className="text-xs font-black uppercase text-slate-400 mb-2 tracking-widest">Progresso Geral</p>
-               <h3 className="text-7xl font-black mb-4">{stats.porcentagem}%</h3>
-               <div className="w-full bg-slate-100 h-10 rounded-2xl border-4 border-slate-900 overflow-hidden">
-                  <div className="bg-green-500 h-full transition-all duration-1000" style={{ width: `${stats.porcentagem}%` }} />
-               </div>
-            </div>
-          </div>
-        ) : (
+        {activeTab === 'DASHBOARD' && (
+  <div className="mt-6 space-y-6 animate-in fade-in duration-500">
+    <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+      <h2 className="text-3xl font-black uppercase italic tracking-tighter">Performance</h2>
+      
+      {/* Botões de Filtro do Dashboard */}
+      <div className="flex bg-slate-200 p-1 rounded-2xl border-2 border-slate-900 shadow-sm">
+        <button 
+          onClick={() => setDashFilter('HOJE')}
+          className={`px-6 py-2 rounded-xl font-black text-xs uppercase transition-all ${dashFilter === 'HOJE' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-500'}`}
+        >Hoje</button>
+        <button 
+          onClick={() => setDashFilter('SEMANAL')}
+          className={`px-6 py-2 rounded-xl font-black text-xs uppercase transition-all ${dashFilter === 'SEMANAL' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-500'}`}
+        >Semanal</button>
+      </div>
+    </div>
+
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <DashboardCard label={`Total ${dashFilter}`} val={stats.total} color="border-slate-900 bg-white" />
+      <DashboardCard label="Concluídas" val={stats.concluidas} color="border-green-600 bg-green-50 text-green-700" />
+      <DashboardCard label="Pendentes" val={stats.pendentes} color="border-blue-600 bg-blue-50 text-blue-700" />
+    </div>
+
+    {/* Barra de Progresso */}
+    <div className="bg-white p-10 rounded-[40px] border-4 border-slate-900 shadow-xl text-center">
+       <p className="text-xs font-black uppercase text-slate-400 mb-2">Meta de Conclusão {dashFilter}</p>
+       <h3 className="text-8xl font-black mb-6 tracking-tighter">{stats.porcentagem}%</h3>
+       <div className="w-full bg-slate-100 h-12 rounded-2xl border-4 border-slate-900 overflow-hidden shadow-inner">
+          <div className="bg-green-500 h-full transition-all duration-1000" style={{ width: `${stats.porcentagem}%` }} />
+       </div>
+    </div>
+  </div>
+)}
           <>
             {/* BOX DE CRIAÇÃO RESTAURADO E COMPLETO */}
             <div className="bg-white p-6 rounded-3xl border-4 border-slate-900 shadow-xl mb-10 mt-4 transition-all">
@@ -381,6 +436,35 @@ const isLate = task.status !== 'concluido' && (
             value={editingTask.notes || ''}
             onChange={e => setEditingTask({...editingTask, notes: e.target.value})}
           />
+          {/* Dentro do Modal de Edição, adicione este bloco abaixo das Notas */}
+<div className="space-y-2">
+  <label className="text-[10px] font-black uppercase text-slate-400 ml-1 italic">Alterar Dias de Execução</label>
+  <div className="flex gap-2">
+    {weekDays.map(day => (
+      <button 
+        key={day.id} 
+        onClick={() => toggleDayInEdit(day.id)} 
+        className={`w-12 h-12 rounded-xl font-black border-4 transition-all shadow-md ${
+          editingTask.repeat_days?.split(',').includes(day.id) 
+          ? 'bg-blue-600 border-blue-600 text-white scale-110' 
+          : 'bg-white border-slate-200 text-slate-400 opacity-50'
+        }`}
+      >
+        {day.label}
+      </button>
+    ))}
+  </div>
+</div>
+
+<div className="flex flex-col">
+  <label className="text-[10px] font-black uppercase text-slate-400 mb-1 ml-1">Alterar Intervalo (Semanas)</label>
+  <input 
+    type="number" 
+    className="p-4 bg-slate-100 rounded-2xl font-black border-2 border-slate-200 text-slate-900" 
+    value={editingTask.repeat_interval || 1} 
+    onChange={e => setEditingTask({...editingTask, repeat_interval: parseInt(e.target.value) || 1})} 
+  />
+</div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
