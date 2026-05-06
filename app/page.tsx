@@ -3,7 +3,8 @@ import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { 
   Plus, Trash2, CheckCircle2, Circle, LayoutDashboard, 
-  LogOut, Calendar, Tag, User, Repeat, X, Check, AlertCircle, TrendingUp
+  LogOut, Calendar, Tag, User, Repeat, X, Check, AlertCircle, TrendingUp,
+  Edit3
 } from 'lucide-react'
 
 export default function App() {
@@ -158,12 +159,13 @@ async function updateTask() {
   const todayTag = daysMap[today.getDay()];
 
   const stats = {
-    total: tasks.length,
-    concluidas: tasks.filter(t => t.status === 'concluido').length,
-    pendentes: tasks.filter(t => t.status === 'pendente').length,
-    atrasadas: tasks.filter(t => t.status !== 'concluido' && t.due_date && t.due_date < todayDate).length,
-    porcentagem: tasks.length > 0 ? Math.round((tasks.filter(t => t.status === 'concluido').length / tasks.length) * 100) : 0
-  }
+  total: tasks.length,
+  concluidas: tasks.filter(t => t.status === 'concluido').length,
+  pendentes: tasks.filter(t => t.status === 'pendente').length,
+  atrasadas: tasks.filter(t => t.status !== 'concluido' && t.due_date && t.due_date < todayDate).length,
+  // A proteção || 0 impede erro se não houver tarefas
+  porcentagem: tasks.length > 0 ? Math.round((tasks.filter(t => t.status === 'concluido').length / tasks.length) * 100) : 0
+};
 
   const filteredTasks = tasks.filter(task => {
   const today = new Date();
@@ -172,12 +174,15 @@ async function updateTask() {
   const daysMap = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'];
   const todayIdx = today.getDay(); 
 
-  // --- TRAVA DE SEGURANÇA: Se não houver repeat_days, usamos um array vazio ---
-  const repeatDaysArray = task.repeat_days ? task.repeat_days.split(',') : [];
+  // --- GARANTIA: Se o banco retornar nulo, transformamos em valores seguros ---
+  const repeatDays = task.repeat_days || "";
+  const repeatInterval = task.repeat_interval || 1;
+  const status = task.status || "pendente";
+  const dueDate = task.due_date || "";
 
-  const isLate = task.status !== 'concluido' && (
-    (task.due_date && task.due_date < todayDate) || 
-    (repeatDaysArray.some((day: string) => {
+  const isLate = status !== 'concluido' && (
+    (dueDate !== "" && dueDate < todayDate) ||
+    (repeatDays !== "" && repeatDays.split(',').some((day: string) => {
       const taskDayIdx = daysMap.indexOf(day);
       return taskDayIdx !== -1 && taskDayIdx < todayIdx;
     }))
@@ -186,10 +191,9 @@ async function updateTask() {
   if (activeTab === 'ATRASADOS') return isLate;
 
   if (activeTab === 'HOJE') {
-    if (task.status === 'concluido') return false;
-    // Usamos o ?. para não travar se for nulo
-    const matchesDay = repeatDaysArray.includes(daysMap[todayIdx]);
-    const matchesDate = task.due_date === todayDate;
+    if (status === 'concluido') return false;
+    const matchesDay = repeatDays.split(',').includes(daysMap[todayIdx]);
+    const matchesDate = dueDate === todayDate;
     return matchesDay || matchesDate;
   }
   
@@ -443,9 +447,12 @@ function TaskBox({ task, profiles, todayDate, onUpdate, onEdit }: any) {
         <h3 className={`text-xl font-black leading-tight tracking-tight truncate ${task.status === 'concluido' ? 'line-through text-slate-400' : 'text-slate-900'}`}>{task.title}</h3>
         {task.notes && <p className="text-sm font-bold mt-1 text-slate-600 line-clamp-1">{task.notes}</p>}
         <div className="flex flex-wrap gap-2 mt-2">
-          <span className="bg-slate-900 text-white text-[9px] font-black px-2 py-1 rounded uppercase flex items-center gap-1 shadow-sm">
-            <User size={10}/> {profiles.find((p: any) => p.id === task.assigned_to)?.full_name || 'Alocado'}
-          </span>
+          // Substitua o trecho do nome do usuário por este:
+<span className="bg-slate-900 text-white text-[9px] font-black px-2 py-1 rounded uppercase flex items-center gap-1 shadow-sm">
+  <User size={10}/> 
+  {/* O ?. impede que o site quebre se não encontrar o perfil */}
+  {profiles.find((p: any) => p.id === task.assigned_to)?.full_name || 'Alocado'}
+</span>
           <span className="bg-blue-100 text-blue-800 text-[9px] font-black px-2 py-1 rounded uppercase tracking-widest border border-blue-200">{task.category}</span>
         </div>
       </div>
