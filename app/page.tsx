@@ -364,6 +364,34 @@ const toggleDayInEdit = (day: string) => {
               {filteredTasks.map(task => (
                 <TaskBox key={task.id} task={task} profiles={profiles} todayDate={todayDate} onUpdate={fetchTasks} onEdit={(t: any) => { setEditingTask(t); setShowEditModal(true); }} />
               ))}
+              {filteredTasks.map(task => {
+  // --- CÁLCULO DE ATRASO PARA PINTAR O CARD ---
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayDate = today.toISOString().split('T')[0];
+  const daysMap = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'];
+  const todayIdx = today.getDay();
+
+  const isLate = task.status !== 'concluido' && (
+    (task.due_date && task.due_date < todayDate) ||
+    (task.repeat_days && task.repeat_days.split(',').some((day: string) => {
+      const taskDayIdx = daysMap.indexOf(day);
+      return taskDayIdx !== -1 && taskDayIdx < todayIdx;
+    }))
+  );
+
+  return (
+    <TaskBox 
+      key={task.id} 
+      task={task} 
+      isLate={isLate} // AGORA O COMPONENTE RECEBE A INFORMAÇÃO
+      profiles={profiles} 
+      todayDate={todayDate} 
+      onUpdate={fetchTasks} 
+      onEdit={(t: any) => { setEditingTask(t); setShowEditModal(true); }} 
+    />
+  );
+})}
             </div>
           </>
         )}
