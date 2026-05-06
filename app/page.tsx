@@ -170,40 +170,25 @@ async function updateTask() {
   today.setHours(0, 0, 0, 0);
   const todayDate = today.toISOString().split('T')[0];
   const daysMap = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'];
-  const todayIdx = today.getDay();
+  const todayIdx = today.getDay(); 
 
-  const checkWeek = () => {
-    if (!task.created_at || task.repeat_interval <= 1) return true;
-    const startDate = new Date(task.created_at);
-    startDate.setHours(0, 0, 0, 0);
-    // Ajusta a data de início para a segunda-feira daquela semana para padronizar o cálculo
-    const startMonday = new Date(startDate);
-    startMonday.setDate(startDate.getDate() - (startDate.getDay() === 0 ? 6 : startDate.getDay() - 1));
-    
-    const diffInWeeks = Math.floor((today.getTime() - startMonday.getTime()) / (1000 * 3600 * 24 * 7));
-    return diffInWeeks % task.repeat_interval === 0;
-  };
+  // --- TRAVA DE SEGURANÇA: Se não houver repeat_days, usamos um array vazio ---
+  const repeatDaysArray = task.repeat_days ? task.repeat_days.split(',') : [];
 
-  const isCorrectWeek = checkWeek();
-
-  // --- LÓGICA DE ATRASO REAL ---
   const isLate = task.status !== 'concluido' && (
-    // 1. Atraso de data fixa
     (task.due_date && task.due_date < todayDate) || 
-    // 2. Atraso de recorrência: É a semana certa E o dia da semana já passou
-    (isCorrectWeek && task.repeat_days && task.repeat_days.split(',').some((day: string) => { // Adicionado : string
-  const taskDayIdx = daysMap.indexOf(day);
-  return taskDayIdx !== -1 && taskDayIdx < todayIdx;
-}))
+    (repeatDaysArray.some((day: string) => {
+      const taskDayIdx = daysMap.indexOf(day);
+      return taskDayIdx !== -1 && taskDayIdx < todayIdx;
+    }))
   );
 
-  // --- REGRAS DAS ABAS ---
   if (activeTab === 'ATRASADOS') return isLate;
 
   if (activeTab === 'HOJE') {
     if (task.status === 'concluido') return false;
-    // Aparece hoje se: (Bate o dia da semana E a semana está ativa) OU (A data fixa é hoje)
-    const matchesDay = isCorrectWeek && task.repeat_days?.split(',').includes(daysMap[todayIdx]);
+    // Usamos o ?. para não travar se for nulo
+    const matchesDay = repeatDaysArray.includes(daysMap[todayIdx]);
     const matchesDate = task.due_date === todayDate;
     return matchesDay || matchesDate;
   }
