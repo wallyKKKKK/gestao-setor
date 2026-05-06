@@ -130,6 +130,21 @@ async function updateProfile() {
   if (error) alert(error.message)
   else { setTaskTitle(''); setNotes(''); setSelectedDays([]); fetchTasks(); }
 }
+async function toggleComplete(task: any) {
+  const todayDate = new Date().toISOString().split('T')[0];
+  const isCurrentlyDone = task.last_done_date === todayDate;
+  const newDate = isCurrentlyDone ? null : todayDate;
+
+  const { error } = await supabase
+    .from('tasks')
+    .update({ 
+      last_done_date: newDate,
+      status: newDate ? 'concluido' : 'pendente' 
+    })
+    .eq('id', task.id);
+
+  if (!error) fetchTasks();
+}
 async function updateTask() {
   if (!editingTask.title) return alert("O título não pode ser vazio!");
 
@@ -206,33 +221,23 @@ const stats = (() => {
   const daysMap = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'];
   const todayIdx = today.getDay(); 
 
-  // --- GARANTIA: Se o banco retornar nulo, transformamos em valores seguros ---
-  const repeatDays = task.repeat_days || "";
-  const repeatInterval = task.repeat_interval || 1;
-  const status = task.status || "pendente";
-  const dueDate = task.due_date || "";
+  // TAREFA FEITA HOJE?
+  const isDoneToday = task.last_done_date === todayDate;
 
-  const isLate = status !== 'concluido' && (
-    (dueDate !== "" && dueDate < todayDate) ||
-    (repeatDays !== "" && repeatDays.split(',').some((day: string) => {
-      const taskDayIdx = daysMap.indexOf(day);
-      return taskDayIdx !== -1 && taskDayIdx < todayIdx;
-    }))
+  // ESTÁ ATRASADA? (Se não foi feita hoje e o dia já passou)
+  const isLate = !isDoneToday && (
+    (task.due_date && task.due_date < todayDate) ||
+    (task.repeat_days?.split(',').some((day: string) => daysMap.indexOf(day) > 0 && daysMap.indexOf(day) < todayIdx))
   );
 
   if (activeTab === 'ATRASADOS') return isLate;
-
   if (activeTab === 'HOJE') {
-    if (status === 'concluido') return false;
-    const matchesDay = repeatDays.split(',').includes(daysMap[todayIdx]);
-    const matchesDate = dueDate === todayDate;
-    return matchesDay || matchesDate;
+    const matchesDay = task.repeat_days?.split(',').includes(daysMap[todayIdx]);
+    const matchesDate = task.due_date === todayDate;
+    return (matchesDay || matchesDate) && !isDoneToday; // Some se já fez hoje
   }
-  
   if (activeTab === 'Minhas') return task.assigned_to === user?.id;
   if (activeTab === 'Todas') return true;
-  if (activeTab === 'DASHBOARD') return false;
-  
   return task.category === activeTab;
 });
 
@@ -471,60 +476,38 @@ const toggleDayInEdit = (day: string) => {
   )
 }
 function TaskBox({ task, profiles, todayDate, onUpdate, onEdit, isLate }: any) {
-  const toggle = async () => {
-    const newStatus = task.status === 'concluido' ? 'pendente' : 'concluido'
-    await supabase.from('tasks').update({ status: newStatus }).eq('id', task.id)
-    onUpdate()
-  }
+  const isDoneToday = task.last_done_date === todayDate;
 
   return (
-    <div className={`p-6 rounded-[32px] border-4 shadow-lg transition-all flex items-center gap-4 relative group ${
-      task.status === 'concluido' ? 'bg-green-50 border-green-600 opacity-60' : 
+    <div className={`p-6 rounded-[32px] border-4 shadow-lg transition-all flex items-center gap-4 relative ${
+      isDoneToday ? 'bg-green-50 border-green-600 opacity-60' : 
       isLate ? 'bg-red-50 border-red-600 animate-pulse' : 'bg-white border-slate-900'
     }`}>
-      {isLate && <AlertCircle className="absolute -top-3 -right-3 text-red-600 bg-white rounded-full shadow-sm" size={28} />}
-      
-      <button onClick={toggle} className={`w-12 h-12 rounded-xl border-4 flex items-center justify-center transition-all flex-shrink-0 ${
-        task.status === 'concluido' ? 'bg-green-600 border-green-600 text-white' : 
+      <button onClick={() => toggleComplete(task)} className={`w-12 h-12 rounded-xl border-4 flex items-center justify-center transition-all ${
+        isDoneToday ? 'bg-green-600 border-green-600 text-white' : 
         isLate ? 'border-red-600 text-red-600' : 'border-slate-900 text-transparent'
       }`}>
         <CheckCircle2 size={30} />
       </button>
 
       <div className="flex-1 min-w-0">
-        <h3 className={`text-xl font-black leading-tight truncate ${task.status === 'concluido' ? 'line-through text-slate-400' : isLate ? 'text-red-900' : 'text-slate-900'}`}>
-          {task.title}</h3>
-        {task.notes && <p className="text-sm font-bold mt-1 text-slate-600 line-clamp-1">{task.notes}</p>}
-        <div className="flex flex-wrap gap-2 mt-2">
-<span className="bg-slate-900 text-white text-[9px] font-black px-2 py-1 rounded uppercase flex items-center gap-1 shadow-sm">
-  <User size={10}/> 
-  {/* O ?. impede que o site quebre se não encontrar o perfil */}
-  {profiles.find((p: any) => p.id === task.assigned_to)?.full_name || 'Alocado'}
-</span>
-          <span className="bg-blue-100 text-blue-800 text-[9px] font-black px-2 py-1 rounded uppercase tracking-widest border border-blue-200">{task.category}</span>
+        <h3 className={`text-xl font-black leading-tight ${isDoneToday ? 'line-through text-slate-400' : 'text-slate-900'}`}>{task.title}</h3>
+        <div className="flex flex-wrap gap-2 mt-3">
+          <span className="bg-slate-900 text-white text-[9px] font-black px-2 py-1 rounded-lg uppercase flex items-center gap-1">
+            <User size={10}/> {profiles.find((p: any) => p.id === task.assigned_to)?.full_name || 'Alocado'}
+          </span>
+          <span className="bg-blue-600 text-white text-[9px] font-black px-2 py-1 rounded-lg uppercase flex items-center gap-1 border-2 border-blue-400 shadow-sm">
+            <Calendar size={10}/> PRÓXIMA: {getNextOccurrence(task)}
+          </span>
+          <span className="bg-slate-100 text-slate-900 text-[9px] font-black px-2 py-1 rounded-lg uppercase tracking-widest border border-slate-200">{task.category}</span>
         </div>
       </div>
-
-      {/* ÁREA DOS BOTÕES (LADO DIREITO) */}
-      <div className="flex items-center gap-1">
-        {/* BOTÃO EDITAR (O NOVO) */}
-        <button 
-          onClick={() => onEdit(task)} 
-          className="text-slate-300 hover:text-blue-600 transition-all p-2 rounded-xl hover:bg-blue-50"
-        >
-          <Edit3 size={24}/>
-        </button>
-
-        {/* BOTÃO EXCLUIR */}
-        <button 
-          onClick={async () => { if(confirm('Deseja excluir?')) { await supabase.from('tasks').delete().eq('id', task.id); onUpdate(); } }} 
-          className="text-slate-200 hover:text-red-600 transition-all p-2 rounded-xl hover:bg-red-50"
-        >
-          <Trash2 size={24}/>
-        </button>
+      <div className="flex gap-1">
+        <button onClick={() => onEdit(task)} className="text-slate-300 hover:text-blue-600 p-2"><Edit3/></button>
+        <button onClick={async () => { if(confirm('Excluir?')) { await supabase.from('tasks').delete().eq('id', task.id); onUpdate(); } }} className="text-slate-200 hover:text-red-600 p-2"><Trash2/></button>
       </div>
     </div>
-  )
+  );
 }
 function DashboardCard({ label, val, color }: any) {
   return (
@@ -534,6 +517,35 @@ function DashboardCard({ label, val, color }: any) {
     </div>
   )
 }
+const getNextOccurrence = (task: any) => {
+  if (!task.repeat_days || task.repeat_days.length === 0) return task.due_date ? new Date(task.due_date).toLocaleDateString('pt-BR') : 'Sem data';
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  
+  const daysMap: { [key: string]: number } = { seg: 1, ter: 2, qua: 3, qui: 4, sex: 5 };
+  const taskDays = task.repeat_days.split(',').map((d: string) => daysMap[d]);
+  
+  const startDate = new Date(task.created_at);
+  startDate.setHours(0, 0, 0, 0);
+  
+  const startMonday = new Date(startDate);
+  startMonday.setDate(startDate.getDate() - (startDate.getDay() === 0 ? 6 : startDate.getDay() - 1));
+
+  for (let w = 0; w < 52; w += (task.repeat_interval || 1)) {
+    const currentWeekMonday = new Date(startMonday);
+    currentWeekMonday.setDate(startMonday.getDate() + (w * 7));
+
+    for (let dayOffset of taskDays) {
+      const occurrence = new Date(currentWeekMonday);
+      occurrence.setDate(currentWeekMonday.getDate() + (dayOffset - 1));
+      if (occurrence >= today) {
+        return occurrence.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+      }
+    }
+  }
+  return 'Ciclo longo';
+};
 function Login() {
   const [email, setEmail] = useState(''); const [password, setPassword] = useState(''); const [isSignUp, setIsSignUp] = useState(false)
   const processAuth = async () => {
