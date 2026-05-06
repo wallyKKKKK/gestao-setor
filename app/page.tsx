@@ -283,117 +283,87 @@ const toggleDayInEdit = (day: string) => {
       </div>
 
       <main className="max-w-4xl mx-auto p-4">
-        {activeTab === 'DASHBOARD' && (
-  <div className="mt-6 space-y-6 animate-in fade-in duration-500">
-    <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-      <h2 className="text-3xl font-black uppercase italic tracking-tighter">Performance</h2>
-      
-      {/* Botões de Filtro do Dashboard */}
-      <div className="flex bg-slate-200 p-1 rounded-2xl border-2 border-slate-900 shadow-sm">
-        <button 
-          onClick={() => setDashFilter('HOJE')}
-          className={`px-6 py-2 rounded-xl font-black text-xs uppercase transition-all ${dashFilter === 'HOJE' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-500'}`}
-        >Hoje</button>
-        <button 
-          onClick={() => setDashFilter('SEMANAL')}
-          className={`px-6 py-2 rounded-xl font-black text-xs uppercase transition-all ${dashFilter === 'SEMANAL' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-500'}`}
-        >Semanal</button>
-      </div>
-    </div>
+        {activeTab === 'DASHBOARD' ? (
+          /* --- TELA DO DASHBOARD --- */
+          <div className="mt-6 space-y-6 animate-in fade-in duration-500">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+              <h2 className="text-3xl font-black uppercase italic tracking-tighter flex items-center gap-2">
+                <TrendingUp className="text-blue-600"/> Performance
+              </h2>
+              
+              {/* Botões de Filtro do Dashboard */}
+              <div className="flex bg-slate-200 p-1 rounded-2xl border-2 border-slate-900 shadow-sm">
+                <button 
+                  onClick={() => setDashFilter('HOJE')}
+                  className={`px-6 py-2 rounded-xl font-black text-xs uppercase transition-all ${dashFilter === 'HOJE' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-500'}`}
+                >Hoje</button>
+                <button 
+                  onClick={() => setDashFilter('SEMANAL')}
+                  className={`px-6 py-2 rounded-xl font-black text-xs uppercase transition-all ${dashFilter === 'SEMANAL' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-500'}`}
+                >Semanal</button>
+              </div>
+            </div>
 
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-      <DashboardCard label={`Total ${dashFilter}`} val={stats.total} color="border-slate-900 bg-white" />
-      <DashboardCard label="Concluídas" val={stats.concluidas} color="border-green-600 bg-green-50 text-green-700" />
-      <DashboardCard label="Pendentes" val={stats.pendentes} color="border-blue-600 bg-blue-50 text-blue-700" />
-    </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <DashboardCard label={`Total ${dashFilter}`} val={stats.total} color="border-slate-900 bg-white" />
+              <DashboardCard label="Concluídas" val={stats.concluidas} color="border-green-600 bg-green-50 text-green-700" />
+              <DashboardCard label="Pendentes" val={stats.pendentes} color="border-blue-600 bg-blue-50 text-blue-700" />
+            </div>
 
-    {/* Barra de Progresso */}
-    <div className="bg-white p-10 rounded-[40px] border-4 border-slate-900 shadow-xl text-center">
-       <p className="text-xs font-black uppercase text-slate-400 mb-2">Meta de Conclusão {dashFilter}</p>
-       <h3 className="text-8xl font-black mb-6 tracking-tighter">{stats.porcentagem}%</h3>
-       <div className="w-full bg-slate-100 h-12 rounded-2xl border-4 border-slate-900 overflow-hidden shadow-inner">
-          <div className="bg-green-500 h-full transition-all duration-1000" style={{ width: `${stats.porcentagem}%` }} />
-       </div>
-    </div>
-  </div>
-)}
+            <div className="bg-white p-10 rounded-[40px] border-4 border-slate-900 shadow-xl text-center font-sans">
+               <p className="text-xs font-black uppercase text-slate-400 mb-2 tracking-widest">Taxa de Conclusão {dashFilter}</p>
+               <h3 className="text-8xl font-black mb-6 tracking-tighter text-slate-900">{stats.porcentagem}%</h3>
+               <div className="w-full bg-slate-100 h-12 rounded-2xl border-4 border-slate-900 overflow-hidden shadow-inner">
+                  <div className="bg-green-500 h-full transition-all duration-1000" style={{ width: `${stats.porcentagem}%` }} />
+               </div>
+            </div>
+          </div>
+        ) : (
+          /* --- LISTAGEM DE TAREFAS (OUTRAS ABAS) --- */
           <>
-            {/* BOX DE CRIAÇÃO RESTAURADO E COMPLETO */}
-            <div className="bg-white p-6 rounded-3xl border-4 border-slate-900 shadow-xl mb-10 mt-4 transition-all">
-              <input className="w-full text-3xl font-black outline-none mb-2 border-b-4 border-slate-100 focus:border-blue-500 pb-2 text-slate-900 uppercase" placeholder="NOME DA TAREFA..." value={taskTitle} onChange={e => setTaskTitle(e.target.value)} />
-              
-              <textarea className="w-full mt-4 p-4 bg-slate-50 rounded-2xl font-bold text-slate-800 border-2 border-slate-200 outline-none focus:border-blue-400 transition-all placeholder-slate-300" placeholder="Observações e detalhes..." rows={2} value={notes} onChange={e => setNotes(e.target.value)} />
-              
+            <div className="bg-white p-6 rounded-3xl border-4 border-slate-900 shadow-xl mb-10 mt-4">
+              <input className="w-full text-2xl font-black outline-none mb-2 border-b-4 border-slate-100 focus:border-blue-500 pb-2 text-slate-900" placeholder="NOME DA TAREFA..." value={taskTitle} onChange={e => setTaskTitle(e.target.value)} />
+              <textarea className="w-full mt-4 p-4 bg-slate-50 rounded-2xl font-bold text-slate-800 border-2 border-slate-200 outline-none" placeholder="Observações..." rows={2} value={notes} onChange={e => setNotes(e.target.value)} />
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-6 pt-6 border-t-2 border-slate-100">
-                {/* RESPONSÁVEL E CATEGORIA */}
                 <div className="space-y-4">
                   <div className="flex flex-col">
                     <label className="text-[10px] font-black uppercase text-slate-400 mb-1 ml-1">Responsável</label>
-                    <select className="p-3 bg-slate-100 rounded-xl font-black border-2 border-slate-200 text-slate-900" value={assignedTo} onChange={e => setAssignedTo(e.target.value)}>
+                    <select className="p-3 bg-slate-100 rounded-xl font-black border-2 border-slate-200 text-slate-900 shadow-sm" value={assignedTo} onChange={e => setAssignedTo(e.target.value)}>
                       {profiles.map(p => <option key={p.id} value={p.id}>{p.full_name || p.id.slice(0,5)}</option>)}
                     </select>
                   </div>
                   <div className="flex flex-col">
                     <label className="text-[10px] font-black uppercase text-slate-400 mb-1 ml-1">Categoria</label>
-                    <select className="p-3 bg-slate-100 rounded-xl font-black border-2 border-slate-200 text-slate-900" value={category} onChange={e => setCategory(e.target.value)}>
+                    <select className="p-3 bg-slate-100 rounded-xl font-black border-2 border-slate-200 text-slate-900 shadow-sm" value={category} onChange={e => setCategory(e.target.value)}>
                       <option>Trade</option><option>Reunião</option><option>Geral</option>
                     </select>
                   </div>
                 </div>
-
-                {/* REPETIÇÃO E INTERVALO (RESTAURADO) */}
                 <div className="space-y-4">
-                   <div className="flex flex-col">
-                     <label className="text-[10px] font-black uppercase text-slate-400 mb-1 ml-1">Repetir nos Dias</label>
-                     <div className="flex gap-1.5">
-                       {weekDays.map(day => (
-                         <button key={day.id} onClick={() => setSelectedDays(prev => prev.includes(day.id) ? prev.filter(d => d !== day.id) : [...prev, day.id])} className={`w-9 h-9 rounded-xl font-black border-2 transition-all ${selectedDays.includes(day.id) ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-slate-200 text-slate-400'}`}>
-                           {day.label}
-                         </button>
-                       ))}
-                     </div>
+                   <label className="text-[10px] font-black uppercase text-slate-400 mb-1 ml-1">Repetir nos Dias</label>
+                   <div className="flex gap-2">
+                     {weekDays.map(day => (
+                       <button key={day.id} onClick={() => toggleDay(day.id)} className={`w-10 h-10 rounded-xl font-black border-2 transition-all ${selectedDays.includes(day.id) ? 'bg-blue-600 border-blue-600 text-white shadow-md' : 'bg-white border-slate-200 text-slate-400'}`}>
+                         {day.label}
+                       </button>
+                     ))}
                    </div>
                    <div className="flex flex-col">
                      <label className="text-[10px] font-black uppercase text-slate-400 mb-1 ml-1">Intervalo (Semanas)</label>
-                     <input type="number" min="1" className="p-3 bg-slate-100 rounded-xl font-black border-2 border-slate-200 text-slate-900" value={repeatInterval} onChange={e => setRepeatInterval(parseInt(e.target.value) || 1)} />
+                     <input type="number" className="p-3 bg-slate-100 rounded-xl font-black border-2 border-slate-200 text-slate-900" value={repeatInterval} onChange={e => setRepeatInterval(parseInt(e.target.value) || 1)} />
                    </div>
                 </div>
-
-                {/* BOTÃO CRIAR */}
-                <button onClick={addTask} className="bg-blue-600 text-white rounded-[32px] font-black uppercase hover:bg-slate-900 transition-all flex flex-col items-center justify-center gap-2 py-6 shadow-xl active:scale-95">
+                <button onClick={addTask} className="bg-blue-600 text-white rounded-3xl font-black uppercase hover:bg-slate-900 transition-all flex flex-col items-center justify-center gap-2 shadow-xl py-6 active:scale-95">
                   <Plus size={40}/> <span className="text-lg">Criar Tarefa</span>
                 </button>
               </div>
             </div>
 
-            {/* LISTA DE TAREFAS */}
             <div className="space-y-4">
               <h2 className="font-black uppercase text-slate-400 text-xs tracking-widest px-2">{activeTab} - {filteredTasks.length} ITENS</h2>
-              {filteredTasks.map(task => {
-  // Repetimos o cálculo para que o componente saiba que deve ficar vermelho
-  const today = new Date();
-  today.setHours(0,0,0,0);
-  const todayIdx = today.getDay();
-  const daysMap = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'];
-
-  // ... dentro do filteredTasks.map
-const isLate = task.status !== 'concluido' && (
-  (task.due_date && task.due_date < today.toISOString().split('T')[0]) ||
-  (task.repeat_days && task.repeat_days.split(',').some((day: string) => daysMap.indexOf(day) < todayIdx)) // Adicionado : string
-);
-
-  return (
-    <TaskBox 
-      key={task.id} 
-      task={task} 
-      isLate={isLate} 
-      profiles={profiles} 
-      todayDate={today.toISOString().split('T')[0]} 
-      onUpdate={fetchTasks}
-      onEdit={(task) => { setEditingTask(task); setShowEditModal(true); }}
-    />
-  );
-})}
+              {filteredTasks.map(task => (
+                <TaskBox key={task.id} task={task} profiles={profiles} todayDate={todayDate} onUpdate={fetchTasks} onEdit={(t: any) => { setEditingTask(t); setShowEditModal(true); }} />
+              ))}
             </div>
           </>
         )}
@@ -402,104 +372,73 @@ const isLate = task.status !== 'concluido' && (
       {/* MODAL PERFIL */}
       {showProfileModal && (
         <div className="fixed inset-0 bg-slate-900/90 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
-          <div className="bg-white p-8 rounded-3xl w-full max-w-sm border-4 border-slate-900 shadow-2xl animate-in zoom-in-95 duration-200">
-            <h2 className="text-2xl font-black uppercase mb-6 tracking-tighter">Configurar Perfil</h2>
-            <input className="w-full p-4 border-4 border-slate-100 rounded-2xl font-black mb-6 text-slate-900 outline-none focus:border-blue-500" placeholder="Nome Completo" value={newName} onChange={e => setNewName(e.target.value)} />
-            <button onClick={updateProfile} className="w-full bg-blue-600 text-white p-4 rounded-2xl font-black uppercase text-lg shadow-lg">Salvar Dados</button>
-            <button onClick={() => setShowProfileModal(false)} className="w-full mt-4 text-slate-400 font-bold uppercase text-[10px] tracking-widest">Fechar</button>
+          <div className="bg-white p-8 rounded-3xl w-full max-w-sm border-4 border-slate-900 shadow-2xl">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-2xl font-black uppercase">Meu Perfil</h2>
+              <button onClick={() => setShowProfileModal(false)}><X/></button>
+            </div>
+            <label className="text-[10px] font-black uppercase text-slate-400">Nome Completo</label>
+            <input className="w-full p-4 border-4 border-slate-100 rounded-2xl font-black mt-1 mb-6 text-slate-900" placeholder="Ex: João Silva" onChange={e => setNewName(e.target.value)} />
+            <button onClick={updateProfile} className="w-full bg-blue-600 text-white p-4 rounded-2xl font-black uppercase flex items-center justify-center gap-2">
+              <Check size={20}/> Salvar Nome
+            </button>
           </div>
         </div>
       )}
+
+      {/* MODAL EDIÇÃO DE TAREFA */}
       {showEditModal && editingTask && (
-  <div className="fixed inset-0 bg-slate-900/90 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
-    <div className="bg-white p-8 rounded-[40px] w-full max-w-2xl border-4 border-slate-900 shadow-2xl overflow-y-auto max-h-[90vh]">
-      <div className="flex justify-between items-center mb-6">
-        <h2 className="text-2xl font-black uppercase tracking-tighter">Editar Tarefa</h2>
-        <button onClick={() => setShowEditModal(false)} className="text-slate-400 hover:text-slate-900"><X size={32}/></button>
-      </div>
+        <div className="fixed inset-0 bg-slate-900/90 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-white p-8 rounded-[40px] w-full max-w-2xl border-4 border-slate-900 shadow-2xl overflow-y-auto max-h-[90vh]">
+            <div className="flex justify-between items-center mb-6 text-slate-900">
+              <h2 className="text-2xl font-black uppercase tracking-tighter italic underline decoration-blue-600">Editar Tarefa</h2>
+              <button onClick={() => setShowEditModal(false)} className="hover:rotate-90 transition-all"><X size={32}/></button>
+            </div>
 
-      <div className="space-y-6">
-        <div>
-          <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Título da Tarefa</label>
-          <input 
-            className="w-full p-4 border-4 border-slate-100 rounded-2xl font-black text-slate-900 text-xl"
-            value={editingTask.title}
-            onChange={e => setEditingTask({...editingTask, title: e.target.value})}
-          />
-        </div>
+            <div className="space-y-6">
+              <div className="flex flex-col">
+                <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Título</label>
+                <input className="w-full p-4 border-4 border-slate-100 rounded-2xl font-black text-slate-900 text-xl" value={editingTask.title} onChange={e => setEditingTask({...editingTask, title: e.target.value})} />
+              </div>
 
-        <div>
-          <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Observações</label>
-          <textarea 
-            className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold text-slate-800"
-            rows={3}
-            value={editingTask.notes || ''}
-            onChange={e => setEditingTask({...editingTask, notes: e.target.value})}
-          />
-          {/* Dentro do Modal de Edição, adicione este bloco abaixo das Notas */}
-<div className="space-y-2">
-  <label className="text-[10px] font-black uppercase text-slate-400 ml-1 italic">Alterar Dias de Execução</label>
-  <div className="flex gap-2">
-    {weekDays.map(day => (
-      <button 
-        key={day.id} 
-        onClick={() => toggleDayInEdit(day.id)} 
-        className={`w-12 h-12 rounded-xl font-black border-4 transition-all shadow-md ${
-          editingTask.repeat_days?.split(',').includes(day.id) 
-          ? 'bg-blue-600 border-blue-600 text-white scale-110' 
-          : 'bg-white border-slate-200 text-slate-400 opacity-50'
-        }`}
-      >
-        {day.label}
-      </button>
-    ))}
-  </div>
-</div>
+              <div className="flex flex-col">
+                <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Observações</label>
+                <textarea className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold text-slate-800" rows={2} value={editingTask.notes || ''} onChange={e => setEditingTask({...editingTask, notes: e.target.value})} />
+              </div>
 
-<div className="flex flex-col">
-  <label className="text-[10px] font-black uppercase text-slate-400 mb-1 ml-1">Alterar Intervalo (Semanas)</label>
-  <input 
-    type="number" 
-    className="p-4 bg-slate-100 rounded-2xl font-black border-2 border-slate-200 text-slate-900" 
-    value={editingTask.repeat_interval || 1} 
-    onChange={e => setEditingTask({...editingTask, repeat_interval: parseInt(e.target.value) || 1})} 
-  />
-</div>
-        </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="flex flex-col">
+                  <label className="text-[10px] font-black uppercase text-slate-400 mb-1">Responsável</label>
+                  <select className="p-3 bg-slate-100 rounded-xl font-black border-2 border-slate-200" value={editingTask.assigned_to} onChange={e => setEditingTask({...editingTask, assigned_to: e.target.value})}>
+                    {profiles.map(p => <option key={p.id} value={p.id}>{p.full_name || p.id.slice(0,5)}</option>)}
+                  </select>
+                </div>
+                <div className="flex flex-col">
+                  <label className="text-[10px] font-black uppercase text-slate-400 mb-1">Categoria</label>
+                  <select className="p-3 bg-slate-100 rounded-xl font-black border-2 border-slate-200" value={editingTask.category} onChange={e => setEditingTask({...editingTask, category: e.target.value})}>
+                    <option>Trade</option><option>Reunião</option><option>Geral</option>
+                  </select>
+                </div>
+              </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="flex flex-col">
-            <label className="text-[10px] font-black uppercase text-slate-400 mb-1">Responsável</label>
-            <select 
-              className="p-3 bg-slate-100 rounded-xl font-black border-2 border-slate-200"
-              value={editingTask.assigned_to}
-              onChange={e => setEditingTask({...editingTask, assigned_to: e.target.value})}
-            >
-              {profiles.map(p => <option key={p.id} value={p.id}>{p.full_name || p.id.slice(0,5)}</option>)}
-            </select>
-          </div>
-          <div className="flex flex-col">
-            <label className="text-[10px] font-black uppercase text-slate-400 mb-1">Categoria</label>
-            <select 
-              className="p-3 bg-slate-100 rounded-xl font-black border-2 border-slate-200"
-              value={editingTask.category}
-              onChange={e => setEditingTask({...editingTask, category: e.target.value})}
-            >
-              <option>Trade</option><option>Reunião</option><option>Geral</option>
-            </select>
+              <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Alterar Dias</label>
+                <div className="flex gap-2">
+                  {weekDays.map(day => (
+                    <button key={day.id} onClick={() => toggleDayInEdit(day.id)} className={`w-12 h-12 rounded-xl font-black border-4 transition-all ${editingTask.repeat_days?.split(',').includes(day.id) ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-slate-200 text-slate-400'}`}>
+                      {day.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <button onClick={updateTask} className="w-full bg-slate-900 text-white p-5 rounded-3xl font-black uppercase text-xl shadow-xl hover:bg-blue-600 transition-all flex items-center justify-center gap-2">
+                <Check size={28}/> Salvar Mudanças
+              </button>
+            </div>
           </div>
         </div>
-
-        <button 
-          onClick={updateTask}
-          className="w-full bg-blue-600 text-white p-5 rounded-3xl font-black uppercase text-xl shadow-xl hover:bg-slate-900 transition-all flex items-center justify-center gap-2"
-        >
-          <Check size={28}/> Salvar Alterações
-        </button>
-      </div>
-    </div>
-  </div>
-)}
+      )}
     </div>
   )
 }
