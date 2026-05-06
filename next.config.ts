@@ -2,13 +2,10 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   typescript: {
-    // Isso ignora erros de TypeScript durante o deploy (importante para o seu caso)
+    // Isso vai permitir que o site suba mesmo com avisos de tipos
     ignoreBuildErrors: true,
   },
-  eslint: {
-    // Isso ignora avisos de formatação que podem travar o site
-    ignoreDuringBuilds: true,
-  },
+  // Removemos o bloco 'eslint' daqui para evitar o erro que você recebeu
 };
 
 export default nextConfig;

@@ -12,6 +12,8 @@ export default function App() {
   const [tasks, setTasks] = useState<any[]>([])
   const [showProfileModal, setShowProfileModal] = useState(false)
   const [newName, setNewName] = useState('')
+  const [editingTask, setEditingTask] = useState<any>(null); // Armazena a tarefa que está sendo editada
+  const [showEditModal, setShowEditModal] = useState(false);
 
   // Estados de Interface
   const [activeTab, setActiveTab] = useState('HOJE')
@@ -24,12 +26,11 @@ export default function App() {
   const [category, setCategory] = useState('Trade')
   const [repeatInterval, setRepeatInterval] = useState(1) // INTERVALO RESTAURADO
   const [selectedDays, setSelectedDays] = useState<string[]>([])
-
+  
   const weekDays = [
     { id: 'seg', label: 'S' }, { id: 'ter', label: 'T' }, 
     { id: 'qua', label: 'Q' }, { id: 'qui', label: 'Q' }, { id: 'sex', label: 'S' }
   ]
-
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user) {
@@ -127,7 +128,29 @@ async function updateProfile() {
   if (error) alert(error.message)
   else { setTaskTitle(''); setNotes(''); setSelectedDays([]); fetchTasks(); }
 }
+async function updateTask() {
+  if (!editingTask.title) return alert("O título não pode ser vazio!");
 
+  const { error } = await supabase
+    .from('tasks')
+    .update({ 
+      title: editingTask.title.toUpperCase(),
+      notes: editingTask.notes,
+      assigned_to: editingTask.assigned_to,
+      category: editingTask.category,
+      repeat_days: editingTask.repeat_days,
+      repeat_interval: editingTask.repeat_interval
+    })
+    .eq('id', editingTask.id);
+
+  if (error) {
+    alert("Erro ao atualizar: " + error.message);
+  } else {
+    setShowEditModal(false);
+    setEditingTask(null);
+    fetchTasks(); // Recarrega a lista
+  }
+}
   // LOGICA DE DATAS E DASHBOARD
   const today = new Date();
   const todayDate = today.toISOString().split('T')[0];
@@ -322,7 +345,8 @@ const isLate = task.status !== 'concluido' && (
       isLate={isLate} 
       profiles={profiles} 
       todayDate={today.toISOString().split('T')[0]} 
-      onUpdate={fetchTasks} 
+      onUpdate={fetchTasks}
+      onEdit={(task) => { setEditingTask(task); setShowEditModal(true); }}
     />
   );
 })}
@@ -342,11 +366,72 @@ const isLate = task.status !== 'concluido' && (
           </div>
         </div>
       )}
+      {showEditModal && editingTask && (
+  <div className="fixed inset-0 bg-slate-900/90 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+    <div className="bg-white p-8 rounded-[40px] w-full max-w-2xl border-4 border-slate-900 shadow-2xl overflow-y-auto max-h-[90vh]">
+      <div className="flex justify-between items-center mb-6">
+        <h2 className="text-2xl font-black uppercase tracking-tighter">Editar Tarefa</h2>
+        <button onClick={() => setShowEditModal(false)} className="text-slate-400 hover:text-slate-900"><X size={32}/></button>
+      </div>
+
+      <div className="space-y-6">
+        <div>
+          <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Título da Tarefa</label>
+          <input 
+            className="w-full p-4 border-4 border-slate-100 rounded-2xl font-black text-slate-900 text-xl"
+            value={editingTask.title}
+            onChange={e => setEditingTask({...editingTask, title: e.target.value})}
+          />
+        </div>
+
+        <div>
+          <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Observações</label>
+          <textarea 
+            className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold text-slate-800"
+            rows={3}
+            value={editingTask.notes || ''}
+            onChange={e => setEditingTask({...editingTask, notes: e.target.value})}
+          />
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="flex flex-col">
+            <label className="text-[10px] font-black uppercase text-slate-400 mb-1">Responsável</label>
+            <select 
+              className="p-3 bg-slate-100 rounded-xl font-black border-2 border-slate-200"
+              value={editingTask.assigned_to}
+              onChange={e => setEditingTask({...editingTask, assigned_to: e.target.value})}
+            >
+              {profiles.map(p => <option key={p.id} value={p.id}>{p.full_name || p.id.slice(0,5)}</option>)}
+            </select>
+          </div>
+          <div className="flex flex-col">
+            <label className="text-[10px] font-black uppercase text-slate-400 mb-1">Categoria</label>
+            <select 
+              className="p-3 bg-slate-100 rounded-xl font-black border-2 border-slate-200"
+              value={editingTask.category}
+              onChange={e => setEditingTask({...editingTask, category: e.target.value})}
+            >
+              <option>Trade</option><option>Reunião</option><option>Geral</option>
+            </select>
+          </div>
+        </div>
+
+        <button 
+          onClick={updateTask}
+          className="w-full bg-blue-600 text-white p-5 rounded-3xl font-black uppercase text-xl shadow-xl hover:bg-slate-900 transition-all flex items-center justify-center gap-2"
+        >
+          <Check size={28}/> Salvar Alterações
+        </button>
+      </div>
+    </div>
+  </div>
+)}
     </div>
   )
 }
 
-function TaskBox({ task, profiles, todayDate, onUpdate }: any) {
+function TaskBox({ task, profiles, todayDate, onUpdate, onEdit }: any) {
   const isLate = task.status !== 'concluido' && task.due_date && task.due_date < todayDate;
   
   const toggle = async () => {
@@ -360,38 +445,47 @@ function TaskBox({ task, profiles, todayDate, onUpdate }: any) {
       task.status === 'concluido' ? 'bg-green-50 border-green-600 opacity-60' : 
       isLate ? 'bg-red-50 border-red-600 animate-pulse' : 'bg-white border-slate-900'
     }`}>
-      {isLate && <div className="absolute -top-3 -right-3 bg-red-600 text-white p-1 rounded-full border-2 border-white"><AlertCircle size={24} /></div>}
+      {isLate && <AlertCircle className="absolute -top-3 -right-3 text-red-600 bg-white rounded-full shadow-sm" size={28} />}
       
-      <button onClick={toggle} className={`w-14 h-14 rounded-2xl border-4 flex items-center justify-center transition-all flex-shrink-0 ${
+      <button onClick={toggle} className={`w-12 h-12 rounded-xl border-4 flex items-center justify-center transition-all flex-shrink-0 ${
         task.status === 'concluido' ? 'bg-green-600 border-green-600 text-white' : 
         isLate ? 'border-red-600 text-red-600' : 'border-slate-900 text-transparent'
       }`}>
-        <CheckCircle2 size={36} />
+        <CheckCircle2 size={30} />
       </button>
 
       <div className="flex-1 min-w-0">
-        <h3 className={`text-2xl font-black leading-tight tracking-tight truncate ${task.status === 'concluido' ? 'line-through text-slate-400' : 'text-slate-900'}`}>{task.title}</h3>
-        {task.notes && <p className={`text-sm font-bold mt-1 line-clamp-2 ${task.status === 'concluido' ? 'text-green-700/50' : 'text-slate-600'}`}>{task.notes}</p>}
-        
-        <div className="flex flex-wrap gap-2 mt-3 font-black text-[9px] uppercase tracking-widest">
-          <span className="bg-slate-900 text-white px-2 py-1 rounded-lg flex items-center gap-1 shadow-sm">
+        <h3 className={`text-xl font-black leading-tight tracking-tight truncate ${task.status === 'concluido' ? 'line-through text-slate-400' : 'text-slate-900'}`}>{task.title}</h3>
+        {task.notes && <p className="text-sm font-bold mt-1 text-slate-600 line-clamp-1">{task.notes}</p>}
+        <div className="flex flex-wrap gap-2 mt-2">
+          <span className="bg-slate-900 text-white text-[9px] font-black px-2 py-1 rounded uppercase flex items-center gap-1 shadow-sm">
             <User size={10}/> {profiles.find((p: any) => p.id === task.assigned_to)?.full_name || 'Alocado'}
           </span>
-          <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded-lg border border-blue-200">{task.category}</span>
-          {task.repeat_days && (
-            <span className="bg-white text-slate-400 border border-slate-200 px-2 py-1 rounded-lg flex items-center gap-1">
-              <Repeat size={10}/> {task.repeat_days} (1/{task.repeat_interval}S)
-            </span>
-          )}
-          {isLate && <span className="bg-red-600 text-white px-2 py-1 rounded-lg shadow-sm">ATRASADO</span>}
+          <span className="bg-blue-100 text-blue-800 text-[9px] font-black px-2 py-1 rounded uppercase tracking-widest border border-blue-200">{task.category}</span>
         </div>
       </div>
 
-      <button onClick={async () => { if(confirm('Deseja excluir?')) { await supabase.from('tasks').delete().eq('id', task.id); onUpdate(); } }} className="text-slate-200 hover:text-red-600 transition-all p-2"><Trash2 size={24}/></button>
+      {/* ÁREA DOS BOTÕES (LADO DIREITO) */}
+      <div className="flex items-center gap-1">
+        {/* BOTÃO EDITAR (O NOVO) */}
+        <button 
+          onClick={() => onEdit(task)} 
+          className="text-slate-300 hover:text-blue-600 transition-all p-2 rounded-xl hover:bg-blue-50"
+        >
+          <Edit3 size={24}/>
+        </button>
+
+        {/* BOTÃO EXCLUIR */}
+        <button 
+          onClick={async () => { if(confirm('Deseja excluir?')) { await supabase.from('tasks').delete().eq('id', task.id); onUpdate(); } }} 
+          className="text-slate-200 hover:text-red-600 transition-all p-2 rounded-xl hover:bg-red-50"
+        >
+          <Trash2 size={24}/>
+        </button>
+      </div>
     </div>
   )
 }
-
 function DashboardCard({ label, val, color }: any) {
   return (
     <div className={`p-6 rounded-[32px] border-4 shadow-xl text-center transition-transform hover:scale-105 ${color}`}>
@@ -422,6 +516,7 @@ function Login() {
           </button>
         </div>
       </div>
+      {/* MODAL DE EDIÇÃO DE TAREFA */}
     </div>
   )
 }
