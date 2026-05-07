@@ -76,9 +76,15 @@ useEffect(() => {
 }, []);
 
   async function fetchTasks() {
-    const { data } = await supabase.from('tasks').select('*').order('created_at', { ascending: false })
-    if (data) setTasks(data)
+  const { data, error } = await supabase.from('tasks').select('*').order('created_at', { ascending: false });
+  if (data) {
+    console.log("Tarefas carregadas do banco:", data.length); // Isso aparecerá no F12 do navegador
+    setTasks(data);
   }
+  if (error) {
+    console.error("Erro ao carregar tarefas:", error);
+  }
+}
 
   async function updateProfile() {
     if (!newName) return alert("Digite um nome!");
