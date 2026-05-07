@@ -131,26 +131,31 @@ export default function App() {
 
   // FILTRO GERAL
   const filteredTasks = tasks.filter(task => {
-    const isDoneToday = task.last_done_date === todayDate;
-    const taskDays = task.repeat_days ? task.repeat_days.split(',') : [];
-    const correctWeek = isCorrectWeek(task);
+  const isDoneToday = task.last_done_date === todayDate;
+  const taskDays = task.repeat_days ? task.repeat_days.split(',') : [];
+  const correctWeek = isCorrectWeek(task);
+  
+  // NOVA REGRA: Ela está agendada para hoje?
+  const isScheduledForToday = (correctWeek && taskDays.includes(todayTag)) || task.due_date === todayDate;
 
-    const isLate = !isDoneToday && (
-      (task.due_date && task.due_date < todayDate) ||
-      (correctWeek && taskDays.some((day: string) => daysMap.indexOf(day) > 0 && daysMap.indexOf(day) < todayIdx))
-    );
+  // SÓ ESTÁ ATRASADA SE: 
+  // 1. Não foi feita hoje
+  // 2. NÃO é o dia dela (porque se for o dia dela, ela está "em dia" para ser feita)
+  // 3. O prazo ou algum dia da semana dela já passou
+  const isLate = !isDoneToday && !isScheduledForToday && (
+    (task.due_date && task.due_date < todayDate) ||
+    (correctWeek && taskDays.some((day: string) => daysMap.indexOf(day) > 0 && daysMap.indexOf(day) < todayIdx))
+  );
 
-    if (activeTab === 'ATRASADOS') return isLate;
-    if (activeTab === 'HOJE') {
-      const matchesDay = correctWeek && taskDays.includes(todayTag);
-      const matchesDate = task.due_date === todayDate;
-      return (matchesDay || matchesDate) && !isDoneToday;
-    }
-    if (activeTab === 'Minhas') return task.assigned_to === user?.id;
-    if (activeTab === 'Todas') return true;
-    if (activeTab === 'DASHBOARD') return false;
-    return task.category === activeTab;
-  });
+  if (activeTab === 'ATRASADOS') return isLate;
+  if (activeTab === 'HOJE') {
+    return isScheduledForToday && !isDoneToday;
+  }
+  if (activeTab === 'Minhas') return task.assigned_to === user?.id;
+  if (activeTab === 'Todas') return true;
+  if (activeTab === 'DASHBOARD') return false;
+  return task.category === activeTab;
+});
 
   // STATS DASHBOARD
   const stats = (() => {
@@ -239,25 +244,32 @@ export default function App() {
             <div className="space-y-4">
               <h2 className="font-black uppercase text-slate-900 text-xs tracking-widest px-2">{activeTab} - {filteredTasks.length} ITENS</h2>
               {filteredTasks.map(task => {
-                const isDoneToday = task.last_done_date === todayDate;
-                const taskDays = task.repeat_days ? task.repeat_days.split(',') : [];
-                const correctWeek = isCorrectWeek(task);
-                const isLate = !isDoneToday && ( (task.due_date && task.due_date < todayDate) || (correctWeek && taskDays.some((day: string) => daysMap.indexOf(day) > 0 && daysMap.indexOf(day) < todayIdx)) );
+  const isDoneToday = task.last_done_date === todayDate;
+  const taskDays = task.repeat_days ? task.repeat_days.split(',') : [];
+  const correctWeek = isCorrectWeek(task);
+  
+  // Repete a lógica para garantir o visual
+  const isScheduledForToday = (correctWeek && taskDays.includes(todayTag)) || task.due_date === todayDate;
 
-                return (
-                  <TaskBox 
-                    key={task.id} 
-                    task={task} 
-                    profiles={profiles} 
-                    todayDate={todayDate} 
-                    onUpdate={fetchTasks} 
-                    isLate={isLate}
-                    isDoneToday={isDoneToday}
-                    onToggle={() => toggleComplete(task)}
-                    onEdit={(t: any) => { setEditingTask(t); setShowEditModal(true); }} 
-                  />
-                )
-              })}
+  const isLate = !isDoneToday && !isScheduledForToday && (
+    (task.due_date && task.due_date < todayDate) ||
+    (correctWeek && taskDays.some((day: string) => daysMap.indexOf(day) > 0 && daysMap.indexOf(day) < todayIdx))
+  );
+
+  return (
+    <TaskBox 
+      key={task.id} 
+      task={task} 
+      profiles={profiles} 
+      todayDate={todayDate} 
+      onUpdate={fetchTasks} 
+      isLate={isLate}
+      isDoneToday={isDoneToday}
+      onToggle={() => toggleComplete(task)}
+      onEdit={(t: any) => { setEditingTask(t); setShowEditModal(true); }} 
+    />
+  )
+})}
             </div>
           </>
         )}
