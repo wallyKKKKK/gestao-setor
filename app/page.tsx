@@ -50,6 +50,30 @@ export default function App() {
     const { data } = await supabase.from('profiles').select('*')
     if (data) setProfiles(data)
   }
+   // Adicione um novo estado no topo do App:
+const [userRole, setUserRole] = useState('membro');
+
+// Atualize o useEffect que verifica a sessão:
+useEffect(() => {
+  supabase.auth.getSession().then(({ data: { session } }) => {
+    if (session?.user) {
+      setUser(session.user);
+      setAssignedTo(session.user.id);
+      
+      // BUSCAR O CARGO DO USUÁRIO
+      supabase
+        .from('profiles')
+        .select('role')
+        .eq('id', session.user.id)
+        .single()
+        .then(({ data }) => {
+          if (data) setUserRole(data.role);
+        });
+        
+      fetchProfiles();
+    }
+  });
+}, []);
 
   async function fetchTasks() {
     const { data } = await supabase.from('tasks').select('*').order('created_at', { ascending: false })
