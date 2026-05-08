@@ -179,7 +179,7 @@ export default function App() {
               <LayoutDashboard size={24} />
             </div>
             <h1 className="text-xl font-black italic tracking-tighter uppercase leading-none">
-              Supply <span className="text-blue-500 text-sm block tracking-widest not-italic font-medium">Task Builder</span>
+              Wally <span className="text-blue-500 text-sm block tracking-widest not-italic font-medium">Task Manager</span>
             </h1>
           </div>
           <div className="flex items-center gap-6">

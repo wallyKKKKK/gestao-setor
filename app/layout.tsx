@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Supply Task Builder",
+  title: "Wally Task Manager",
   description: "Gerenciador de tarefas inteligente",
 };
 
