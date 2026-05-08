@@ -318,24 +318,94 @@ export default function App() {
 }
 
 function TaskBox({ task, profiles, onUpdate, onEdit, isLate, isDoneToday, onToggle, userRole }: any) {
-  const canModify = task.assigned_to === profiles.find((p:any)=>p.id === task.assigned_to)?.id || userRole === 'admin'
-  
+  // Verificação de permissão para Admin ou Dono da tarefa
+  const canModify = userRole === 'admin' || task.assigned_to === profiles.find((p:any)=>p.id === task.assigned_to)?.id;
+
   return (
-    <div className={`p-6 rounded-[32px] border-[3px] transition-all duration-300 flex items-center gap-6 relative group ${isDoneToday ? 'bg-white border-slate-100 opacity-60 grayscale' : isLate ? 'bg-red-50 border-red-500 animate-pulse shadow-[0_0_40px_rgba(239,68,68,0.2)]' : 'bg-white border-slate-900 shadow-[8px_8px_0px_0px_rgba(15,23,42,1)] hover:translate-x-2'}`}>
-      {isLate && <AlertCircle className="absolute -top-3 -right-3 text-red-600 bg-white rounded-full shadow-lg" size={32} />}
-      <button onClick={onToggle} className={`w-16 h-16 rounded-[24px] border-4 flex items-center justify-center transition-all flex-shrink-0 ${isDoneToday ? 'bg-green-500 border-green-500 text-white' : isLate ? 'border-red-500 text-red-500' : 'border-slate-200 text-transparent hover:border-blue-600 hover:text-blue-600/30'}`}><CheckCircle2 size={40} /></button>
+    <div className={`p-6 rounded-[32px] border-[4px] transition-all duration-300 flex items-center gap-6 relative group 
+      ${isDoneToday 
+        ? 'bg-green-50 border-green-600 shadow-[8px_8px_0px_0px_rgba(22,101,52,1)] opacity-90' 
+        : isLate 
+          ? 'bg-red-50 border-red-600 animate-pulse shadow-[8px_8px_0px_0px_rgba(153,27,27,1)]' 
+          : 'bg-white border-slate-900 shadow-[8px_8px_0px_0px_rgba(15,23,42,1)] hover:translate-x-2'
+      }`}
+    >
+      {/* ÍCONE DE ALERTA PARA ATRASADOS */}
+      {isLate && !isDoneToday && (
+        <div className="absolute -top-4 -right-2 bg-red-600 text-white p-1.5 rounded-full border-4 border-white shadow-lg z-10">
+          <AlertCircle size={20} strokeWidth={3} />
+        </div>
+      )}
+      
+      {/* BOTÃO CHECKBOX COLORIDO */}
+      <button 
+        onClick={onToggle} 
+        className={`w-16 h-16 rounded-[22px] border-4 flex items-center justify-center transition-all flex-shrink-0 shadow-sm
+          ${isDoneToday 
+            ? 'bg-green-600 border-green-700 text-white' 
+            : isLate 
+              ? 'bg-white border-red-600 text-red-600 hover:bg-red-600 hover:text-white' 
+              : 'bg-white border-slate-900 text-transparent hover:border-blue-600 hover:text-blue-600/30'
+          }`}
+      >
+        <CheckCircle2 size={40} strokeWidth={3} />
+      </button>
+
+      {/* CONTEÚDO DA TAREFA */}
       <div className="flex-1 min-w-0">
-        <h3 className={`text-2xl font-black leading-tight tracking-tight truncate ${isDoneToday ? 'line-through text-slate-400' : isLate ? 'text-red-900' : 'text-slate-900'}`}>{task.title}</h3>
-        {task.notes && <p className={`text-sm font-bold mt-1 line-clamp-2 ${isDoneToday ? 'text-slate-300' : 'text-slate-500'}`}>{task.notes}</p>}
-        <div className="flex flex-wrap gap-2 mt-4">
-          <div className="flex items-center gap-1.5 bg-slate-100 px-3 py-1.5 rounded-lg border-2 border-slate-200 text-[10px] font-black uppercase text-slate-600"><User size={12} className="text-blue-500"/> {profiles.find((p: any) => p.id === task.assigned_to)?.full_name || 'Alocado'}</div>
-          <div className="flex items-center gap-1.5 bg-blue-50 px-3 py-1.5 rounded-lg border-2 border-blue-100 text-[10px] font-black uppercase text-blue-600"><Calendar size={12}/> PRÓXIMA: {getNextOccurrence(task)}</div>
-          <div className="flex items-center gap-1.5 bg-slate-100 px-3 py-1.5 rounded-lg border-2 border-slate-200 text-[10px] font-black uppercase text-slate-900">{task.category}</div>
+        <h3 className={`text-2xl font-black leading-tight tracking-tight truncate 
+          ${isDoneToday 
+            ? 'line-through text-green-900/50' 
+            : isLate ? 'text-red-900' : 'text-slate-900'
+          }`}
+        >
+          {task.title}
+        </h3>
+        
+        {task.notes && (
+          <p className={`text-sm font-bold mt-1 line-clamp-2 
+            ${isDoneToday ? 'text-green-700/40' : isLate ? 'text-red-700/60' : 'text-slate-500'}`}
+          >
+            {task.notes}
+          </p>
+        )}
+
+        {/* TAGS INFERIORES */}
+        <div className="flex flex-wrap gap-2 mt-4 font-black text-[9px] uppercase tracking-widest">
+          <span className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-sm border-2 
+            ${isDoneToday ? 'bg-green-200 border-green-300 text-green-800' : 'bg-[#0F172A] text-white border-slate-800'}`}>
+            <User size={10}/> {profiles.find((p: any) => p.id === task.assigned_to)?.full_name || 'Alocado'}
+          </span>
+          
+          <span className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 border-2 shadow-sm
+            ${isDoneToday ? 'bg-green-100 border-green-200 text-green-700' : 'bg-blue-600 border-blue-400 text-white'}`}>
+            <Calendar size={10}/> PRÓXIMA: {getNextOccurrence(task)}
+          </span>
+          
+          <span className={`px-3 py-1.5 rounded-lg border-2 shadow-sm
+            ${isDoneToday ? 'bg-green-100 border-green-200 text-green-700' : 'bg-slate-100 border-slate-200 text-slate-900'}`}>
+            {task.category}
+          </span>
         </div>
       </div>
+
+      {/* BOTÕES DE EDIÇÃO/EXCLUSÃO */}
       {canModify && (
-        <div className="flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={() => onEdit(task)} className="text-slate-300 hover:text-blue-600 p-2 hover:bg-blue-50 rounded-xl transition-all"><Edit3 size={24}/></button>
-        <button onClick={async () => { if(confirm('Excluir?')) { await supabase.from('tasks').delete().eq('id', task.id); onUpdate(); } }} className="text-slate-200 hover:text-red-600 p-2 hover:bg-red-50 rounded-xl transition-all"><Trash2 size={24}/></button></div>
+        <div className="flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+          <button 
+            onClick={() => onEdit(task)} 
+            className={`p-2 rounded-xl transition-all border-2 
+              ${isDoneToday ? 'text-green-600 hover:bg-green-200 border-transparent' : 'text-slate-300 hover:text-blue-600 hover:bg-blue-50 border-transparent'}`}
+          >
+            <Edit3 size={24}/>
+          </button>
+          <button 
+            onClick={async () => { if(confirm('Deseja deletar permanentemente?')) { await supabase.from('tasks').delete().eq('id', task.id); onUpdate(); } }} 
+            className="text-slate-200 hover:text-red-600 p-2 hover:bg-red-50 rounded-xl transition-all"
+          >
+            <Trash2 size={24}/>
+          </button>
+        </div>
       )}
     </div>
   )
