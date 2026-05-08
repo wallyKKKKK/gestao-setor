@@ -269,7 +269,7 @@ export default function App() {
           className="w-full h-20 md:h-[calc(100%-10px)] bg-blue-600 hover:bg-[#0F172A] text-white rounded-[24px] font-black uppercase tracking-widest transition-all duration-500 flex flex-row md:flex-col items-center justify-center gap-3 shadow-[0_10px_30px_rgba(37,99,235,0.3)] group active:scale-95"
         >
           <div className="bg-white/20 p-2 md:p-3 rounded-full group-hover:rotate-90 transition-transform duration-500">
-            <Plus size={24} md:size={32} strokeWidth={3} />
+            <Plus className="w-6 h-6 md:w-8 md:h-8" strokeWidth={3} />
           </div>
           <span className="text-sm">Lançar Tarefa</span>
         </button>
