@@ -160,27 +160,26 @@ useEffect(() => {
   };
 
   // FILTRO GERAL
-  const filteredTasks = tasks.filter(task => {
+const filteredTasks = tasks.filter(task => {
   const isDoneToday = task.last_done_date === todayDate;
   const taskDays = task.repeat_days ? task.repeat_days.split(',') : [];
   const correctWeek = isCorrectWeek(task);
   
-  // NOVA REGRA: Ela está agendada para hoje?
+  // REGRA: Ela é pra hoje?
   const isScheduledForToday = (correctWeek && taskDays.includes(todayTag)) || task.due_date === todayDate;
 
-  // SÓ ESTÁ ATRASADA SE: 
-  // 1. Não foi feita hoje
-  // 2. NÃO é o dia dela (porque se for o dia dela, ela está "em dia" para ser feita)
-  // 3. O prazo ou algum dia da semana dela já passou
+  // Lógica de Atraso: Só é atrasada se:
+  // NÃO foi feita hoje E NÃO é o dia dela (hoje) E algum dia dela já passou
   const isLate = !isDoneToday && !isScheduledForToday && (
     (task.due_date && task.due_date < todayDate) ||
-    (correctWeek && taskDays.some((day: string) => daysMap.indexOf(day) > 0 && daysMap.indexOf(day) < todayIdx))
+    (correctWeek && taskDays.some((day: string) => {
+      const dIdx = daysMap.indexOf(day);
+      return dIdx > 0 && dIdx < todayIdx;
+    }))
   );
 
   if (activeTab === 'ATRASADOS') return isLate;
-  if (activeTab === 'HOJE') {
-    return isScheduledForToday && !isDoneToday;
-  }
+  if (activeTab === 'HOJE') return isScheduledForToday && !isDoneToday;
   if (activeTab === 'Minhas') return task.assigned_to === user?.id;
   if (activeTab === 'Todas') return true;
   if (activeTab === 'DASHBOARD') return false;
@@ -278,7 +277,7 @@ useEffect(() => {
   const taskDays = task.repeat_days ? task.repeat_days.split(',') : [];
   const correctWeek = isCorrectWeek(task);
   
-  // Repete a lógica para garantir o visual
+  // Mesma regra de prioridade
   const isScheduledForToday = (correctWeek && taskDays.includes(todayTag)) || task.due_date === todayDate;
 
   const isLate = !isDoneToday && !isScheduledForToday && (
@@ -291,9 +290,8 @@ useEffect(() => {
       key={task.id} 
       task={task} 
       profiles={profiles} 
-      todayDate={todayDate} 
       onUpdate={fetchTasks} 
-      isLate={isLate}
+      isLate={isLate} // AGORA VAI PASSAR "FALSE" SE HOJE FOR QUINTA
       isDoneToday={isDoneToday}
       onToggle={() => toggleComplete(task)}
       onEdit={(t: any) => { setEditingTask(t); setShowEditModal(true); }} 
