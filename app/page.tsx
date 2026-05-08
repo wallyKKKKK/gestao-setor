@@ -206,40 +206,58 @@ const filteredTasks = tasks.filter(task => {
   if (!user) return <Login />
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-900 pb-20 font-sans">
-      <nav className="bg-slate-900 text-white p-4 sticky top-0 z-30 shadow-2xl border-b-4 border-blue-600">
-        <div className="max-w-4xl mx-auto flex justify-between items-center">
-          <div className="flex items-center gap-2"><LayoutDashboard className="text-blue-400" /><h1 className="text-xl font-black italic tracking-tighter">SUPPLY TASK BUILDER</h1></div>
-          <div className="flex items-center gap-4">
-             <button onClick={() => setShowProfileModal(true)} className="flex items-center gap-2 bg-slate-800 px-3 py-1.5 rounded-xl border-2 border-slate-700 hover:border-blue-500 transition-all shadow-sm">
-                <div className="w-6 h-6 bg-blue-600 rounded-full flex items-center justify-center text-[10px] font-black uppercase">{profiles.find(p => p.id === user.id)?.full_name?.charAt(0) || 'U'}</div>
-                <span className="text-xs font-black uppercase tracking-widest hidden md:block">{profiles.find(p => p.id === user.id)?.full_name || 'Meu Perfil'}</span>
-             </button>
-             <button onClick={() => supabase.auth.signOut().then(() => window.location.reload())} className="text-red-500 p-2"><LogOut size={20}/></button>
+  <div className="min-h-screen bg-[#F8FAFC] text-slate-900 pb-20 font-sans">
+    {/* HEADER ULTRA MODERNO */}
+    <nav className="bg-[#0F172A] text-white sticky top-0 z-30 shadow-2xl border-b border-white/10">
+      <div className="max-w-6xl mx-auto px-6 h-20 flex justify-between items-center">
+        <div className="flex items-center gap-3 group cursor-pointer">
+          <div className="bg-blue-600 p-2 rounded-xl group-hover:rotate-12 transition-transform duration-300 shadow-[0_0_20px_rgba(37,99,235,0.4)]">
+            <LayoutDashboard size={24} className="text-white" />
           </div>
+          <h1 className="text-xl font-black italic tracking-tighter uppercase leading-none">
+            Supply <span className="text-blue-500 text-sm block tracking-widest not-italic font-medium">Task Builder</span>
+          </h1>
         </div>
-      </nav>
 
-      {/* MENU DE NAVEGAÇÃO MODERNO (SEGMENTED CONTROL) */}
-<div className="bg-white border-b-2 border-slate-200 sticky top-[68px] z-20 py-3 px-4">
-  <div className="max-w-4xl mx-auto">
-    <div className="bg-slate-100 p-1.5 rounded-[22px] flex gap-1 overflow-x-auto no-scrollbar shadow-inner border border-slate-200">
-      {categories.map(tab => (
-        <button 
-          key={tab} 
-          onClick={() => setActiveTab(tab)} 
-          className={`px-6 py-2.5 rounded-[16px] font-black text-[11px] uppercase tracking-tighter transition-all duration-300 flex-shrink-0 ${
-            activeTab === tab 
-              ? 'bg-white text-blue-600 shadow-[0_4px_12px_rgba(0,0,0,0.1)] scale-100 border border-slate-100' 
-              : 'text-slate-500 hover:text-slate-800 hover:bg-slate-200/50 scale-95'
-          }`}
-        >
-          {tab}
-        </button>
-      ))}
+        <div className="flex items-center gap-6">
+           <button 
+             onClick={() => setShowProfileModal(true)} 
+             className="flex items-center gap-3 bg-white/5 pl-2 pr-4 py-1.5 rounded-full border border-white/10 hover:bg-white/10 hover:border-blue-500/50 transition-all group"
+           >
+              <div className="w-8 h-8 bg-gradient-to-tr from-blue-600 to-indigo-600 rounded-full flex items-center justify-center text-xs font-black shadow-lg">
+                {profiles.find(p => p.id === user.id)?.full_name?.charAt(0) || 'U'}
+              </div>
+              <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-slate-300 group-hover:text-white hidden md:block">
+                {profiles.find(p => p.id === user.id)?.full_name || 'Meu Perfil'}
+              </span>
+           </button>
+           <button onClick={() => supabase.auth.signOut().then(() => window.location.reload())} className="text-slate-400 hover:text-red-400 transition-colors">
+             <LogOut size={20}/>
+           </button>
+        </div>
+      </div>
+    </nav>
+
+    {/* MENU DE ABAS - SEGMENTED CONTROL CORRIGIDO */}
+    <div className="bg-white/80 backdrop-blur-md border-b border-slate-200 sticky top-20 z-20 py-4 px-4">
+      <div className="max-w-6xl mx-auto flex justify-center"> {/* Centraliza o trilho */}
+        <div className="inline-flex bg-slate-200/60 p-1 rounded-[24px] backdrop-blur-sm border border-slate-300/50 shadow-inner overflow-x-auto no-scrollbar max-w-full">
+          {categories.map(tab => (
+            <button 
+              key={tab} 
+              onClick={() => setActiveTab(tab)} 
+              className={`px-6 py-2.5 rounded-[20px] font-black text-[10px] uppercase tracking-wider transition-all duration-500 whitespace-nowrap ${
+                activeTab === tab 
+                  ? 'bg-white text-blue-600 shadow-[0_10px_20px_rgba(0,0,0,0.1)] scale-100 ring-1 ring-slate-200' 
+                  : 'text-slate-500 hover:text-slate-900 scale-95 opacity-70 hover:opacity-100'
+              }`}
+            >
+              {tab}
+            </button>
+          ))}
+        </div>
+      </div>
     </div>
-  </div>
-</div>
 
       <main className="max-w-4xl mx-auto p-4">
         {activeTab === 'DASHBOARD' ? (
