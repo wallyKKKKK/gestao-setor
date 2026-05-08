@@ -161,25 +161,27 @@ useEffect(() => {
 
   // FILTRO GERAL
 const filteredTasks = tasks.filter(task => {
-  const isDoneToday = task.last_done_date === todayDate;
-  const taskDays = task.repeat_days ? task.repeat_days.split(',') : [];
-  const correctWeek = isCorrectWeek(task);
-  
-  // REGRA: Ela é pra hoje?
-  const isScheduledForToday = (correctWeek && taskDays.includes(todayTag)) || task.due_date === todayDate;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayDate = today.toISOString().split('T')[0];
+  const daysMap = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'];
+  const todayTag = daysMap[today.getDay()];
 
-  // Lógica de Atraso: Só é atrasada se:
-  // NÃO foi feita hoje E NÃO é o dia dela (hoje) E algum dia dela já passou
-  const isLate = !isDoneToday && !isScheduledForToday && (
-    (task.due_date && task.due_date < todayDate) ||
-    (correctWeek && taskDays.some((day: string) => {
-      const dIdx = daysMap.indexOf(day);
-      return dIdx > 0 && dIdx < todayIdx;
-    }))
-  );
+  // CÁLCULO DA ÚLTIMA VEZ QUE ELA FOI AGENDADA
+  const lastScheduledDate = getLastOccurrence(task);
+  const lastDoneDate = task.last_done_date ? new Date(task.last_done_date) : new Date(0);
+  
+  // ESTÁ CONCLUÍDA? (Se a data que fiz é a mesma ou depois da data que era pra fazer)
+  const isDone = lastDoneDate >= lastScheduledDate;
+
+  // É PRA FAZER HOJE? (Se a última data agendada é hoje)
+  const isDueToday = lastScheduledDate.getTime() === today.getTime();
+
+  // ESTÁ ATRASADA? (Se não está pronta E a data agendada já passou)
+  const isLate = !isDone && lastScheduledDate < today;
 
   if (activeTab === 'ATRASADOS') return isLate;
-  if (activeTab === 'HOJE') return isScheduledForToday && !isDoneToday;
+  if (activeTab === 'HOJE') return isDueToday && !isDone;
   if (activeTab === 'Minhas') return task.assigned_to === user?.id;
   if (activeTab === 'Todas') return true;
   if (activeTab === 'DASHBOARD') return false;
@@ -273,28 +275,25 @@ const filteredTasks = tasks.filter(task => {
             <div className="space-y-4">
               <h2 className="font-black uppercase text-slate-900 text-xs tracking-widest px-2">{activeTab} - {filteredTasks.length} ITENS</h2>
               {filteredTasks.map(task => {
-  const isDoneToday = task.last_done_date === todayDate;
-  const taskDays = task.repeat_days ? task.repeat_days.split(',') : [];
-  const correctWeek = isCorrectWeek(task);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
   
-  // Mesma regra de prioridade
-  const isScheduledForToday = (correctWeek && taskDays.includes(todayTag)) || task.due_date === todayDate;
-
-  const isLate = !isDoneToday && !isScheduledForToday && (
-    (task.due_date && task.due_date < todayDate) ||
-    (correctWeek && taskDays.some((day: string) => daysMap.indexOf(day) > 0 && daysMap.indexOf(day) < todayIdx))
-  );
+  const lastScheduledDate = getLastOccurrence(task);
+  const lastDoneDate = task.last_done_date ? new Date(task.last_done_date) : new Date(0);
+  
+  const isDone = lastDoneDate >= lastScheduledDate;
+  const isLate = !isDone && lastScheduledDate < today;
 
   return (
     <TaskBox 
       key={task.id} 
       task={task} 
-      profiles={profiles} 
+      isLate={isLate}
+      isDoneToday={isDone} // Agora o 'isDone' mantém o verde por vários dias
       onUpdate={fetchTasks} 
-      isLate={isLate} // AGORA VAI PASSAR "FALSE" SE HOJE FOR QUINTA
-      isDoneToday={isDoneToday}
       onToggle={() => toggleComplete(task)}
       onEdit={(t: any) => { setEditingTask(t); setShowEditModal(true); }} 
+      profiles={profiles}
     />
   )
 })}
@@ -380,6 +379,45 @@ const getNextOccurrence = (task: any) => {
     }
   }
   return '--';
+};
+const getLastOccurrence = (task: any) => {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const daysMap: any = { seg: 1, ter: 2, qua: 3, qui: 4, sex: 5 };
+  
+  if (!task.repeat_days) return task.due_date ? new Date(task.due_date) : new Date(0);
+
+  const taskDays = task.repeat_days.split(',').map((d: string) => daysMap[d]);
+  const startDate = new Date(task.created_at);
+  startDate.setHours(0, 0, 0, 0);
+  const startMonday = new Date(startDate);
+  startMonday.setDate(startDate.getDate() - (startDate.getDay() === 0 ? 6 : startDate.getDay() - 1));
+
+  let lastDate = new Date(0);
+
+  // Varre as semanas desde a criação até hoje
+  for (let w = 0; w < 52; w++) {
+    const isCorrectWeek = w % (task.repeat_interval || 1) === 0;
+    if (isCorrectWeek) {
+      const currentWeekMonday = new Date(startMonday);
+      currentWeekMonday.setDate(startMonday.getDate() + (w * 7));
+
+      for (let dayOffset of taskDays) {
+        const occurrence = new Date(currentWeekMonday);
+        occurrence.setDate(currentWeekMonday.getDate() + (dayOffset - 1));
+        
+        // Se a data da tarefa é no passado ou hoje, ela é uma candidata a "última"
+        if (occurrence <= today) {
+          if (occurrence > lastDate) lastDate = occurrence;
+        }
+      }
+    }
+    // Para de procurar se a semana já passou de hoje
+    const nextWeekMonday = new Date(startMonday);
+    nextWeekMonday.setDate(startMonday.getDate() + ((w + 1) * 7));
+    if (nextWeekMonday > today) break;
+  }
+  return lastDate;
 };
 
 function Login() {
