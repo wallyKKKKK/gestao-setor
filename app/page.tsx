@@ -220,13 +220,26 @@ const filteredTasks = tasks.filter(task => {
         </div>
       </nav>
 
-      <div className="bg-white border-b-4 border-slate-200 sticky top-[68px] z-20 overflow-x-auto no-scrollbar">
-        <div className="max-w-4xl mx-auto flex">
-          {categories.map(tab => (
-            <button key={tab} onClick={() => setActiveTab(tab)} className={`px-6 py-4 font-black text-xs uppercase tracking-tighter border-b-4 transition-all whitespace-nowrap ${activeTab === tab ? 'border-blue-600 text-blue-600 bg-blue-50' : 'border-transparent text-slate-400'}`}>{tab}</button>
-          ))}
-        </div>
-      </div>
+      {/* MENU DE NAVEGAÇÃO MODERNO (SEGMENTED CONTROL) */}
+<div className="bg-white border-b-2 border-slate-200 sticky top-[68px] z-20 py-3 px-4">
+  <div className="max-w-4xl mx-auto">
+    <div className="bg-slate-100 p-1.5 rounded-[22px] flex gap-1 overflow-x-auto no-scrollbar shadow-inner border border-slate-200">
+      {categories.map(tab => (
+        <button 
+          key={tab} 
+          onClick={() => setActiveTab(tab)} 
+          className={`px-6 py-2.5 rounded-[16px] font-black text-[11px] uppercase tracking-tighter transition-all duration-300 flex-shrink-0 ${
+            activeTab === tab 
+              ? 'bg-white text-blue-600 shadow-[0_4px_12px_rgba(0,0,0,0.1)] scale-100 border border-slate-100' 
+              : 'text-slate-500 hover:text-slate-800 hover:bg-slate-200/50 scale-95'
+          }`}
+        >
+          {tab}
+        </button>
+      ))}
+    </div>
+  </div>
+</div>
 
       <main className="max-w-4xl mx-auto p-4">
         {activeTab === 'DASHBOARD' ? (
@@ -338,24 +351,56 @@ const filteredTasks = tasks.filter(task => {
   )
 }
 
-function TaskBox({ task, profiles, onUpdate, onEdit, isLate, isDoneToday, onToggle }: any) {
+function TaskBox({ task, profiles, isLate, isDoneToday, onToggle, onEdit, onUpdate }: any) {
   return (
-    <div className={`p-6 rounded-[32px] border-4 shadow-lg transition-all flex items-center gap-4 relative group ${isDoneToday ? 'bg-green-50 border-green-600 opacity-60' : isLate ? 'bg-red-50 border-red-600 animate-pulse' : 'bg-white border-slate-900'}`}>
-      {isLate && <AlertCircle className="absolute -top-3 -right-3 text-red-600 bg-white rounded-full shadow-sm" size={28} />}
-      <button onClick={onToggle} className={`w-14 h-14 rounded-2xl border-4 flex items-center justify-center transition-all flex-shrink-0 ${isDoneToday ? 'bg-green-600 border-green-600 text-white' : isLate ? 'border-red-600 text-red-600' : 'border-slate-900 text-transparent'}`}><CheckCircle2 size={36} /></button>
+    <div className={`group p-5 rounded-[24px] border-[3px] transition-all duration-300 flex items-center gap-5 relative ${
+      isDoneToday 
+      ? 'bg-white border-slate-100 opacity-60' 
+      : isLate 
+        ? 'bg-red-50 border-red-500 shadow-[4px_4px_0px_0px_rgba(239,68,68,1)]' 
+        : 'bg-white border-slate-900 shadow-[4px_4px_0px_0px_rgba(15,23,42,1)]'
+    }`}>
+      
+      {/* Checkbox Circular Moderno */}
+      <button 
+        onClick={onToggle}
+        className={`w-12 h-12 rounded-full border-[3px] flex items-center justify-center transition-all ${
+          isDoneToday 
+          ? 'bg-green-500 border-green-500 text-white' 
+          : 'border-slate-300 text-transparent hover:border-blue-500'
+        }`}
+      >
+        <Check size={24} strokeWidth={4} />
+      </button>
+
       <div className="flex-1 min-w-0">
-        <h3 className={`text-2xl font-black leading-tight tracking-tight truncate ${isDoneToday ? 'line-through text-slate-400' : 'text-slate-900'}`}>{task.title}</h3>
-        {task.notes && <p className={`text-sm font-bold mt-1 line-clamp-2 ${isDoneToday ? 'text-green-700/50' : 'text-slate-600'}`}>{task.notes}</p>}
-        <div className="flex flex-wrap gap-2 mt-3 font-black text-[9px] uppercase tracking-widest">
-          <span className="bg-slate-900 text-white px-2 py-1 rounded-lg flex items-center gap-1 shadow-sm"><User size={10}/> {profiles.find((p: any) => p.id === task.assigned_to)?.full_name || 'Alocado'}</span>
-          <span className="bg-blue-600 text-white px-2 py-1 rounded-lg flex items-center gap-1 border-2 border-blue-400 shadow-sm"><Calendar size={10}/> PRÓXIMA: {getNextOccurrence(task)}</span>
-          <span className="bg-slate-100 text-slate-900 px-2 py-1 rounded-lg border border-slate-200">{task.category}</span>
+        <h3 className={`text-xl font-black tracking-tight ${isDoneToday ? 'line-through text-slate-400' : 'text-slate-900'}`}>
+          {task.title}
+        </h3>
+        
+        {/* Tags com cores mais suaves e ícones menores */}
+        <div className="flex flex-wrap gap-2 mt-2">
+          <div className="flex items-center gap-1.5 bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200">
+            <div className="w-2 h-2 rounded-full bg-blue-500"></div>
+            <span className="text-[10px] font-black uppercase text-slate-600">
+              {profiles.find((p: any) => p.id === task.assigned_to)?.full_name?.split(' ')[0] || 'Alocado'}
+            </span>
+          </div>
+          
+          <div className="flex items-center gap-1.5 bg-blue-50 px-2.5 py-1 rounded-lg border border-blue-100">
+            <Tag size={10} className="text-blue-600" />
+            <span className="text-[10px] font-black uppercase text-blue-600">{task.category}</span>
+          </div>
         </div>
       </div>
-      <div className="flex gap-1"><button onClick={() => onEdit(task)} className="text-slate-300 hover:text-blue-600 p-2"><Edit3 size={24}/></button>
-      <button onClick={async () => { if(confirm('Deseja excluir?')) { await supabase.from('tasks').delete().eq('id', task.id); onUpdate(); } }} className="text-slate-200 hover:text-red-600 p-2"><Trash2 size={24}/></button></div>
+
+      {/* Ações que só aparecem no Hover (no PC) */}
+      <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+        <button onClick={() => onEdit(task)} className="p-2 hover:bg-slate-100 rounded-xl text-slate-400 hover:text-blue-600 transition-all"><Edit3 size={20}/></button>
+        <button onClick={() => {/* delete */}} className="p-2 hover:bg-red-50 rounded-xl text-slate-400 hover:text-red-600 transition-all"><Trash2 size={20}/></button>
+      </div>
     </div>
-  )
+  );
 }
 
 function DashboardCard({ label, val, color }: any) {
