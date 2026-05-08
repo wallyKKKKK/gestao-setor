@@ -281,27 +281,122 @@ const filteredTasks = tasks.filter(task => {
           </div>
         ) : (
           <>
-            <div className="bg-white p-6 rounded-3xl border-4 border-slate-900 shadow-xl mb-10 mt-4">
-              <input className="w-full text-3xl font-black outline-none mb-2 border-b-4 border-slate-100 focus:border-blue-500 pb-2 text-slate-900 uppercase" placeholder="NOME DA TAREFA..." value={taskTitle} onChange={e => setTaskTitle(e.target.value)} />
-              <textarea className="w-full mt-4 p-4 bg-slate-50 rounded-2xl font-bold text-slate-800 border-2 border-slate-200 outline-none" placeholder="Observações..." rows={2} value={notes} onChange={e => setNotes(e.target.value)} />
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-6 pt-6 border-t-2 border-slate-100">
-                <div className="space-y-4">
-                  <div className="flex flex-col"><label className="text-[10px] font-black uppercase text-slate-400">Responsável</label>
-                  <select className="p-3 bg-slate-100 rounded-xl font-black border-2 border-slate-200" value={assignedTo} onChange={e => setAssignedTo(e.target.value)}>{profiles.map(p => <option key={p.id} value={p.id}>{p.full_name || p.id.slice(0,5)}</option>)}</select></div>
-                  <div className="flex flex-col"><label className="text-[10px] font-black uppercase text-slate-400">Categoria</label>
-                  <select className="p-3 bg-slate-100 rounded-xl font-black border-2 border-slate-200" value={category} onChange={e => setCategory(e.target.value)}><option>Trade</option><option>Reunião</option><option>Geral</option></select></div>
-                </div>
-                <div className="space-y-4">
-                   <label className="text-[10px] font-black uppercase text-slate-400">Repetir nos Dias</label>
-                   <div className="flex gap-1.5">{weekDays.map(day => (
-                     <button key={day.id} type="button" onClick={() => toggleDay(day.id)} className={`w-9 h-9 rounded-xl font-black border-2 transition-all ${selectedDays.includes(day.id) ? 'bg-blue-600 border-blue-600 text-white scale-110' : 'bg-white border-slate-200 text-slate-400'}`}>{day.label}</button>
-                   ))}</div>
-                   <div className="flex flex-col"><label className="text-[10px] font-black uppercase text-slate-400">Intervalo (Semanas)</label>
-                   <input type="number" min="1" className="p-3 bg-slate-100 rounded-xl font-black border-2 border-slate-200" value={repeatInterval} onChange={e => setRepeatInterval(parseInt(e.target.value) || 1)} /></div>
-                </div>
-                <button onClick={addTask} className="bg-blue-600 text-white rounded-[32px] font-black uppercase hover:bg-slate-900 transition-all flex flex-col items-center justify-center gap-2 py-6 shadow-xl active:scale-95"><Plus size={40}/> <span className="text-lg">Criar Tarefa</span></button>
-              </div>
-            </div>
+            <div className="bg-white p-8 rounded-[32px] border border-slate-200 shadow-[0_20px_50px_rgba(0,0,0,0.05)] mb-12 mt-4 relative overflow-hidden group">
+  {/* Detalhe estético: uma linha sutil no topo */}
+  <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 to-indigo-500 opacity-50"></div>
+
+  <div className="flex flex-col gap-6">
+    {/* ÁREA DO TÍTULO */}
+    <div className="relative">
+      <input 
+        className="w-full text-3xl font-black outline-none placeholder-slate-300 text-slate-900 bg-transparent border-b-2 border-slate-100 focus:border-blue-500 transition-all pb-3" 
+        placeholder="O que vamos construir hoje?" 
+        value={taskTitle} 
+        onChange={e => setTaskTitle(e.target.value)} 
+      />
+    </div>
+
+    {/* ÁREA DE OBSERVAÇÕES */}
+    <div className="relative group">
+      <div className="absolute top-4 left-4 text-slate-400 group-focus-within:text-blue-500 transition-colors">
+        <FileText size={18} />
+      </div>
+      <textarea 
+        className="w-full pl-12 p-4 bg-slate-50 rounded-2xl font-medium text-slate-700 border border-slate-100 outline-none focus:border-blue-300 focus:bg-white transition-all min-h-[100px] resize-none" 
+        placeholder="Adicione as coordenadas ou detalhes da tarefa..." 
+        value={notes} 
+        onChange={e => setNotes(e.target.value)} 
+      />
+    </div>
+
+    {/* GRID DE CONFIGURAÇÕES */}
+    <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-end border-t border-slate-100 pt-6">
+      
+      {/* SELETORES (RESPONSÁVEL E CATEGORIA) */}
+      <div className="md:col-span-4 space-y-4">
+        <div className="relative">
+          <label className="flex items-center gap-2 text-[10px] font-black uppercase text-slate-400 mb-2 ml-1 tracking-widest">
+            <User size={12} className="text-blue-500"/> Responsável
+          </label>
+          <select 
+            className="w-full p-3.5 bg-slate-50 rounded-xl font-bold text-sm border border-slate-200 text-slate-700 appearance-none focus:bg-white focus:ring-2 focus:ring-blue-500/20 outline-none transition-all cursor-pointer"
+            value={assignedTo} 
+            onChange={e => setAssignedTo(e.target.value)}
+          >
+            {profiles.map(p => <option key={p.id} value={p.id}>{p.full_name || p.id.slice(0,5)}</option>)}
+          </select>
+        </div>
+
+        <div className="relative">
+          <label className="flex items-center gap-2 text-[10px] font-black uppercase text-slate-400 mb-2 ml-1 tracking-widest">
+            <Tag size={12} className="text-blue-500"/> Categoria
+          </label>
+          <select 
+            className="w-full p-3.5 bg-slate-50 rounded-xl font-bold text-sm border border-slate-200 text-slate-700 appearance-none focus:bg-white focus:ring-2 focus:ring-blue-500/20 outline-none transition-all cursor-pointer"
+            value={category} 
+            onChange={e => setCategory(e.target.value)}
+          >
+            <option>Trade</option><option>Reunião</option><option>Geral</option>
+          </select>
+        </div>
+      </div>
+
+      {/* REPETIÇÃO E INTERVALO */}
+      <div className="md:col-span-4 space-y-4">
+        <div>
+          <label className="flex items-center gap-2 text-[10px] font-black uppercase text-slate-400 mb-2 ml-1 tracking-widest">
+            <Calendar size={12} className="text-blue-500"/> Repetir nos Dias
+          </label>
+          <div className="flex gap-2 bg-slate-50 p-1.5 rounded-2xl border border-slate-100">
+            {weekDays.map(day => (
+              <button 
+                key={day.id} 
+                type="button"
+                onClick={() => toggleDay(day.id)} 
+                className={`flex-1 h-10 rounded-xl font-black text-xs transition-all duration-300 ${
+                  selectedDays.includes(day.id) 
+                    ? 'bg-blue-600 text-white shadow-lg shadow-blue-200 scale-105' 
+                    : 'text-slate-400 hover:bg-slate-200/50'
+                }`}
+              >
+                {day.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <label className="flex items-center gap-2 text-[10px] font-black uppercase text-slate-400 mb-2 ml-1 tracking-widest">
+            <Repeat size={12} className="text-blue-500"/> Intervalo (Semanas)
+          </label>
+          <div className="relative">
+            <input 
+              type="number" 
+              min="1" 
+              className="w-full p-3.5 bg-slate-50 rounded-xl font-black border border-slate-200 text-slate-700 focus:bg-white outline-none transition-all" 
+              value={repeatInterval} 
+              onChange={e => setRepeatInterval(parseInt(e.target.value) || 1)} 
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* BOTÃO DE CRIAÇÃO */}
+      <div className="md:col-span-4 h-full">
+        <button 
+          onClick={addTask} 
+          className="w-full h-[calc(100%-10px)] bg-blue-600 hover:bg-[#0F172A] text-white rounded-[24px] font-black uppercase tracking-widest transition-all duration-500 flex flex-col items-center justify-center gap-3 shadow-[0_10px_30px_rgba(37,99,235,0.3)] hover:shadow-[0_10px_30px_rgba(15,23,42,0.3)] group active:scale-95"
+        >
+          <div className="bg-white/20 p-3 rounded-full group-hover:rotate-90 transition-transform duration-500">
+            <Plus size={32} strokeWidth={3} />
+          </div>
+          <span className="text-sm">Lançar Tarefa</span>
+        </button>
+      </div>
+
+    </div>
+  </div>
+</div>
 
             <div className="space-y-4">
               <h2 className="font-black uppercase text-slate-900 text-xs tracking-widest px-2">{activeTab} - {filteredTasks.length} ITENS</h2>
