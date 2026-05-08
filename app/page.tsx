@@ -521,7 +521,7 @@ function Login() {
     <div className="min-h-screen bg-[#0F172A] flex items-center justify-center p-4">
       <div className="bg-white p-12 rounded-[60px] w-full max-w-sm border-b-[24px] border-blue-600 shadow-2xl text-center">
         <div className="bg-blue-600 w-16 h-16 rounded-[20px] flex items-center justify-center mx-auto mb-8 shadow-[0_0_30px_rgba(37,99,235,0.5)] rotate-12"><Activity className="text-white" size={32}/></div>
-        <h1 className="text-6xl font-black italic uppercase tracking-tighter text-slate-900 leading-none">SUPPLY<br/><span className="text-blue-600 text-3xl not-italic tracking-[0.2em] font-medium opacity-80">TASKER</span></h1>
+        <h1 className="text-6xl font-black italic uppercase tracking-tighter text-slate-900 leading-none">WALLY<br/><span className="text-blue-600 text-3xl not-italic tracking-[0.2em] font-medium opacity-80">TASK MANAGER</span></h1>
         <div className="space-y-4 mt-12">
           <input className="w-full p-6 bg-slate-50 border-4 border-slate-100 rounded-[28px] font-black text-slate-900 outline-none focus:border-blue-500 transition-all placeholder-slate-300" placeholder="E-MAIL" onChange={e => setEmail(e.target.value)} />
           <input className="w-full p-6 bg-slate-50 border-4 border-slate-100 rounded-[28px] font-black text-slate-900 outline-none focus:border-blue-500 transition-all" type="password" placeholder="SENHA" onChange={e => setPassword(e.target.value)} />
