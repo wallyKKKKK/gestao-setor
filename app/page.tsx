@@ -209,7 +209,7 @@ const filteredTasks = tasks.filter(task => {
     <div className="min-h-screen bg-slate-100 text-slate-900 pb-20 font-sans">
       <nav className="bg-slate-900 text-white p-4 sticky top-0 z-30 shadow-2xl border-b-4 border-blue-600">
         <div className="max-w-4xl mx-auto flex justify-between items-center">
-          <div className="flex items-center gap-2"><LayoutDashboard className="text-blue-400" /><h1 className="text-xl font-black italic tracking-tighter">SUPPLY_TASK</h1></div>
+          <div className="flex items-center gap-2"><LayoutDashboard className="text-blue-400" /><h1 className="text-xl font-black italic tracking-tighter">SUPPLY TASK BUILDER</h1></div>
           <div className="flex items-center gap-4">
              <button onClick={() => setShowProfileModal(true)} className="flex items-center gap-2 bg-slate-800 px-3 py-1.5 rounded-xl border-2 border-slate-700 hover:border-blue-500 transition-all shadow-sm">
                 <div className="w-6 h-6 bg-blue-600 rounded-full flex items-center justify-center text-[10px] font-black uppercase">{profiles.find(p => p.id === user.id)?.full_name?.charAt(0) || 'U'}</div>

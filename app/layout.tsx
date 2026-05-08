@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Supplytask",
+  title: "Supply Task Builder",
   description: "Gerenciador de tarefas inteligente",
 };
 
