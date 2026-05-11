@@ -78,10 +78,25 @@ export default function App() {
 
   async function toggleComplete(task: any) {
   const todayStr = new Date().toISOString().split('T')[0];
-  
-  // Se a data gravada no banco for IGUAL a hoje, significa que queremos "desmarcar"
-  const isDoneToday = task.last_done_date === todayStr;
-  const newDate = isDoneToday ? null : todayStr;
+  const lastS = getLastOccurrence(task);
+  const lastD = task.last_done_date ? new Date(task.last_done_date) : new Date(0);
+  const isCurrentlyDone = lastD.getTime() >= lastS.getTime();
+  const newDate = isCurrentlyDone ? null : todayStr;
+
+  // --- REGISTRO NO HISTÓRICO ---
+  // Só grava se estivermos saindo de "pendente" para "concluído"
+  if (!isCurrentlyDone) {
+    const profile = profiles.find(p => p.id === user.id);
+    const { error: histError } = await supabase.from('task_history').insert([{
+      task_id: task.id,
+      task_title: task.title,
+      user_name: profile?.full_name || user.email,
+      user_id: user.id,
+      category: task.category
+    }]);
+    
+    if (histError) console.error("Erro histórico:", histError);
+  }
 
   const { error } = await supabase
     .from('tasks')
@@ -91,13 +106,9 @@ export default function App() {
     })
     .eq('id', task.id);
 
-  if (error) {
-    console.error("Erro Supabase:", error);
-    alert("Erro ao salvar: " + error.message);
-  } else {
-    // Recarrega as tarefas para o verde aparecer instantaneamente
+  if (!error) {
     fetchTasks(); 
-    fetchHistory();
+    fetchHistory(); // <--- OBRIGATÓRIO PARA ATUALIZAR A ABA DE HISTÓRICO
   }
 }
 
@@ -136,8 +147,13 @@ export default function App() {
     if (activeTab === 'HOJE') return isDueToday && !isDone
     if (activeTab === 'Minhas') return userRole === 'admin' ? true : task.assigned_to === user?.id
     if (activeTab === 'Todas') return true
+    
     return task.category === activeTab
   })
+    if (activeTab === 'HOJE') {
+  // Tradução: Mostre se é pra hoje E NÃO está concluído hoje
+  return isDueToday && !isDoneToday;
+}
 
   const stats = (() => {
     const relevant = tasks.filter(task => {
