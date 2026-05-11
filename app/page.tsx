@@ -141,9 +141,13 @@ export default function App() {
 
   const filteredTasks = tasks.filter(task => {
   const lastS = getLastOccurrence(task); 
-  const lastD = task.last_done_date ? new Date(task.last_done_date) : new Date(0);
+  // Zeramos as horas para garantir que a comparação seja apenas por dia
+  lastS.setHours(0,0,0,0);
   
-  // REGRA DE OURO: Está concluída se a data que fiz é MAIOR OU IGUAL à data que era pra fazer
+  const lastD = task.last_done_date ? new Date(task.last_done_date) : new Date(0);
+  lastD.setHours(0,0,0,0);
+  
+  // REGRA: Está concluída se a data que fiz é maior ou igual à data que era pra fazer
   const isDone = lastD.getTime() >= lastS.getTime(); 
   
   const isDueToday = lastS.getTime() === today.getTime(); 
@@ -152,18 +156,19 @@ export default function App() {
   // Filtro de Usuário
   if (filterUser !== 'Todos' && task.assigned_to !== filterUser) return false;
 
-  // Regras das Abas
+  // --- REGRAS DE EXIBIÇÃO POR ABA ---
   if (activeTab === 'ATRASADOS') return isLate;
   
   if (activeTab === 'HOJE') {
-    // Só aparece se for pra hoje E não estiver concluída
+    // Só aparece se for para hoje E NÃO estiver concluída (isDone tem que ser falso)
     return isDueToday && !isDone;
   }
   
   if (activeTab === 'Minhas') return userRole === 'admin' ? true : task.assigned_to === user?.id;
+  
   if (activeTab === 'Todas') return true;
   
-  // Filtro de Categorias (Trade, Reunião, etc)
+  // Abas de Categoria (Trade, Reunião, etc)
   return task.category === activeTab;
 });
 
