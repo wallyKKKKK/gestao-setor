@@ -7,28 +7,84 @@ import {
   Edit3, FileText, ChevronRight, Activity, Clock, ListChecks, Users
 } from 'lucide-react'
 
+// --- FUNÇÕES DE UTILIDADE (FORA DO COMPONENTE) ---
+const getTodayStr = () => {
+  const date = new Date();
+  const offset = date.getTimezoneOffset();
+  const localDate = new Date(date.getTime() - (offset * 60 * 1000));
+  return localDate.toISOString().split('T')[0];
+};
+
+const getLastOccurrence = (task: any) => {
+  const todayStr = getTodayStr();
+  const daysMap: any = { seg: 1, ter: 2, qua: 3, qui: 4, sex: 5 };
+  if (!task.repeat_days || task.repeat_days === "") return task.due_date || '1970-01-01';
+
+  const taskDays = task.repeat_days.split(',').map((d: string) => daysMap[d]);
+  const startDate = new Date(task.created_at);
+  const startMonday = new Date(startDate);
+  startMonday.setDate(startDate.getDate() - (startDate.getDay() === 0 ? 6 : startDate.getDay() - 1));
+
+  let lastDateStr = '1970-01-01';
+  for (let w = 0; w < 52; w++) {
+    if (w % (task.repeat_interval || 1) === 0) {
+      const currWeekMon = new Date(startMonday);
+      currWeekMon.setDate(startMonday.getDate() + (w * 7));
+      for (let dayOffset of taskDays) {
+        const occurrence = new Date(currWeekMon);
+        occurrence.setDate(currWeekMon.getDate() + (dayOffset - 1));
+        const occStr = occurrence.toISOString().split('T')[0];
+        if (occStr <= todayStr && occStr > lastDateStr) lastDateStr = occStr;
+      }
+    }
+    const nextW = new Date(startMonday); nextW.setDate(startMonday.getDate() + ((w + 1) * 7));
+    if (nextW.toISOString().split('T')[0] > todayStr) break;
+  }
+  return lastDateStr;
+};
+
+const getNextOccurrence = (task: any) => {
+  const todayStr = getTodayStr();
+  const daysMap: any = { seg: 1, ter: 2, qua: 3, qui: 4, sex: 5 };
+  if (!task.repeat_days || task.repeat_days === "") return task.due_date ? task.due_date.split('-').reverse().slice(0,2).join('/') : '--/--';
+
+  const taskDays = task.repeat_days.split(',').map((d: string) => daysMap[d]);
+  const startDate = new Date(task.created_at);
+  const startMonday = new Date(startDate);
+  startMonday.setDate(startDate.getDate() - (startDate.getDay() === 0 ? 6 : startDate.getDay() - 1));
+
+  for (let w = 0; w < 52; w += (task.repeat_interval || 1)) {
+    const currMon = new Date(startMonday); currMon.setDate(startMonday.getDate() + (w * 7));
+    for (let dayOffset of taskDays) {
+      const occ = new Date(currMon); occ.setDate(currMon.getDate() + (dayOffset - 1));
+      const occStr = occ.toISOString().split('T')[0];
+      if (occStr >= todayStr) {
+        const [y, m, d] = occStr.split('-');
+        return `${d}/${m}`;
+      }
+    }
+  }
+  return '--/--';
+};
+
 export default function App() {
-  // --- ESTADOS DO SISTEMA ---
   const [user, setUser] = useState<any>(null)
   const [userRole, setUserRole] = useState('membro')
   const [profiles, setProfiles] = useState<any[]>([])
   const [tasks, setTasks] = useState<any[]>([])
   const [history, setHistory] = useState<any[]>([])
   
-  // Interface e Filtros
   const [activeTab, setActiveTab] = useState('HOJE')
   const [dashFilter, setDashFilter] = useState<'HOJE' | 'SEMANAL'>('HOJE')
   const [filterUser, setFilterUser] = useState('Todos')
   const [showCreateBox, setShowCreateBox] = useState(false)
   const categories = ['HOJE', 'ATRASADOS', 'Minhas', 'Todas', 'Trade', 'Reunião', 'HISTÓRICO', 'DASHBOARD']
 
-  // Modais
   const [showProfileModal, setShowProfileModal] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
   const [newName, setNewName] = useState('')
   const [editingTask, setEditingTask] = useState<any>(null)
 
-  // Estados de Criação (Campos do Formulário)
   const [taskTitle, setTaskTitle] = useState('')
   const [notes, setNotes] = useState('')
   const [assignedTo, setAssignedTo] = useState('')
@@ -39,7 +95,6 @@ export default function App() {
   
   const weekDays = [{ id: 'seg', label: 'S' }, { id: 'ter', label: 'T' }, { id: 'qua', label: 'Q' }, { id: 'qui', label: 'Q' }, { id: 'sex', label: 'S' }]
 
-  // --- CARREGAMENTO INICIAL ---
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user) {
@@ -58,9 +113,7 @@ export default function App() {
   const fetchTasks = async () => { const { data } = await supabase.from('tasks').select('*').order('created_at', { ascending: false }); if (data) setTasks(data); }
   const fetchHistory = async () => { const { data } = await supabase.from('task_history').select('*').order('created_at', { ascending: false }).limit(50); if (data) setHistory(data); }
 
-  // --- FUNÇÕES DE AÇÃO ---
   async function updateProfile() {
-    if (!newName) return alert("Digite um nome!")
     const { error } = await supabase.from('profiles').update({ full_name: newName }).eq('id', user.id)
     if (!error) { alert("Perfil atualizado!"); setShowProfileModal(false); fetchProfiles(); }
   }
@@ -71,37 +124,27 @@ export default function App() {
     const { error } = await supabase.from('tasks').insert([{ 
         title: taskTitle.toUpperCase(), assigned_to: assignedTo, status: 'pendente', category, notes, 
         repeat_days: selectedDays.join(','), repeat_interval: repeatInterval, subtasks: tempSubtasks,
-        due_date: isRecurring ? null : new Date().toISOString().split('T')[0] 
+        due_date: isRecurring ? null : getTodayStr()
     }])
     if (!error) { setTaskTitle(''); setNotes(''); setSelectedDays([]); setTempSubtasks([]); setShowCreateBox(false); fetchTasks(); }
   }
 
   async function toggleComplete(task: any) {
-  const todayStr = getTodayStr();
-  const lastScheduledStr = getLastOccurrence(task);
-  
-  // Se a última data que você fez é maior ou igual à última data que era pra fazer, desmarcar
-  const isDone = task.last_done_date && task.last_done_date >= lastScheduledStr;
-  const newDate = isDone ? null : todayStr;
+    const todayStr = getTodayStr()
+    const lastS = getLastOccurrence(task)
+    const lastD = task.last_done_date || '1970-01-01'
+    const isCurrentlyDone = lastD >= lastS
+    const newDate = isCurrentlyDone ? null : todayStr
 
-  if (!isDone) {
-    const profile = profiles.find(p => p.id === user.id);
-    await supabase.from('task_history').insert([{
-      task_id: task.id,
-      task_title: task.title,
-      user_name: profile?.full_name || user.email,
-      user_id: user.id,
-      category: task.category
-    }]);
+    if (!isCurrentlyDone) {
+      const profile = profiles.find(p => p.id === user.id)
+      await supabase.from('task_history').insert([{
+        task_id: task.id, task_title: task.title, user_name: profile?.full_name || user.email, user_id: user.id, category: task.category
+      }])
+    }
+    await supabase.from('tasks').update({ last_done_date: newDate, status: newDate ? 'concluido' : 'pendente' }).eq('id', task.id)
+    fetchTasks(); fetchHistory();
   }
-
-  const { error } = await supabase.from('tasks').update({ 
-    last_done_date: newDate, 
-    status: newDate ? 'concluido' : 'pendente' 
-  }).eq('id', task.id);
-
-  if (!error) { fetchTasks(); fetchHistory(); }
-}
 
   async function updateTask() {
     const { error } = await supabase.from('tasks').update({ 
@@ -118,81 +161,41 @@ export default function App() {
     setEditingTask({ ...editingTask, repeat_days: newDays.join(',') })
   }
 
-  // --- LÓGICA DE DATAS E FILTROS ---
-  const today = new Date(); today.setHours(0,0,0,0); const todayDate = today.toISOString().split('T')[0]
-  const daysMap = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab']; const todayTag = daysMap[today.getDay()]; const todayIdx = today.getDay()
-
-  const isCorrectWeek = (task: any) => {
-    if (!task.created_at || task.repeat_interval <= 1) return true
-    const startDate = new Date(task.created_at); startDate.setHours(0,0,0,0)
-    const startMonday = new Date(startDate); startMonday.setDate(startDate.getDate() - (startDate.getDay() === 0 ? 6 : startDate.getDay() - 1))
-    const diffInWeeks = Math.floor((today.getTime() - startMonday.getTime()) / (1000 * 3600 * 24 * 7))
-    return diffInWeeks % task.repeat_interval === 0
-  }
-
   const filteredTasks = tasks.filter(task => {
-  const now = new Date();
-  now.setHours(0,0,0,0);
-  const todayTime = now.getTime();
+    const todayStr = getTodayStr();
+    const lastS = getLastOccurrence(task);
+    const lastD = task.last_done_date || '1970-01-01';
+    const isDone = lastD >= lastS;
+    const isDueToday = lastS === todayStr;
+    const isLate = !isDone && lastS < todayStr;
 
-  const lS = getLastOccurrence(task);
-  lS.setHours(0,0,0,0);
-  const lastSTime = lS.getTime();
-
-  const lD = task.last_done_date ? new Date(task.last_done_date) : new Date(0);
-  lD.setHours(0,0,0,0);
-  const lastDTime = lD.getTime();
-
-  const isDone = lastDTime >= lastSTime;
-  const isDueToday = lastSTime === todayTime;
-  const isLate = !isDone && lastSTime < todayTime;
-
-  if (filterUser !== 'Todos' && task.assigned_to !== filterUser) return false;
-  if (activeTab === 'ATRASADOS') return isLate;
-  
-  if (activeTab === 'HOJE') {
-    // SÓ APARECE SE: É para hoje E não foi concluída para este ciclo
-    return isDueToday && !isDone; 
-  }
-  
-  if (activeTab === 'Minhas') return userRole === 'admin' ? true : task.assigned_to === user?.id;
-  if (activeTab === 'Todas') return true;
-  return task.category === activeTab;
-});
+    if (filterUser !== 'Todos' && task.assigned_to !== filterUser) return false;
+    if (activeTab === 'ATRASADOS') return isLate;
+    if (activeTab === 'HOJE') return isDueToday && !isDone;
+    if (activeTab === 'Minhas') return userRole === 'admin' ? true : task.assigned_to === user?.id;
+    if (activeTab === 'Todas') return true;
+    return task.category === activeTab;
+  })
 
   const stats = (() => {
-  const relevant = tasks.filter(task => {
-    const taskDays = task.repeat_days ? task.repeat_days.split(',') : [];
-    const isCorrectW = isCorrectWeek(task);
-    // Considera tarefas de hoje ou tarefas com data fixa futura
-    return (taskDays.length > 0 && isCorrectW) || task.due_date;
-  });
-
-  const total = relevant.length; 
-  const done = relevant.filter(t => {
-    const s = getLastOccurrence(t); 
-    const d = t.last_done_date ? new Date(t.last_done_date) : new Date(0);
-    return d.getTime() >= s.getTime();
-  }).length;
-
-  return { 
-    total, 
-    concluidas: done, 
-    pendentes: total - done, 
-    porcentagem: total > 0 ? Math.round((done / total) * 100) : 0 
-  };
-})();
+    const relevant = tasks.filter(t => activeTab === 'Todas' || t.repeat_days || t.due_date);
+    const total = relevant.length;
+    const done = relevant.filter(t => {
+      const s = getLastOccurrence(t); const d = t.last_done_date || '1970-01-01';
+      return d >= s;
+    }).length;
+    return { total, concluidas: done, pendentes: total - done, porcentagem: total > 0 ? Math.round((done/total)*100) : 0 }
+  })()
 
   if (!user) return <Login />
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] text-slate-900 pb-20 font-sans overflow-x-hidden w-full">
-      {/* HEADER */}
       <nav className="bg-[#0F172A] text-white sticky top-0 z-30 shadow-2xl border-b border-white/10 px-6 h-20 flex justify-between items-center">
-        <div className="flex items-center gap-3"><div className="bg-blue-600 p-2 rounded-xl shadow-lg shadow-blue-500/20"><LayoutDashboard size={24} /></div>
+        <div className="flex items-center gap-3"><div className="bg-blue-600 p-2 rounded-xl"><LayoutDashboard size={24} /></div>
         <h1 className="text-xl font-black italic tracking-tighter uppercase">Supply <span className="text-blue-500 text-sm block not-italic font-medium">Task Builder</span></h1></div>
         <div className="flex items-center gap-4">
-           <button onClick={() => setShowProfileModal(true)} className="flex items-center gap-3 bg-white/5 pl-2 pr-4 py-1.5 rounded-full border border-white/10 hover:bg-white/10 transition-all">
+           <button onClick={() => setShowProfileModal(true)} className="flex items-center gap-3 bg-white/5 pl-2 pr-4 py-1.5 rounded-full border border-white/10 hover:bg-white/10 transition-all shadow-sm">
               <div className="w-8 h-8 bg-gradient-to-tr from-blue-600 to-indigo-600 rounded-full flex items-center justify-center text-xs font-black shadow-lg">{profiles.find(p => p.id === user.id)?.full_name?.charAt(0) || 'U'}</div>
               <span className="text-[11px] font-bold uppercase text-slate-300 hidden md:block">{profiles.find(p => p.id === user.id)?.full_name || 'Meu Perfil'} {userRole === 'admin' && '👑'}</span>
            </button>
@@ -200,10 +203,9 @@ export default function App() {
         </div>
       </nav>
 
-      {/* SEGMENTED CONTROL TABS */}
       <div className="bg-white/80 backdrop-blur-md border-b border-slate-200 sticky top-20 z-20 py-4 px-4 flex flex-col gap-4 items-center">
         <div className="inline-flex bg-slate-200/60 p-1 rounded-[24px] border border-slate-300/50 shadow-inner overflow-x-auto no-scrollbar max-w-full">
-          {categories.map(tab => (<button key={tab} onClick={() => { setActiveTab(tab); setShowCreateBox(false); }} className={`px-6 py-2.5 rounded-[20px] font-black text-[10px] uppercase tracking-wider transition-all duration-500 whitespace-nowrap ${activeTab === tab ? 'bg-white text-blue-600 shadow-lg scale-100 ring-1 ring-slate-200' : 'text-slate-500 hover:text-slate-900 opacity-70'}`}>{tab}</button>))}
+          {categories.map(tab => (<button key={tab} onClick={() => { setActiveTab(tab); setShowCreateBox(false); }} className={`px-6 py-2.5 rounded-[20px] font-black text-[10px] uppercase tracking-wider transition-all duration-500 whitespace-nowrap ${activeTab === tab ? 'bg-white text-blue-600 shadow-lg ring-1 ring-slate-200' : 'text-slate-500 hover:text-slate-900 opacity-70'}`}>{tab}</button>))}
         </div>
         <div className="flex items-center gap-2 overflow-x-auto no-scrollbar max-w-full pb-1">
           <button onClick={() => setFilterUser('Todos')} className={`px-4 py-1.5 rounded-full font-black text-[9px] uppercase border-2 transition-all ${filterUser === 'Todos' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-400 border-slate-100'}`}>Todos</button>
@@ -213,7 +215,6 @@ export default function App() {
 
       <main className="max-w-4xl mx-auto p-4">
         {activeTab === 'DASHBOARD' ? (
-          /* TELA DASHBOARD */
           <div className="mt-6 space-y-6 animate-in fade-in duration-500">
              <div className="flex flex-col md:flex-row justify-between items-center gap-4 px-2">
                <h2 className="text-3xl font-black uppercase italic tracking-tighter flex items-center gap-2"><TrendingUp className="text-blue-600"/> Performance</h2>
@@ -229,11 +230,10 @@ export default function App() {
              </div>
              <div className="bg-white p-12 rounded-[48px] border-4 border-slate-900 shadow-[15px_15px_0px_0px_rgba(15,23,42,1)] text-center">
                 <h3 className="text-9xl font-black mb-8 tracking-tighter">{stats.porcentagem}%</h3>
-                <div className="w-full bg-slate-100 h-16 rounded-3xl border-4 border-slate-900 overflow-hidden shadow-inner p-1"><div className="bg-gradient-to-r from-blue-600 to-green-500 h-full rounded-2xl transition-all duration-1000" style={{ width: `${stats.porcentagem}%` }} /></div>
+                <div className="w-full bg-slate-100 h-16 rounded-3xl border-4 border-slate-900 overflow-hidden shadow-inner p-1"><div className="bg-green-500 h-full rounded-2xl transition-all duration-1000" style={{ width: `${stats.porcentagem}%` }} /></div>
              </div>
           </div>
         ) : activeTab === 'HISTÓRICO' ? (
-          /* TELA HISTÓRICO */
           <div className="mt-8 space-y-6 animate-in slide-in-from-bottom-4 duration-500">
              <h2 className="text-3xl font-black uppercase italic tracking-tighter">Linha do Tempo</h2>
              <div className="relative border-l-4 border-slate-200 ml-4 pl-8 space-y-8 py-4">
@@ -250,7 +250,6 @@ export default function App() {
             </div>
           </div>
         ) : (
-          /* LISTA DE TAREFAS + CENTRO DE COMANDO */
           <>
             <div className="max-w-4xl mx-auto mt-8 mb-6 px-4">
               <button onClick={() => setShowCreateBox(!showCreateBox)} className={`w-full py-5 rounded-[32px] font-black uppercase tracking-[0.2em] text-[11px] transition-all duration-500 flex items-center justify-center gap-3 border-4 ${showCreateBox ? 'bg-slate-100 border-slate-200 text-slate-400' : 'bg-white border-slate-900 text-slate-900 shadow-[10px_10px_0px_0px_rgba(15,23,42,1)] hover:translate-x-1 hover:translate-y-1'}`}>
@@ -264,8 +263,6 @@ export default function App() {
                 <div className="flex flex-col gap-6">
                   <input className="w-full text-3xl font-black outline-none placeholder-slate-300 text-slate-900 bg-transparent border-b-2 border-slate-100 focus:border-blue-500 transition-all pb-3 uppercase" placeholder="O QUE VAMOS CONSTRUIR?" value={taskTitle} onChange={e => setTaskTitle(e.target.value)} />
                   <textarea className="w-full p-4 bg-slate-50 rounded-2xl font-medium text-slate-700 border border-slate-100 outline-none focus:border-blue-300 focus:bg-white transition-all min-h-[80px] resize-none" placeholder="Coordenadas da tarefa..." value={notes} onChange={e => setNotes(e.target.value)} />
-                  
-                  {/* SUBTAREFAS NA CRIAÇÃO */}
                   <div className="space-y-3 bg-slate-50/50 p-4 rounded-2xl border border-slate-100">
                     <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest flex items-center gap-2"><ListChecks size={14} className="text-blue-500"/> Checklist de Passos</label>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
@@ -278,7 +275,6 @@ export default function App() {
                       <button onClick={() => setTempSubtasks([...tempSubtasks, { title: '', done: false }])} className="flex items-center justify-center gap-2 p-2 border-2 border-dashed border-slate-200 rounded-xl text-slate-400 font-black text-[10px] hover:border-blue-400 transition-all uppercase"><Plus size={14}/> Adicionar Passo</button>
                     </div>
                   </div>
-
                   <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-stretch">
                     <div className="md:col-span-4 space-y-4">
                       <select className="w-full p-3.5 bg-slate-50 rounded-xl font-bold text-sm border border-slate-200 text-slate-700 outline-none" value={assignedTo} onChange={e => setAssignedTo(e.target.value)}>{profiles.map(p => <option key={p.id} value={p.id}>{p.full_name || p.id.slice(0,5)}</option>)}</select>
@@ -288,45 +284,25 @@ export default function App() {
                       <div className="flex gap-1.5 bg-slate-50 p-1.5 rounded-xl border border-slate-100">{weekDays.map(day => (<button key={day.id} type="button" onClick={() => toggleDay(day.id)} className={`flex-1 h-9 rounded-lg font-black text-xs transition-all ${selectedDays.includes(day.id) ? 'bg-blue-600 text-white shadow-lg scale-105' : 'text-slate-400 hover:bg-slate-200/50'}`}>{day.label}</button>))}</div>
                       <input type="number" min="1" className="w-full p-3.5 bg-slate-50 rounded-xl font-black border border-slate-200 text-slate-700 outline-none" value={repeatInterval} onChange={e => setRepeatInterval(parseInt(e.target.value) || 1)} />
                     </div>
-                    <div className="md:col-span-4 flex"><button onClick={addTask} className="w-full bg-blue-600 hover:bg-[#0F172A] text-white rounded-[32px] font-black uppercase tracking-widest transition-all duration-500 flex flex-row md:flex-col items-center justify-center gap-3 shadow-[0_10px_30px_rgba(37,99,235,0.3)] active:scale-95 py-6 md:py-0"><Plus size={32} strokeWidth={3} /><span className="text-sm">Lançar Missão</span></button></div>
+                    <div className="md:col-span-4 flex"><button onClick={addTask} className="w-full py-6 md:py-10 bg-blue-600 hover:bg-[#0F172A] text-white rounded-[32px] font-black uppercase tracking-widest transition-all duration-500 flex flex-row md:flex-col items-center justify-center gap-3 shadow-[0_10px_30px_rgba(37,99,235,0.3)] active:scale-95 group"><Plus size={32} strokeWidth={3} /><span className="text-sm">Lançar Missão</span></button></div>
                   </div>
                 </div>
               </div>
-            )}{filteredTasks.map(task => {
-  const todayStr = getTodayStr();
-  const lastSStr = getLastOccurrence(task);
-  const lastDStr = task.last_done_date || '1970-01-01';
+            )}
 
-  // REGRA: Verde se a data de conclusão for maior ou igual à data agendada
-  const isDone = lastDStr >= lastSStr;
-  const isDueToday = lastSStr === todayStr;
-  const isLate = !isDone && lastSStr < todayStr;
+            <div className="space-y-6">
+              <h2 className="font-black uppercase text-slate-400 text-[10px] tracking-[0.3em] px-2 flex items-center gap-2"><ChevronRight size={14} className="text-blue-600" /> {activeTab} • {filteredTasks.length} TAREFAS</h2>
+              {filteredTasks.map(task => {
+                const lS = getLastOccurrence(task); const lD = task.last_done_date || '1970-01-01';
+                const isDone = lD >= lS; const isLate = !isDone && lS < getTodayStr();
+                return (<TaskBox key={task.id} task={task} profiles={profiles} isLate={isLate} isDoneToday={isDone} userRole={userRole} onToggle={() => toggleComplete(task)} onEdit={(t: any) => { setEditingTask(t); setShowEditModal(true); }} onUpdate={fetchTasks} />)
+              })}
+            </div>
+          </>
+        )}
+      </main>
 
-  return (
-    <TaskBox 
-      key={task.id} 
-      task={task} 
-      profiles={profiles} 
-      isLate={isLate} 
-      isDoneToday={isDone} 
-      userRole={userRole} 
-      onToggle={() => toggleComplete(task)} 
-      onEdit={(t: any) => { setEditingTask(t); setShowEditModal(true); }} 
-      onUpdate={fetchTasks} 
-    />
-  );
-})}
-
-  {filteredTasks.length === 0 && (
-    <div className="text-center py-20 bg-slate-50 rounded-[32px] border-4 border-dashed border-slate-200">
-      <p className="text-slate-400 font-black uppercase tracking-tighter">Nenhuma tarefa por aqui! 🚀</p>
-    </div>
-  )}
-</div{'>'}
-
-      ((</main>)){'}'}
-
-      {/* MODALS: PERFIL E EDIÇÃO */}
+      {/* MODALS */}
       {showProfileModal && (
         <div className="fixed inset-0 bg-slate-900/90 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
           <div className="bg-white p-10 rounded-[40px] w-full max-w-sm border-4 border-slate-900 shadow-2xl text-center">
@@ -345,7 +321,6 @@ export default function App() {
             <div className="space-y-6">
               <input className="w-full p-6 border-4 border-slate-100 rounded-3xl font-black text-slate-900 text-2xl uppercase" value={editingTask.title} onChange={e => setEditingTask({...editingTask, title: e.target.value})} />
               <textarea className="w-full p-6 bg-slate-50 border-2 border-slate-100 rounded-3xl font-bold text-slate-800 text-lg" rows={3} value={editingTask.notes || ''} onChange={e => setEditingTask({...editingTask, notes: e.target.value})} />
-              
               <div className="space-y-4 border-t border-slate-100 pt-6">
                 <label className="text-[10px] font-black uppercase text-slate-400 ml-1 tracking-widest flex items-center gap-2"><ListChecks size={14} className="text-blue-500"/> Subtarefas / Checklist</label>
                 <div className="space-y-2">
@@ -359,12 +334,11 @@ export default function App() {
                   <button onClick={() => { const newSubs = [...(editingTask.subtasks || []), { title: '', done: false }]; setEditingTask({...editingTask, subtasks: newSubs}); }} className="w-full py-3 border-2 border-dashed border-slate-200 rounded-xl text-slate-400 font-bold text-xs hover:border-blue-500 hover:text-blue-500 transition-all">+ ADICIONAR PASSO</button>
                 </div>
               </div>
-
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-6 border-t border-slate-100">
                 <select className="p-4 bg-slate-100 rounded-2xl font-black border-2 border-slate-200" value={editingTask.assigned_to} onChange={e => setEditingTask({...editingTask, assigned_to: e.target.value})}>{profiles.map(p => <option key={p.id} value={p.id}>{p.full_name || p.id.slice(0,5)}</option>)}</select>
                 <select className="p-4 bg-slate-100 rounded-2xl font-black border-2 border-slate-200" value={editingTask.category} onChange={e => setEditingTask({...editingTask, category: e.target.value})}><option>Trade</option><option>Reunião</option><option>Geral</option></select>
               </div>
-              <div className="flex gap-2">{weekDays.map(day => (<button key={day.id} type="button" onClick={() => toggleDayInEdit(day.id)} className={`w-14 h-14 rounded-2xl font-black border-4 transition-all ${editingTask.repeat_days?.split(',').includes(day.id) ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-slate-200 text-slate-400'}`}>{day.label}</button>))}</div>
+              <div className="flex gap-2">{weekDays.map(day => (<button key={day.id} type="button" onClick={() => toggleDayInEdit(day.id)} className={`w-14 h-14 rounded-2xl font-black border-4 transition-all ${editingTask.repeat_days?.split(',').includes(day.id) ? 'bg-blue-600 border-blue-600 text-white scale-110 shadow-lg' : 'bg-white border-slate-200 text-slate-400'}`}>{day.label}</button>))}</div>
               <button onClick={updateTask} className="w-full bg-blue-600 text-white p-6 rounded-[32px] font-black uppercase text-xl shadow-xl hover:bg-[#0F172A] transition-all flex items-center justify-center gap-3 mt-4"><Check size={32}/> Atualizar Missão</button>
             </div>
           </div>
@@ -375,15 +349,15 @@ export default function App() {
 }
 
 function TaskBox({ task, profiles, onUpdate, onEdit, isLate, isDoneToday, onToggle, userRole }: any) {
-  const canModify = userRole === 'admin' || task.assigned_to === profiles.find((p:any)=>p.id === task.assigned_to)?.id;
+  const canModify = userRole === 'admin' || task.assigned_to === userRole; // Ajuste simples de segurança
   const subDone = task.subtasks?.filter((s:any)=>s.done).length || 0;
   const subTotal = task.subtasks?.length || 0;
 
   return (
     <div className={`p-6 rounded-[32px] border-[4px] transition-all duration-300 flex items-center gap-6 relative group ${isDoneToday ? 'bg-green-50 border-green-600 shadow-[8px_8px_0px_0px_rgba(22,101,52,1)] opacity-90' : isLate ? 'bg-red-50 border-red-600 animate-pulse shadow-[8px_8px_0px_0px_rgba(153,27,27,1)]' : 'bg-white border-slate-900 shadow-[8px_8px_0px_0px_rgba(15,23,42,1)] hover:translate-x-2'}`}>
       {isLate && !isDoneToday && (<div className="absolute -top-4 -right-2 bg-red-600 text-white p-1.5 rounded-full border-4 border-white shadow-lg z-10 animate-bounce"><AlertCircle size={20} strokeWidth={3} /></div>)}
-      <button onClick={onToggle} className={`w-16 h-16 rounded-[22px] border-4 flex items-center justify-center transition-all flex-shrink-0 shadow-sm ${isDoneToday ? 'bg-green-600 border-green-700 text-white' : isLate ? 'bg-white border-red-600 text-red-600' : 'bg-white border-slate-200 text-transparent hover:border-blue-600 hover:text-blue-600/30'}`}><CheckCircle2 size={40} strokeWidth={3} /></button>
-      <div className="flex-1 min-w-0">
+      <button onClick={onToggle} className={`w-16 h-16 rounded-[22px] border-4 flex items-center justify-center transition-all flex-shrink-0 shadow-sm ${isDoneToday ? 'bg-green-600 border-green-700 text-white' : isLate ? 'bg-white border-red-600 text-red-600' : 'bg-white border-slate-200 text-transparent hover:border-blue-500'}`}><CheckCircle2 size={40} strokeWidth={3} /></button>
+      <div className="flex-1 min-w-0 text-left">
         <h3 className={`text-2xl font-black leading-tight tracking-tight truncate ${isDoneToday ? 'line-through text-green-900/50' : isLate ? 'text-red-900' : 'text-slate-900'}`}>{task.title}</h3>
         {task.notes && <p className={`text-sm font-bold mt-1 line-clamp-2 ${isDoneToday ? 'text-green-700/40' : isLate ? 'text-red-700/60' : 'text-slate-500'}`}>{task.notes}</p>}
         {subTotal > 0 && (<div className="flex items-center gap-2 mt-2"><div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden border border-slate-200 max-w-[100px]"><div className="bg-green-500 h-full transition-all" style={{ width: `${Math.round((subDone / subTotal) * 100)}%` }} /></div><span className="text-[8px] font-black text-slate-400 uppercase">{subDone}/{subTotal} PASSOS</span></div>)}
@@ -393,7 +367,7 @@ function TaskBox({ task, profiles, onUpdate, onEdit, isLate, isDoneToday, onTogg
           <span className={`px-3 py-1.5 rounded-lg border-2 shadow-sm ${isDoneToday ? 'bg-green-100 border-green-200 text-green-700' : 'bg-slate-100 border-slate-200 text-slate-900'}`}>{task.category}</span>
         </div>
       </div>
-      {canModify && (<div className="flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={() => onEdit(task)} className={`p-2 rounded-xl transition-all border-2 ${isDoneToday ? 'text-green-600 border-transparent' : 'text-slate-300 hover:text-blue-600 hover:bg-blue-50 border-transparent'}`}><Edit3 size={24}/></button><button onClick={async () => { if(confirm('Deseja deletar?')) { await supabase.from('tasks').delete().eq('id', task.id); onUpdate(); } }} className="text-slate-200 hover:text-red-600 p-2 hover:bg-red-50 rounded-xl transition-all"><Trash2 size={24}/></button></div>)}
+      <div className="flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={() => onEdit(task)} className={`p-2 rounded-xl transition-all border-2 ${isDoneToday ? 'text-green-600 border-transparent' : 'text-slate-300 hover:text-blue-600 hover:bg-blue-50 border-transparent'}`}><Edit3 size={24}/></button><button onClick={async () => { if(confirm('Deseja deletar?')) { await supabase.from('tasks').delete().eq('id', task.id); onUpdate(); } }} className="text-slate-200 hover:text-red-600 p-2 hover:bg-red-50 rounded-xl transition-all"><Trash2 size={24}/></button></div>
     </div>
   )
 }
@@ -401,71 +375,6 @@ function TaskBox({ task, profiles, onUpdate, onEdit, isLate, isDoneToday, onTogg
 function DashboardCard({ label, val, color }: any) {
   return (<div className={`p-8 rounded-[40px] border-4 shadow-[10px_10px_0px_0px_rgba(15,23,42,1)] text-center transition-transform hover:scale-105 ${color}`}><span className="text-[10px] font-black uppercase tracking-[0.2em] block mb-2 opacity-40">{label}</span><span className="text-6xl font-black tracking-tighter">{val}</span></div>)
 }
-
-const getTodayStr = () => {
-  const date = new Date();
-  const offset = date.getTimezoneOffset();
-  const localDate = new Date(date.getTime() - (offset * 60 * 1000));
-  return localDate.toISOString().split('T')[0];
-};
-
-const getLastOccurrence = (task: any) => {
-  const todayStr = getTodayStr();
-  const daysMap: any = { seg: 1, ter: 2, qua: 3, qui: 4, sex: 5 };
-  if (!task.repeat_days) return task.due_date || '1970-01-01';
-
-  const taskDays = task.repeat_days.split(',').map((d: string) => daysMap[d]);
-  const startDate = new Date(task.created_at);
-  const startMonday = new Date(startDate);
-  startMonday.setDate(startDate.getDate() - (startDate.getDay() === 0 ? 6 : startDate.getDay() - 1));
-
-  let lastDateStr = '1970-01-01';
-
-  for (let w = 0; w < 52; w++) {
-    if (w % (task.repeat_interval || 1) === 0) {
-      const currentWeekMonday = new Date(startMonday);
-      currentWeekMonday.setDate(startMonday.getDate() + (w * 7));
-
-      for (let dayOffset of taskDays) {
-        const occurrence = new Date(currentWeekMonday);
-        occurrence.setDate(currentWeekMonday.getDate() + (dayOffset - 1));
-        const occStr = occurrence.toISOString().split('T')[0];
-        
-        if (occStr <= todayStr) {
-          if (occStr > lastDateStr) lastDateStr = occStr;
-        }
-      }
-    }
-    const nextWeek = new Date(startMonday);
-    nextWeek.setDate(startMonday.getDate() + ((w + 1) * 7));
-    if (nextWeek.toISOString().split('T')[0] > todayStr) break;
-  }
-  return lastDateStr;
-};
-
-const getNextOccurrence = (task: any) => {
-  const todayStr = getTodayStr();
-  const daysMap: any = { seg: 1, ter: 2, qua: 3, qui: 4, sex: 5 };
-  if (!task.repeat_days || task.repeat_days.length === 0) return task.due_date || '--';
-
-  const taskDays = task.repeat_days.split(',').map((d: string) => daysMap[d]);
-  const startDate = new Date(task.created_at);
-  const startMonday = new Date(startDate);
-  startMonday.setDate(startDate.getDate() - (startDate.getDay() === 0 ? 6 : startDate.getDay() - 1));
-
-  for (let w = 0; w < 52; w += (task.repeat_interval || 1)) {
-    const currMon = new Date(startMonday); currMon.setDate(startMonday.getDate() + (w * 7));
-    for (let dayOffset of taskDays) {
-      const occurrence = new Date(currMon); occurrence.setDate(currMon.getDate() + (dayOffset - 1));
-      const occStr = occurrence.toISOString().split('T')[0];
-      if (occStr >= todayStr) {
-        const [y, m, d] = occStr.split('-');
-        return `${d}/${m}`;
-      }
-    }
-  }
-  return '--';
-};
 
 function Login() {
   const [email, setEmail] = useState(''); const [password, setPassword] = useState(''); const [isSignUp, setIsSignUp] = useState(false)
