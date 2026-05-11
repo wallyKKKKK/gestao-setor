@@ -140,34 +140,55 @@ export default function App() {
   }
 
   const filteredTasks = tasks.filter(task => {
-    const lastS = getLastOccurrence(task); const lastD = task.last_done_date ? new Date(task.last_done_date) : new Date(0)
-    const isDone = lastD.getTime() >= lastS.getTime(); const isDueToday = lastS.getTime() === today.getTime(); const isLate = !isDone && lastS < today
-    if (filterUser !== 'Todos' && task.assigned_to !== filterUser) return false
-    if (activeTab === 'ATRASADOS') return isLate
-    if (activeTab === 'HOJE') return isDueToday && !isDone
-    if (activeTab === 'Minhas') return userRole === 'admin' ? true : task.assigned_to === user?.id
-    if (activeTab === 'Todas') return true
-    
-    return task.category === activeTab
-  })
-    if (activeTab === 'HOJE') {
-  // Tradução: Mostre se é pra hoje E NÃO está concluído hoje
-  return isDueToday && !isDoneToday;
-}
+  const lastS = getLastOccurrence(task); 
+  const lastD = task.last_done_date ? new Date(task.last_done_date) : new Date(0);
+  
+  // REGRA DE OURO: Está concluída se a data que fiz é MAIOR OU IGUAL à data que era pra fazer
+  const isDone = lastD.getTime() >= lastS.getTime(); 
+  
+  const isDueToday = lastS.getTime() === today.getTime(); 
+  const isLate = !isDone && lastS < today;
+
+  // Filtro de Usuário
+  if (filterUser !== 'Todos' && task.assigned_to !== filterUser) return false;
+
+  // Regras das Abas
+  if (activeTab === 'ATRASADOS') return isLate;
+  
+  if (activeTab === 'HOJE') {
+    // Só aparece se for pra hoje E não estiver concluída
+    return isDueToday && !isDone;
+  }
+  
+  if (activeTab === 'Minhas') return userRole === 'admin' ? true : task.assigned_to === user?.id;
+  if (activeTab === 'Todas') return true;
+  
+  // Filtro de Categorias (Trade, Reunião, etc)
+  return task.category === activeTab;
+});
 
   const stats = (() => {
-    const relevant = tasks.filter(task => {
-      const taskDays = task.repeat_days ? task.repeat_days.split(',') : []
-      if (dashFilter === 'HOJE') return (taskDays.includes(todayTag)) || task.due_date === todayDate
-      return taskDays.length > 0 || task.due_date
-    })
-    const total = relevant.length; 
-    const done = relevant.filter(t => {
-      const s = getLastOccurrence(t); const d = t.last_done_date ? new Date(t.last_done_date) : new Date(0)
-      return d.getTime() >= s.getTime()
-    }).length
-    return { total, concluidas: done, pendentes: total - done, porcentagem: total > 0 ? Math.round((done/total)*100) : 0 }
-  })()
+  const relevant = tasks.filter(task => {
+    const taskDays = task.repeat_days ? task.repeat_days.split(',') : [];
+    const isCorrectW = isCorrectWeek(task);
+    // Considera tarefas de hoje ou tarefas com data fixa futura
+    return (taskDays.length > 0 && isCorrectW) || task.due_date;
+  });
+
+  const total = relevant.length; 
+  const done = relevant.filter(t => {
+    const s = getLastOccurrence(t); 
+    const d = t.last_done_date ? new Date(t.last_done_date) : new Date(0);
+    return d.getTime() >= s.getTime();
+  }).length;
+
+  return { 
+    total, 
+    concluidas: done, 
+    pendentes: total - done, 
+    porcentagem: total > 0 ? Math.round((done / total) * 100) : 0 
+  };
+})();
 
   if (!user) return <Login />
 
