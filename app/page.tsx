@@ -3,8 +3,8 @@ import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { 
   Plus, Trash2, CheckCircle2, LayoutDashboard, 
-  LogOut, Calendar, Tag, User, Repeat, X, Check, AlertCircle, TrendingUp,
-  Edit3, FileText, ChevronRight, Activity, Clock, ListChecks, Users
+  LogOut, Calendar, User, X, Check, AlertCircle, TrendingUp,
+  Edit3, ChevronRight, Activity, ListChecks, ChevronDown, ChevronUp, Check
 } from 'lucide-react'
 
 // --- FUNÇÕES DE UTILIDADE (FORA DO COMPONENTE) ---
@@ -349,27 +349,97 @@ export default function App() {
 }
 
 function TaskBox({ task, profiles, onUpdate, onEdit, isLate, isDoneToday, onToggle, userRole }: any) {
-  const canModify = userRole === 'admin' || task.assigned_to === userRole; // Ajuste simples de segurança
-  const subDone = task.subtasks?.filter((s:any)=>s.done).length || 0;
-  const subTotal = task.subtasks?.length || 0;
+  const [expanded, setExpanded] = useState(false); // Controle para abrir/fechar o checklist
+  const canModify = userRole === 'admin' || task.assigned_to === userRole;
+  
+  const subtasks = task.subtasks || [];
+  const subDone = subtasks.filter((s: any) => s.done).length;
+  const subTotal = subtasks.length;
+
+  // Função para dar check em um passo específico
+  const toggleSubtask = async (index: number) => {
+    const newSubtasks = [...subtasks];
+    newSubtasks[index].done = !newSubtasks[index].done;
+
+    const { error } = await supabase
+      .from('tasks')
+      .update({ subtasks: newSubtasks })
+      .eq('id', task.id);
+
+    if (!error) onUpdate();
+  };
 
   return (
-    <div className={`p-6 rounded-[32px] border-[4px] transition-all duration-300 flex items-center gap-6 relative group ${isDoneToday ? 'bg-green-50 border-green-600 shadow-[8px_8px_0px_0px_rgba(22,101,52,1)] opacity-90' : isLate ? 'bg-red-50 border-red-600 animate-pulse shadow-[8px_8px_0px_0px_rgba(153,27,27,1)]' : 'bg-white border-slate-900 shadow-[8px_8px_0px_0px_rgba(15,23,42,1)] hover:translate-x-2'}`}>
-      {isLate && !isDoneToday && (<div className="absolute -top-4 -right-2 bg-red-600 text-white p-1.5 rounded-full border-4 border-white shadow-lg z-10 animate-bounce"><AlertCircle size={20} strokeWidth={3} /></div>)}
-      <button onClick={onToggle} className={`w-16 h-16 rounded-[22px] border-4 flex items-center justify-center transition-all flex-shrink-0 shadow-sm ${isDoneToday ? 'bg-green-600 border-green-700 text-white' : isLate ? 'bg-white border-red-600 text-red-600' : 'bg-white border-slate-200 text-transparent hover:border-blue-500'}`}><CheckCircle2 size={40} strokeWidth={3} /></button>
-      <div className="flex-1 min-w-0 text-left">
-        <h3 className={`text-2xl font-black leading-tight tracking-tight truncate ${isDoneToday ? 'line-through text-green-900/50' : isLate ? 'text-red-900' : 'text-slate-900'}`}>{task.title}</h3>
-        {task.notes && <p className={`text-sm font-bold mt-1 line-clamp-2 ${isDoneToday ? 'text-green-700/40' : isLate ? 'text-red-700/60' : 'text-slate-500'}`}>{task.notes}</p>}
-        {subTotal > 0 && (<div className="flex items-center gap-2 mt-2"><div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden border border-slate-200 max-w-[100px]"><div className="bg-green-500 h-full transition-all" style={{ width: `${Math.round((subDone / subTotal) * 100)}%` }} /></div><span className="text-[8px] font-black text-slate-400 uppercase">{subDone}/{subTotal} PASSOS</span></div>)}
-        <div className="flex flex-wrap gap-2 mt-4 font-black text-[9px] uppercase tracking-widest">
-          <span className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-sm border-2 ${isDoneToday ? 'bg-green-200 border-green-300 text-green-800' : 'bg-[#0F172A] text-white border-slate-800'}`}><User size={10}/> {profiles.find((p: any) => p.id === task.assigned_to)?.full_name || 'Alocado'}</span>
-          <span className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 border-2 shadow-sm ${isDoneToday ? 'bg-green-100 border-green-200 text-green-700' : 'bg-blue-600 border-blue-400 text-white'}`}><Calendar size={10}/> PRÓXIMA: {getNextOccurrence(task)}</span>
-          <span className={`px-3 py-1.5 rounded-lg border-2 shadow-sm ${isDoneToday ? 'bg-green-100 border-green-200 text-green-700' : 'bg-slate-100 border-slate-200 text-slate-900'}`}>{task.category}</span>
+    <div className={`p-6 rounded-[32px] border-[4px] transition-all duration-300 flex flex-col gap-4 relative group 
+      ${isDoneToday ? 'bg-green-50 border-green-600 shadow-[8px_8px_0px_0px_rgba(22,101,52,1)] opacity-90' : 
+        isLate ? 'bg-red-50 border-red-600 animate-pulse shadow-[8px_8px_0px_0px_rgba(153,27,27,1)]' : 
+        'bg-white border-slate-900 shadow-[8px_8px_0px_0px_rgba(15,23,42,1)] hover:translate-x-2'
+      }`}
+    >
+      {isLate && !isDoneToday && (
+        <div className="absolute -top-4 -right-2 bg-red-600 text-white p-1.5 rounded-full border-4 border-white shadow-lg z-10 animate-bounce">
+          <AlertCircle size={20} strokeWidth={3} />
+        </div>
+      )}
+
+      {/* LINHA PRINCIPAL: CHECKBOX + TÍTULO + BOTÕES */}
+      <div className="flex items-center gap-5">
+        <button onClick={onToggle} className={`w-16 h-16 rounded-[22px] border-4 flex items-center justify-center transition-all flex-shrink-0 shadow-sm
+            ${isDoneToday ? 'bg-green-600 border-green-700 text-white' : isLate ? 'bg-white border-red-600 text-red-600' : 'bg-white border-slate-200 text-transparent hover:border-blue-500'}`}>
+          <CheckCircle2 size={40} strokeWidth={3} />
+        </button>
+
+        <div className="flex-1 min-w-0 cursor-pointer" onClick={() => setExpanded(!expanded)}>
+          <h3 className={`text-2xl font-black leading-tight tracking-tight truncate ${isDoneToday ? 'line-through text-green-900/50' : isLate ? 'text-red-900' : 'text-slate-900'}`}>{task.title}</h3>
+          
+          {/* PROGRESSO DE PASSOS */}
+          {subTotal > 0 && (
+            <div className="flex items-center gap-3 mt-1">
+              <div className="flex-1 bg-slate-100 h-2 rounded-full overflow-hidden border border-slate-200">
+                <div className="bg-blue-500 h-full transition-all duration-500" style={{ width: `${(subDone / subTotal) * 100}%` }} />
+              </div>
+              <span className="text-[9px] font-black text-slate-400 uppercase whitespace-nowrap">{subDone}/{subTotal} PASSOS</span>
+              {expanded ? <ChevronUp size={14} className="text-slate-300"/> : <ChevronDown size={14} className="text-slate-300"/>}
+            </div>
+          )}
+        </div>
+
+        <div className="flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+          <button onClick={() => onEdit(task)} className={`p-2 rounded-xl transition-all border-2 ${isDoneToday ? 'text-green-600 border-transparent' : 'text-slate-300 hover:text-blue-600 hover:bg-blue-50 border-transparent'}`}><Edit3 size={24}/></button>
+          <button onClick={async () => { if(confirm('Deseja deletar?')) { await supabase.from('tasks').delete().eq('id', task.id); onUpdate(); } }} className="text-slate-200 hover:text-red-600 p-2 hover:bg-red-50 rounded-xl transition-all"><Trash2 size={24}/></button>
         </div>
       </div>
-      <div className="flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={() => onEdit(task)} className={`p-2 rounded-xl transition-all border-2 ${isDoneToday ? 'text-green-600 border-transparent' : 'text-slate-300 hover:text-blue-600 hover:bg-blue-50 border-transparent'}`}><Edit3 size={24}/></button><button onClick={async () => { if(confirm('Deseja deletar?')) { await supabase.from('tasks').delete().eq('id', task.id); onUpdate(); } }} className="text-slate-200 hover:text-red-600 p-2 hover:bg-red-50 rounded-xl transition-all"><Trash2 size={24}/></button></div>
+
+      {/* ÁREA EXPANSÍVEL: CHECKLIST DE PASSOS */}
+      {expanded && subTotal > 0 && (
+        <div className="mt-2 space-y-2 border-t-2 border-slate-100 pt-4 animate-in slide-in-from-top-2 duration-300">
+          {subtasks.map((sub: any, index: number) => (
+            <div 
+              key={index} 
+              onClick={() => toggleSubtask(index)}
+              className={`flex items-center gap-3 p-3 rounded-2xl border-2 transition-all cursor-pointer
+                ${sub.done ? 'bg-green-100/50 border-green-200 text-green-700 opacity-70' : 'bg-slate-50 border-slate-100 text-slate-700 hover:border-blue-200'}
+              `}
+            >
+              <div className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all
+                ${sub.done ? 'bg-green-500 border-green-500 text-white' : 'bg-white border-slate-300 text-transparent'}
+              `}>
+                <Check size={14} strokeWidth={4} />
+              </div>
+              <span className={`text-xs font-bold ${sub.done ? 'line-through' : ''}`}>{sub.title}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* TAGS INFERIORES */}
+      <div className="flex flex-wrap gap-2 mt-2 font-black text-[9px] uppercase tracking-widest">
+        <span className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-sm border-2 ${isDoneToday ? 'bg-green-200 border-green-300 text-green-800' : 'bg-[#0F172A] text-white border-slate-800'}`}><User size={10}/> {profiles.find((p: any) => p.id === task.assigned_to)?.full_name || 'Alocado'}</span>
+        <span className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 border-2 shadow-sm ${isDoneToday ? 'bg-green-100 border-green-200 text-green-700' : 'bg-blue-600 border-blue-400 text-white'}`}><Calendar size={10}/> PRÓXIMA: {getNextOccurrence(task)}</span>
+        <span className={`px-3 py-1.5 rounded-lg border-2 shadow-sm ${isDoneToday ? 'bg-green-100 border-green-200 text-green-700' : 'bg-slate-100 border-slate-200 text-slate-900'}`}>{task.category}</span>
+      </div>
     </div>
-  )
+  );
 }
 
 function DashboardCard({ label, val, color }: any) {
