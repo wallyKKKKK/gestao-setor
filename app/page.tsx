@@ -85,24 +85,25 @@ export default function App() {
   }
 
   async function addTask() {
-    if (!taskTitle) return
-    const isRecurring = selectedDays.length > 0
-    const { error } = await supabase.from('tasks').insert([{ 
-        title: taskTitle.toUpperCase(), 
-        assigned_to: assignedTo, 
-        status: 'pendente', 
-        category, 
-        notes, 
-        repeat_days: selectedDays.join(','),
-        repeat_interval: repeatInterval,
-        subtasks: [],
-        due_date: isRecurring ? null : new Date().toISOString().split('T')[0] 
-    }])
-    if (!error) { 
-      setTaskTitle(''); setNotes(''); setSelectedDays([]); setRepeatInterval(1); 
-      setShowCreateBox(false); fetchTasks(); 
-    }
+  if (!taskTitle) return
+  const isRecurring = selectedDays.length > 0
+  const { error } = await supabase.from('tasks').insert([{ 
+      title: taskTitle.toUpperCase(), 
+      assigned_to: assignedTo, 
+      status: 'pendente', 
+      category, 
+      notes, 
+      repeat_days: selectedDays.join(','),
+      repeat_interval: repeatInterval,
+      subtasks: tempSubtasks, // SALVA AS SUBTAREFAS AQUI
+      due_date: isRecurring ? null : new Date().toISOString().split('T')[0] 
+  }])
+  if (!error) { 
+    setTaskTitle(''); setNotes(''); setSelectedDays([]); setRepeatInterval(1); 
+    setTempSubtasks([]); // LIMPA AS SUBTAREFAS
+    setShowCreateBox(false); fetchTasks(); 
   }
+}
 
   async function toggleComplete(task: any) {
     const todayDate = new Date().toISOString().split('T')[0]
@@ -212,10 +213,14 @@ export default function App() {
               Supply <span className="text-blue-500 text-sm block tracking-widest not-italic font-medium">Task Builder</span>
             </h1>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-6">
              <button onClick={() => setShowProfileModal(true)} className="flex items-center gap-3 bg-white/5 pl-2 pr-4 py-1.5 rounded-full border border-white/10 hover:bg-white/10 hover:border-blue-500/50 transition-all group shadow-sm">
-                <div className="w-8 h-8 bg-gradient-to-tr from-blue-600 to-indigo-600 rounded-full flex items-center justify-center text-xs font-black shadow-lg">{profiles.find(p => p.id === user.id)?.full_name?.charAt(0) || 'U'}</div>
-                <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-slate-300 group-hover:text-white hidden md:block">{profiles.find(p => p.id === user.id)?.full_name || 'Meu Perfil'} {userRole === 'admin' && '👑'}</span>
+                <div className="w-8 h-8 bg-gradient-to-tr from-blue-600 to-indigo-600 rounded-full flex items-center justify-center text-xs font-black shadow-lg">
+                  {profiles.find(p => p.id === user.id)?.full_name?.charAt(0) || 'U'}
+                </div>
+                <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-slate-300 group-hover:text-white hidden md:block">
+                  {profiles.find(p => p.id === user.id)?.full_name || 'Meu Perfil'} {userRole === 'admin' && '👑'}
+                </span>
              </button>
              <button onClick={() => supabase.auth.signOut().then(() => window.location.reload())} className="text-slate-400 hover:text-red-400 transition-colors"><LogOut size={20}/></button>
           </div>
@@ -227,13 +232,11 @@ export default function App() {
         <div className="max-w-6xl mx-auto flex flex-col gap-4 items-center">
           <div className="inline-flex bg-slate-200/60 p-1 rounded-[24px] backdrop-blur-sm border border-slate-300/50 shadow-inner overflow-x-auto no-scrollbar max-w-full">
             {categories.map(tab => (
-              <button key={tab} onClick={() => setActiveTab(tab)} className={`px-6 py-2.5 rounded-[20px] font-black text-[10px] uppercase tracking-wider transition-all duration-500 whitespace-nowrap ${activeTab === tab ? 'bg-white text-blue-600 shadow-lg scale-100 ring-1 ring-slate-200' : 'text-slate-500 hover:text-slate-900 scale-95 opacity-70'}`}>{tab}</button>
+              <button key={tab} onClick={() => { setActiveTab(tab); setShowCreateBox(false); }} className={`px-6 py-2.5 rounded-[20px] font-black text-[10px] uppercase tracking-wider transition-all duration-500 whitespace-nowrap ${activeTab === tab ? 'bg-white text-blue-600 shadow-lg scale-100 ring-1 ring-slate-200' : 'text-slate-500 hover:text-slate-900 scale-95 opacity-70'}`}>{tab}</button>
             ))}
           </div>
-          
-          {/* FILTRO DE USUÁRIO (PILLS) */}
           <div className="flex items-center gap-2 overflow-x-auto no-scrollbar max-w-full pb-1">
-            <button onClick={() => setFilterUser('Todos')} className={`px-4 py-1.5 rounded-full font-black text-[9px] uppercase border-2 transition-all ${filterUser === 'Todos' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-400 border-slate-100'}`}>Todos</button>
+            <button onClick={() => setFilterUser('Todos')} className={`px-4 py-1.5 rounded-full font-black text-[9px] uppercase border-2 transition-all ${filterUser === 'Todos' ? 'bg-slate-900 text-white border-slate-900 shadow-md' : 'bg-white text-slate-400 border-slate-100'}`}>Todos</button>
             {profiles.map(p => (
               <button key={p.id} onClick={() => setFilterUser(p.id)} className={`px-4 py-1.5 rounded-full font-black text-[9px] uppercase border-2 transition-all flex items-center gap-2 ${filterUser === p.id ? 'bg-blue-600 text-white border-blue-600 shadow-md scale-105' : 'bg-white text-slate-400 border-slate-100'}`}>
                 <div className="w-3 h-3 bg-blue-100 rounded-full text-blue-600 flex items-center justify-center text-[6px]">{p.full_name?.charAt(0)}</div> {p.full_name?.split(' ')[0]}
@@ -243,12 +246,10 @@ export default function App() {
         </div>
       </div>
 
-
       <main className="max-w-4xl mx-auto p-4">
-        {/* DASHBOARD */}
         {activeTab === 'DASHBOARD' ? (
           <div className="mt-6 space-y-6 animate-in fade-in duration-500">
-            <div className="flex flex-col md:flex-row justify-between items-center gap-4">
+             <div className="flex flex-col md:flex-row justify-between items-center gap-4">
               <h2 className="text-3xl font-black uppercase italic tracking-tighter flex items-center gap-2"><TrendingUp className="text-blue-600"/> Performance</h2>
               <div className="flex bg-slate-200 p-1 rounded-2xl border-2 border-slate-900 shadow-sm w-full md:w-auto">
                 <button onClick={() => setDashFilter('HOJE')} className={`flex-1 px-6 py-2 rounded-xl font-black text-xs uppercase transition-all ${dashFilter === 'HOJE' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-500'}`}>Hoje</button>
@@ -268,10 +269,9 @@ export default function App() {
             </div>
           </div>
         ) : activeTab === 'HISTÓRICO' ? (
-          /* HISTÓRICO */
           <div className="mt-8 space-y-6 animate-in slide-in-from-bottom-4 duration-500">
-            <h2 className="text-3xl font-black uppercase italic tracking-tighter">Linha do Tempo</h2>
-            <div className="relative border-l-4 border-slate-200 ml-4 pl-8 space-y-8 py-4">
+             <h2 className="text-3xl font-black uppercase italic tracking-tighter">Linha do Tempo</h2>
+             <div className="relative border-l-4 border-slate-200 ml-4 pl-8 space-y-8 py-4">
               {history.map((log) => (
                 <div key={log.id} className="relative">
                   <div className="absolute -left-[42px] top-0 w-5 h-5 bg-blue-600 rounded-full border-4 border-white shadow-md"></div>
@@ -289,134 +289,72 @@ export default function App() {
           </div>
         ) : (
           <>
-            {/* BOTÃO PARA ABRIR CENTRO DE COMANDO */}
+            {/* GATILHO CENTRO DE COMANDO */}
             <div className="max-w-4xl mx-auto mt-8 mb-4">
-              <button 
-                onClick={() => setShowCreateBox(!showCreateBox)}
-                className={`w-full py-5 rounded-[32px] font-black uppercase tracking-[0.2em] text-[11px] transition-all duration-500 flex items-center justify-center gap-3 border-4 ${
-                  showCreateBox 
-                  ? 'bg-slate-100 border-slate-200 text-slate-400' 
-                  : 'bg-white border-slate-900 text-slate-900 shadow-[10px_10px_0px_0px_rgba(15,23,42,1)] hover:translate-x-1 hover:translate-y-1 hover:shadow-none'
-                }`}
-              >
+              <button onClick={() => setShowCreateBox(!showCreateBox)} className={`w-full py-5 rounded-[32px] font-black uppercase tracking-[0.2em] text-[11px] transition-all duration-500 flex items-center justify-center gap-3 border-4 ${showCreateBox ? 'bg-slate-100 border-slate-200 text-slate-400' : 'bg-white border-slate-900 text-slate-900 shadow-[10px_10px_0px_0px_rgba(15,23,42,1)] hover:translate-x-1 hover:translate-y-1 hover:shadow-none'}`}>
                 {showCreateBox ? <><X size={20} /> Cancelar</> : <><Plus size={20} strokeWidth={3} className="text-blue-600" /> Lançar Nova Missão</>}
               </button>
             </div>
 
-            {/* CENTRO DE COMANDO Oculto */}
+            {/* CENTRO DE COMANDO */}
             {showCreateBox && (
-  <div className="max-w-4xl mx-auto bg-white p-8 rounded-[32px] border border-slate-200 shadow-[0_20px_50px_rgba(0,0,0,0.05)] mb-12 mt-4 relative overflow-hidden animate-in slide-in-from-top-4 duration-500">
-    <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-blue-500 to-indigo-600 opacity-60"></div>
-    
-    <div className="flex flex-col gap-6">
-      {/* TÍTULO */}
-      <input 
-        className="w-full text-3xl font-black outline-none placeholder-slate-300 text-slate-900 bg-transparent border-b-2 border-slate-100 focus:border-blue-500 transition-all pb-3 uppercase" 
-        placeholder="O QUE VAMOS CONSTRUIR?" 
-        value={taskTitle} 
-        onChange={e => setTaskTitle(e.target.value)} 
-      />
+              <div className="max-w-4xl mx-auto bg-white p-8 rounded-[32px] border border-slate-200 shadow-[0_20px_50px_rgba(0,0,0,0.05)] mb-12 mt-4 relative overflow-hidden animate-in slide-in-from-top-4 duration-500">
+                <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-blue-500 to-indigo-600 opacity-60"></div>
+                <div className="flex flex-col gap-6">
+                  <input className="w-full text-3xl font-black outline-none placeholder-slate-300 text-slate-900 bg-transparent border-b-2 border-slate-100 focus:border-blue-500 transition-all pb-3 uppercase" placeholder="O QUE VAMOS CONSTRUIR?" value={taskTitle} onChange={e => setTaskTitle(e.target.value)} />
+                  <textarea className="w-full p-4 bg-slate-50 rounded-2xl font-medium text-slate-700 border border-slate-100 outline-none focus:border-blue-300 focus:bg-white transition-all min-h-[80px] resize-none" placeholder="Coordenadas da tarefa..." value={notes} onChange={e => setNotes(e.target.value)} />
+                  <div className="space-y-3 bg-slate-50/50 p-4 rounded-2xl border border-slate-100">
+                    <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest flex items-center gap-2"><ListChecks size={14} className="text-blue-500"/> Checklist de Passos</label>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      {tempSubtasks.map((sub, index) => (
+                        <div key={index} className="flex items-center gap-2 bg-white p-2 rounded-xl border border-slate-200 shadow-sm">
+                          <input className="flex-1 text-xs font-bold text-slate-600 outline-none" value={sub.title} onChange={(e) => { const newSubs = [...tempSubtasks]; newSubs[index].title = e.target.value; setTempSubtasks(newSubs); }} placeholder="Nome do passo..." />
+                          <button onClick={() => setTempSubtasks(tempSubtasks.filter((_, i) => i !== index))} className="text-red-400 p-1"><X size={14}/></button>
+                        </div>
+                      ))}
+                      <button onClick={() => setTempSubtasks([...tempSubtasks, { title: '', done: false }])} className="flex items-center justify-center gap-2 p-2 border-2 border-dashed border-slate-200 rounded-xl text-slate-400 font-black text-[10px] hover:border-blue-400 transition-all"><Plus size={14}/> Adicionar Passo</button>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-end">
+                    <div className="md:col-span-4 space-y-4">
+                      <select className="w-full p-3.5 bg-slate-50 rounded-xl font-bold text-sm border border-slate-200 text-slate-700 outline-none" value={assignedTo} onChange={e => setAssignedTo(e.target.value)}>{profiles.map(p => <option key={p.id} value={p.id}>{p.full_name || p.id.slice(0,5)}</option>)}</select>
+                      <select className="w-full p-3.5 bg-slate-50 rounded-xl font-bold text-sm border border-slate-200 text-slate-700 outline-none" value={category} onChange={e => setCategory(e.target.value)}><option>Trade</option><option>Reunião</option><option>Geral</option></select>
+                    </div>
+                    <div className="md:col-span-4 space-y-4">
+                      <div className="flex gap-1.5 bg-slate-50 p-1.5 rounded-xl border border-slate-100">{weekDays.map(day => (<button key={day.id} type="button" onClick={() => toggleDay(day.id)} className={`flex-1 h-9 rounded-lg font-black text-xs transition-all ${selectedDays.includes(day.id) ? 'bg-blue-600 text-white shadow-lg scale-105' : 'text-slate-400 hover:bg-slate-200/50'}`}>{day.label}</button>))}</div>
+                      <input type="number" min="1" className="w-full p-3.5 bg-slate-50 rounded-xl font-black border border-slate-200 text-slate-700 outline-none" value={repeatInterval} onChange={e => setRepeatInterval(parseInt(e.target.value) || 1)} />
+                    </div>
+                    <div className="md:col-span-4"><button onClick={addTask} className="w-full py-6 md:py-10 bg-blue-600 hover:bg-[#0F172A] text-white rounded-[32px] font-black uppercase tracking-widest transition-all duration-500 flex flex-col items-center justify-center gap-3 shadow-[0_10px_30px_rgba(37,99,235,0.3)] active:scale-95 group"><Plus className="w-8 h-8 group-hover:rotate-90 transition-transform duration-500" strokeWidth={3} /><span className="text-sm">Lançar Missão</span></button></div>
+                  </div>
+                </div>
+              </div>
+            )}
 
-      {/* OBSERVAÇÕES */}
-      <div className="relative group">
-        <div className="absolute top-4 left-4 text-slate-400 group-focus-within:text-blue-500 transition-colors"><FileText size={18} /></div>
-        <textarea 
-          className="w-full pl-12 p-4 bg-slate-50 rounded-2xl font-medium text-slate-700 border border-slate-100 outline-none focus:border-blue-300 focus:bg-white transition-all min-h-[80px] resize-none" 
-          placeholder="Coordenadas da tarefa..." 
-          value={notes} 
-          onChange={e => setNotes(e.target.value)} 
-        />
-      </div>
-
-      {/* SEÇÃO DE SUBTAREFAS (NOVIDADE) */}
-      <div className="space-y-3 bg-slate-50/50 p-4 rounded-2xl border border-slate-100">
-        <label className="text-[10px] font-black uppercase text-slate-400 ml-1 tracking-widest flex items-center gap-2">
-          <ListChecks size={14} className="text-blue-500"/> Checklist de Passos
-        </label>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-          {tempSubtasks.map((sub, index) => (
-            <div key={index} className="flex items-center gap-2 bg-white p-2 rounded-xl border border-slate-200 shadow-sm">
-              <div className="w-2 h-2 rounded-full bg-blue-500"></div>
-              <input 
-                className="flex-1 text-xs font-bold text-slate-600 outline-none"
-                value={sub.title}
-                onChange={(e) => {
-                  const newSubs = [...tempSubtasks];
-                  newSubs[index].title = e.target.value;
-                  setTempSubtasks(newSubs);
-                }}
-                placeholder="Nome do passo..."
-              />
-              <button onClick={() => setTempSubtasks(tempSubtasks.filter((_, i) => i !== index))} className="text-red-400 p-1"><X size={14}/></button>
+            {/* LISTA */}
+            <div className="space-y-6">
+              <h2 className="font-black uppercase text-slate-400 text-[10px] tracking-[0.3em] px-2 flex items-center gap-2"><ChevronRight size={14} className="text-blue-600" /> {activeTab} • {filteredTasks.length} TAREFAS</h2>
+              {filteredTasks.map(task => {
+                const lastS = getLastOccurrence(task); const lastD = task.last_done_date ? new Date(task.last_done_date) : new Date(0);
+                const isDone = lastD >= lastS; const isLate = !isDone && lastS < today;
+                return (<TaskBox key={task.id} task={task} profiles={profiles} isLate={isLate} isDoneToday={isDone} userRole={userRole} onToggle={() => toggleComplete(task)} onEdit={(t: any) => { setEditingTask(t); setShowEditModal(true); }} onUpdate={fetchTasks} />)
+              })}
             </div>
-          ))}
-          <button 
-            onClick={() => setTempSubtasks([...tempSubtasks, { title: '', done: false }])}
-            className="flex items-center justify-center gap-2 p-2 border-2 border-dashed border-slate-200 rounded-xl text-slate-400 font-black text-[10px] hover:border-blue-400 hover:text-blue-500 transition-all uppercase"
-          >
-            <Plus size={14}/> Adicionar Passo
-          </button>
-        </div>
-      </div>
+          </>
+        )}
+      </main>
 
-      {/* GRID DE CONFIGURAÇÕES E BOTÃO */}
-      <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-end">
-        <div className="md:col-span-4 space-y-4">
-          <div className="flex flex-col">
-            <label className="text-[9px] font-black uppercase text-slate-400 mb-1 ml-1 tracking-widest">Responsável</label>
-            <select className="p-3 bg-slate-50 rounded-xl font-bold text-sm border border-slate-200 text-slate-700 focus:bg-white outline-none" value={assignedTo} onChange={e => setAssignedTo(e.target.value)}>
-              {profiles.map(p => <option key={p.id} value={p.id}>{p.full_name || p.id.slice(0,5)}</option>)}
-            </select>
-          </div>
-          <div className="flex flex-col">
-            <label className="text-[9px] font-black uppercase text-slate-400 mb-1 ml-1 tracking-widest">Setor</label>
-            <select className="p-3 bg-slate-50 rounded-xl font-bold text-sm border border-slate-200 text-slate-700 focus:bg-white outline-none" value={category} onChange={e => setCategory(e.target.value)}>
-              <option>Trade</option><option>Reunião</option><option>Geral</option>
-            </select>
-          </div>
-        </div>
-
-        <div className="md:col-span-4 space-y-4">
-          <label className="text-[9px] font-black uppercase text-slate-400 mb-1 ml-1 tracking-widest">Repetir nos Dias</label>
-          <div className="flex gap-1.5 bg-slate-50 p-1.5 rounded-xl border border-slate-100">
-            {weekDays.map(day => (
-              <button key={day.id} type="button" onClick={() => toggleDay(day.id)} className={`flex-1 h-9 rounded-lg font-black text-xs transition-all ${selectedDays.includes(day.id) ? 'bg-blue-600 text-white shadow-lg scale-105' : 'text-slate-400 hover:bg-slate-200/50'}`}>{day.label}</button>
-            ))}
-          </div>
-          <div className="flex flex-col">
-            <label className="text-[9px] font-black uppercase text-slate-400 mb-1 ml-1 tracking-widest">Intervalo (Semanas)</label>
-            <input type="number" min="1" className="p-3 bg-slate-50 rounded-xl font-black border border-slate-200 text-slate-700 focus:bg-white outline-none" value={repeatInterval} onChange={e => setRepeatInterval(parseInt(e.target.value) || 1)} />
-          </div>
-        </div>
-
-        <div className="md:col-span-4">
-          <button 
-            onClick={addTask} 
-            className="w-full py-6 md:py-10 bg-blue-600 hover:bg-[#0F172A] text-white rounded-[32px] font-black uppercase tracking-widest transition-all duration-500 flex flex-col items-center justify-center gap-3 shadow-[0_10px_30px_rgba(37,99,235,0.3)] group active:scale-95"
-          >
-            <Plus className="w-8 h-8 group-hover:rotate-90 transition-transform duration-500" strokeWidth={3} />
-            <span className="text-sm">Lançar Missão</span>
-          </button>
-        </div>
-      </div>
-    </div>
-  </div>
-)}
-
-      {/* MODAL PERFIL */}
+      {/* MODALS */}
       {showProfileModal && (
         <div className="fixed inset-0 bg-slate-900/90 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
           <div className="bg-white p-10 rounded-[40px] w-full max-w-sm border-4 border-slate-900 shadow-2xl">
             <h2 className="text-2xl font-black uppercase mb-6 tracking-tighter">Configurações</h2>
-            <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Nome Completo</label>
-            <input className="w-full p-4 border-4 border-slate-100 rounded-2xl font-black mb-6 text-slate-900 outline-none focus:border-blue-500" placeholder="Ex: João Silva" value={newName} onChange={e => setNewName(e.target.value)} />
+            <input className="w-full p-4 border-4 border-slate-100 rounded-2xl font-black mb-6 text-slate-900 outline-none focus:border-blue-500" placeholder="Nome Completo" value={newName} onChange={e => setNewName(e.target.value)} />
             <button onClick={updateProfile} className="w-full bg-blue-600 text-white p-5 rounded-3xl font-black uppercase text-lg shadow-lg hover:bg-slate-900 transition-all">Salvar Perfil</button>
             <button onClick={() => setShowProfileModal(false)} className="w-full mt-4 text-slate-400 font-bold uppercase text-[10px] tracking-widest text-center">Fechar</button>
           </div>
         </div>
       )}
 
-      {/* MODAL EDIÇÃO */}
       {showEditModal && editingTask && (
         <div className="fixed inset-0 bg-slate-900/90 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in zoom-in-95">
           <div className="bg-white p-10 rounded-[48px] w-full max-w-2xl border-4 border-slate-900 shadow-2xl overflow-y-auto max-h-[90vh]">
@@ -428,9 +366,8 @@ export default function App() {
               <input className="w-full p-6 border-4 border-slate-100 rounded-3xl font-black text-slate-900 text-2xl" value={editingTask.title} onChange={e => setEditingTask({...editingTask, title: e.target.value})} />
               <textarea className="w-full p-6 bg-slate-50 border-2 border-slate-100 rounded-3xl font-bold text-slate-800 text-lg" rows={3} value={editingTask.notes || ''} onChange={e => setEditingTask({...editingTask, notes: e.target.value})} />
               
-              {/* CHECKLIST NO MODAL DE EDIÇÃO */}
               <div className="space-y-4 border-t border-slate-100 pt-6">
-                <label className="text-[10px] font-black uppercase text-slate-400 ml-1 tracking-widest flex items-center gap-2"><ListChecks size={14} className="text-blue-500"/> Subtarefas / Checklist</label>
+                <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest flex items-center gap-2"><ListChecks size={14} className="text-blue-500"/> Subtarefas / Checklist</label>
                 <div className="space-y-2">
                   {(editingTask.subtasks || []).map((sub: any, index: number) => (
                     <div key={index} className="flex items-center gap-3 bg-slate-50 p-3 rounded-xl border border-slate-200">
@@ -439,7 +376,7 @@ export default function App() {
                       <button onClick={() => { const newSubs = editingTask.subtasks.filter((_:any, i:number) => i !== index); setEditingTask({...editingTask, subtasks: newSubs}); }} className="text-red-400"><X size={16}/></button>
                     </div>
                   ))}
-                  <button onClick={() => { const newSubs = [...(editingTask.subtasks || []), { title: '', done: false }]; setEditingTask({...editingTask, subtasks: newSubs}); }} className="w-full py-3 border-2 border-dashed border-slate-200 rounded-xl text-slate-400 font-bold text-xs hover:border-blue-500 hover:text-blue-500 transition-all">+ ADICIONAR PASSO</button>
+                  <button onClick={() => { const newSubs = [...(editingTask.subtasks || []), { title: '', done: false }]; setEditingTask({...editingTask, subtasks: newSubs}); }} className="w-full py-3 border-2 border-dashed border-slate-200 rounded-xl text-slate-400 font-bold text-xs hover:border-blue-500 transition-all">+ ADICIONAR PASSO</button>
                 </div>
               </div>
 
@@ -447,15 +384,20 @@ export default function App() {
                 <select className="p-4 bg-slate-100 rounded-2xl font-black border-2 border-slate-200" value={editingTask.assigned_to} onChange={e => setEditingTask({...editingTask, assigned_to: e.target.value})}>{profiles.map(p => <option key={p.id} value={p.id}>{p.full_name || p.id.slice(0,5)}</option>)}</select>
                 <select className="p-4 bg-slate-100 rounded-2xl font-black border-2 border-slate-200" value={editingTask.category} onChange={e => setEditingTask({...editingTask, category: e.target.value})}><option>Trade</option><option>Reunião</option><option>Geral</option></select>
               </div>
-              <button onClick={updateTask} className="w-full bg-blue-600 text-white p-6 rounded-[32px] font-black uppercase text-xl shadow-xl hover:bg-slate-900 transition-all flex items-center justify-center gap-3 mt-4"><Check size={32}/> Atualizar Missão</button>
+              
+              <div className="space-y-4">
+                <div className="flex gap-2">{weekDays.map(day => (<button key={day.id} type="button" onClick={() => toggleDayInEdit(day.id)} className={`w-14 h-14 rounded-2xl font-black border-4 transition-all ${editingTask.repeat_days?.split(',').includes(day.id) ? 'bg-blue-600 border-blue-600 text-white scale-110 shadow-lg' : 'bg-white border-slate-200 text-slate-400 opacity-50'}`}>{day.label}</button>))}</div>
+              </div>
+
+              <button onClick={updateTask} className="w-full bg-blue-600 text-white p-6 rounded-[32px] font-black uppercase text-xl shadow-xl hover:bg-[#0F172A] transition-all flex items-center justify-center gap-3 mt-4"><Check size={32}/> Atualizar Missão</button>
             </div>
           </div>
         </div>
       )}
     </div>
-  )
+  );
 }
-
+// AS FUNÇÕES TaskBox, Login, etc. continuam aqui fora como já estavam...
 function TaskBox({ task, profiles, onUpdate, onEdit, isLate, isDoneToday, onToggle, userRole }: any) {
   const canModify = userRole === 'admin' || task.assigned_to === profiles.find((p:any)=>p.id === task.assigned_to)?.id;
   
