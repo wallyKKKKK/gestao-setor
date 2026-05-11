@@ -77,21 +77,29 @@ export default function App() {
   }
 
   async function toggleComplete(task: any) {
-    const todayStr = new Date().toISOString().split('T')[0]
-    const lastS = getLastOccurrence(task)
-    const lastD = task.last_done_date ? new Date(task.last_done_date) : new Date(0)
-    const isDone = lastD.getTime() >= lastS.getTime()
-    const newDate = isDone ? null : todayStr
+  const todayStr = new Date().toISOString().split('T')[0];
+  
+  // Se a data gravada no banco for IGUAL a hoje, significa que queremos "desmarcar"
+  const isDoneToday = task.last_done_date === todayStr;
+  const newDate = isDoneToday ? null : todayStr;
 
-    if (!isDone) {
-      const profile = profiles.find(p => p.id === user.id)
-      await supabase.from('task_history').insert([{
-        task_id: task.id, task_title: task.title, user_name: profile?.full_name || user.email, user_id: user.id, category: task.category
-      }])
-    }
-    await supabase.from('tasks').update({ last_done_date: newDate, status: newDate ? 'concluido' : 'pendente' }).eq('id', task.id)
-    fetchTasks(); fetchHistory();
+  const { error } = await supabase
+    .from('tasks')
+    .update({ 
+      last_done_date: newDate, 
+      status: newDate ? 'concluido' : 'pendente' 
+    })
+    .eq('id', task.id);
+
+  if (error) {
+    console.error("Erro Supabase:", error);
+    alert("Erro ao salvar: " + error.message);
+  } else {
+    // Recarrega as tarefas para o verde aparecer instantaneamente
+    fetchTasks(); 
+    fetchHistory();
   }
+}
 
   async function updateTask() {
     const { error } = await supabase.from('tasks').update({ 
@@ -259,10 +267,29 @@ export default function App() {
             <div className="space-y-6">
               <h2 className="font-black uppercase text-slate-400 text-[10px] tracking-[0.3em] px-2 flex items-center gap-2"><ChevronRight size={14} className="text-blue-600" /> {activeTab} • {filteredTasks.length} TAREFAS</h2>
               {filteredTasks.map(task => {
-                const lS = getLastOccurrence(task); const lD = task.last_done_date ? new Date(task.last_done_date) : new Date(0);
-                const isDone = lD.getTime() >= lS.getTime(); const isLate = !isDone && lS < today;
-                return (<TaskBox key={task.id} task={task} profiles={profiles} isLate={isLate} isDoneToday={isDone} userRole={userRole} onToggle={() => toggleComplete(task)} onEdit={(t: any) => { setEditingTask(t); setShowEditModal(true); }} onUpdate={fetchTasks} />)
-              })}
+  const todayStr = new Date().toISOString().split('T')[0];
+  
+  // REGRA SIMPLES: Se a última conclusão foi HOJE, fica VERDE.
+  const isDoneToday = task.last_done_date === todayStr;
+
+  // Lógica de atraso (mantida para os outros casos)
+  const lS = getLastOccurrence(task);
+  const isLate = !isDoneToday && lS < today;
+
+  return (
+    <TaskBox 
+      key={task.id} 
+      task={task} 
+      profiles={profiles} 
+      isLate={isLate} 
+      isDoneToday={isDoneToday} // Passa o status correto
+      userRole={userRole} 
+      onToggle={() => toggleComplete(task)} 
+      onEdit={(t: any) => { setEditingTask(t); setShowEditModal(true); }} 
+      onUpdate={fetchTasks} 
+    />
+  )
+})}
             </div>
           </>
         )}
