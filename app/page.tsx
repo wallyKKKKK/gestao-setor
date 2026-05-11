@@ -4,7 +4,7 @@ import { supabase } from '@/lib/supabase'
 import { 
   Plus, Trash2, CheckCircle2, LayoutDashboard, 
   LogOut, Calendar, User, X, Check, AlertCircle, TrendingUp,
-  Edit3, ChevronRight, Activity, ListChecks, ChevronDown, ChevronUp
+  Edit3, ChevronRight, Activity, ListChecks, ChevronDown, ChevronUp, FileText
 } from 'lucide-react'
 
 // --- FUNÇÕES DE UTILIDADE (FORA DO COMPONENTE) ---
