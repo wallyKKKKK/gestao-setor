@@ -77,39 +77,30 @@ export default function App() {
   }
 
   async function toggleComplete(task: any) {
-  const todayStr = new Date().toISOString().split('T')[0];
-  const lastS = getLastOccurrence(task);
-  const lastD = task.last_done_date ? new Date(task.last_done_date) : new Date(0);
-  const isCurrentlyDone = lastD.getTime() >= lastS.getTime();
-  const newDate = isCurrentlyDone ? null : todayStr;
+  const todayStr = getTodayStr();
+  const lastScheduledStr = getLastOccurrence(task);
+  
+  // Se a última data que você fez é maior ou igual à última data que era pra fazer, desmarcar
+  const isDone = task.last_done_date && task.last_done_date >= lastScheduledStr;
+  const newDate = isDone ? null : todayStr;
 
-  // --- REGISTRO NO HISTÓRICO ---
-  // Só grava se estivermos saindo de "pendente" para "concluído"
-  if (!isCurrentlyDone) {
+  if (!isDone) {
     const profile = profiles.find(p => p.id === user.id);
-    const { error: histError } = await supabase.from('task_history').insert([{
+    await supabase.from('task_history').insert([{
       task_id: task.id,
       task_title: task.title,
       user_name: profile?.full_name || user.email,
       user_id: user.id,
       category: task.category
     }]);
-    
-    if (histError) console.error("Erro histórico:", histError);
   }
 
-  const { error } = await supabase
-    .from('tasks')
-    .update({ 
-      last_done_date: newDate, 
-      status: newDate ? 'concluido' : 'pendente' 
-    })
-    .eq('id', task.id);
+  const { error } = await supabase.from('tasks').update({ 
+    last_done_date: newDate, 
+    status: newDate ? 'concluido' : 'pendente' 
+  }).eq('id', task.id);
 
-  if (!error) {
-    fetchTasks(); 
-    fetchHistory(); // <--- OBRIGATÓRIO PARA ATUALIZAR A ABA DE HISTÓRICO
-  }
+  if (!error) { fetchTasks(); fetchHistory(); }
 }
 
   async function updateTask() {
@@ -301,54 +292,39 @@ export default function App() {
                   </div>
                 </div>
               </div>
-            )}
-<div className="space-y-6">
-  <h2 className="font-black uppercase text-slate-400 text-[10px] tracking-[0.3em] px-2 flex items-center gap-2">
-    <ChevronRight size={14} className="text-blue-600" /> {activeTab} • {filteredTasks.length} TAREFAS
-  </h2>
-  
-  {filteredTasks.map(task => {
-    // Normalização das datas para comparação precisa
-    const now = new Date();
-    now.setHours(0, 0, 0, 0);
-    const todayTime = now.getTime();
+            )}{filteredTasks.map(task => {
+  const todayStr = getTodayStr();
+  const lastSStr = getLastOccurrence(task);
+  const lastDStr = task.last_done_date || '1970-01-01';
 
-    const lS = getLastOccurrence(task);
-    lS.setHours(0, 0, 0, 0);
-    const lastSTime = lS.getTime();
+  // REGRA: Verde se a data de conclusão for maior ou igual à data agendada
+  const isDone = lastDStr >= lastSStr;
+  const isDueToday = lastSStr === todayStr;
+  const isLate = !isDone && lastSStr < todayStr;
 
-    const lD = task.last_done_date ? new Date(task.last_done_date) : new Date(0);
-    lD.setHours(0, 0, 0, 0);
-    const lastDTime = lD.getTime();
-
-    // Uma tarefa está concluída se foi feita na data agendada ou depois dela
-    const isDone = lastDTime >= lastSTime;
-    const isLate = !isDone && lastSTime < todayTime;
-
-    return (
-      <TaskBox 
-        key={task.id} 
-        task={task} 
-        profiles={profiles} 
-        isLate={isLate} 
-        isDoneToday={isDone} 
-        userRole={userRole} 
-        onToggle={() => toggleComplete(task)} 
-        onEdit={(t: any) => { setEditingTask(t); setShowEditModal(true); }} 
-        onUpdate={fetchTasks} 
-      />
-    );
-  })}
+  return (
+    <TaskBox 
+      key={task.id} 
+      task={task} 
+      profiles={profiles} 
+      isLate={isLate} 
+      isDoneToday={isDone} 
+      userRole={userRole} 
+      onToggle={() => toggleComplete(task)} 
+      onEdit={(t: any) => { setEditingTask(t); setShowEditModal(true); }} 
+      onUpdate={fetchTasks} 
+    />
+  );
+})}
 
   {filteredTasks.length === 0 && (
     <div className="text-center py-20 bg-slate-50 rounded-[32px] border-4 border-dashed border-slate-200">
       <p className="text-slate-400 font-black uppercase tracking-tighter">Nenhuma tarefa por aqui! 🚀</p>
     </div>
   )}
-</div>
-          </>
-        )}
-      </main>
+</div{'>'}
+
+      ((</main>)){'}'}
 
       {/* MODALS: PERFIL E EDIÇÃO */}
       {showProfileModal && (
@@ -426,41 +402,69 @@ function DashboardCard({ label, val, color }: any) {
   return (<div className={`p-8 rounded-[40px] border-4 shadow-[10px_10px_0px_0px_rgba(15,23,42,1)] text-center transition-transform hover:scale-105 ${color}`}><span className="text-[10px] font-black uppercase tracking-[0.2em] block mb-2 opacity-40">{label}</span><span className="text-6xl font-black tracking-tighter">{val}</span></div>)
 }
 
-const getNextOccurrence = (task: any) => {
-  if (!task.repeat_days || task.repeat_days.length === 0) return task.due_date ? new Date(task.due_date).toLocaleDateString('pt-BR', {day:'2-digit', month:'2-digit'}) : '--/--';
-  const today = new Date(); today.setHours(0,0,0,0);
-  const daysMap: any = { seg: 1, ter: 2, qua: 3, qui: 4, sex: 5 };
-  const taskDays = task.repeat_days.split(',').map((d: string) => daysMap[d]);
-  const startDate = new Date(task.created_at); startDate.setHours(0,0,0,0);
-  const startMonday = new Date(startDate); startMonday.setDate(startDate.getDate() - (startDate.getDay() === 0 ? 6 : startDate.getDay() - 1));
-  for (let w = 0; w < 52; w += (task.repeat_interval || 1)) {
-    const currMon = new Date(startMonday); currMon.setDate(startMonday.getDate() + (w * 7));
-    for (let dayOffset of taskDays) {
-      const occurrence = new Date(currMon); occurrence.setDate(currMon.getDate() + (dayOffset - 1));
-      if (occurrence >= today) return occurrence.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-    }
-  }
-  return '--/--';
+const getTodayStr = () => {
+  const date = new Date();
+  const offset = date.getTimezoneOffset();
+  const localDate = new Date(date.getTime() - (offset * 60 * 1000));
+  return localDate.toISOString().split('T')[0];
 };
 
 const getLastOccurrence = (task: any) => {
-  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const todayStr = getTodayStr();
   const daysMap: any = { seg: 1, ter: 2, qua: 3, qui: 4, sex: 5 };
-  if (!task.repeat_days) return task.due_date ? new Date(task.due_date) : new Date(0);
+  if (!task.repeat_days) return task.due_date || '1970-01-01';
+
   const taskDays = task.repeat_days.split(',').map((d: string) => daysMap[d]);
-  const startDate = new Date(task.created_at); startDate.setHours(0, 0, 0, 0);
-  const startMonday = new Date(startDate); startMonday.setDate(startDate.getDate() - (startDate.getDay() === 0 ? 6 : startDate.getDay() - 1));
-  let lastDate = new Date(0);
+  const startDate = new Date(task.created_at);
+  const startMonday = new Date(startDate);
+  startMonday.setDate(startDate.getDate() - (startDate.getDay() === 0 ? 6 : startDate.getDay() - 1));
+
+  let lastDateStr = '1970-01-01';
+
+  for (let w = 0; w < 52; w++) {
+    if (w % (task.repeat_interval || 1) === 0) {
+      const currentWeekMonday = new Date(startMonday);
+      currentWeekMonday.setDate(startMonday.getDate() + (w * 7));
+
+      for (let dayOffset of taskDays) {
+        const occurrence = new Date(currentWeekMonday);
+        occurrence.setDate(currentWeekMonday.getDate() + (dayOffset - 1));
+        const occStr = occurrence.toISOString().split('T')[0];
+        
+        if (occStr <= todayStr) {
+          if (occStr > lastDateStr) lastDateStr = occStr;
+        }
+      }
+    }
+    const nextWeek = new Date(startMonday);
+    nextWeek.setDate(startMonday.getDate() + ((w + 1) * 7));
+    if (nextWeek.toISOString().split('T')[0] > todayStr) break;
+  }
+  return lastDateStr;
+};
+
+const getNextOccurrence = (task: any) => {
+  const todayStr = getTodayStr();
+  const daysMap: any = { seg: 1, ter: 2, qua: 3, qui: 4, sex: 5 };
+  if (!task.repeat_days || task.repeat_days.length === 0) return task.due_date || '--';
+
+  const taskDays = task.repeat_days.split(',').map((d: string) => daysMap[d]);
+  const startDate = new Date(task.created_at);
+  const startMonday = new Date(startDate);
+  startMonday.setDate(startDate.getDate() - (startDate.getDay() === 0 ? 6 : startDate.getDay() - 1));
+
   for (let w = 0; w < 52; w += (task.repeat_interval || 1)) {
     const currMon = new Date(startMonday); currMon.setDate(startMonday.getDate() + (w * 7));
     for (let dayOffset of taskDays) {
       const occurrence = new Date(currMon); occurrence.setDate(currMon.getDate() + (dayOffset - 1));
-      if (occurrence <= today && occurrence.getTime() > lastDate.getTime()) lastDate = occurrence;
+      const occStr = occurrence.toISOString().split('T')[0];
+      if (occStr >= todayStr) {
+        const [y, m, d] = occStr.split('-');
+        return `${d}/${m}`;
+      }
     }
-    const nextWeekMon = new Date(startMonday); nextWeekMon.setDate(startMonday.getDate() + ((w + 1) * 7));
-    if (nextWeekMon > today) break;
   }
-  return lastDate;
+  return '--';
 };
 
 function Login() {
