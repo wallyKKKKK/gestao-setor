@@ -390,20 +390,32 @@ function TaskBox({ task, profiles, onUpdate, onEdit, isLate, isDoneToday, onTogg
         </button>
 
         <div className="flex-1 min-w-0 cursor-pointer" onClick={() => setExpanded(!expanded)}>
-          <h3 className={`text-2xl font-black leading-tight tracking-tight truncate ${isDoneToday ? 'line-through text-green-900/50' : isLate ? 'text-red-900' : 'text-slate-900'}`}>{task.title}</h3>
-          
-          {/* PROGRESSO DE PASSOS */}
-          {subTotal > 0 && (
-            <div className="flex items-center gap-3 mt-1">
-              <div className="flex-1 bg-slate-100 h-2 rounded-full overflow-hidden border border-slate-200">
-                <div className="bg-blue-500 h-full transition-all duration-500" style={{ width: `${(subDone / subTotal) * 100}%` }} />
-              </div>
-              <span className="text-[9px] font-black text-slate-400 uppercase whitespace-nowrap">{subDone}/{subTotal} PASSOS</span>
-              {expanded ? <ChevronUp size={14} className="text-slate-300"/> : <ChevronDown size={14} className="text-slate-300"/>}
-            </div>
-          )}
-        </div>
+  {/* TÍTULO DA TAREFA */}
+  <h3 className={`text-2xl font-black leading-tight tracking-tight truncate ${isDoneToday ? 'line-through text-green-900/50' : isLate ? 'text-red-900' : 'text-slate-900'}`}>
+    {task.title}
+  </h3>
+  
+  {/* DESCRIÇÃO / OBSERVAÇÕES (RESTAURADO) */}
+  {task.notes && (
+    <div className="flex items-start gap-2 mt-1 opacity-70">
+      <FileText size={14} className="mt-0.5 text-slate-400 flex-shrink-0" />
+      <p className={`text-sm font-bold leading-snug line-clamp-2 ${isDoneToday ? 'text-green-700/40' : 'text-slate-500'}`}>
+        {task.notes}
+      </p>
+    </div>
+  )}
 
+  {/* PROGRESSO DE PASSOS */}
+  {subTotal > 0 && (
+    <div className="flex items-center gap-3 mt-3">
+      <div className="flex-1 bg-slate-100 h-2 rounded-full overflow-hidden border border-slate-200">
+        <div className="bg-blue-500 h-full transition-all duration-500" style={{ width: `${(subDone / subTotal) * 100}%` }} />
+      </div>
+      <span className="text-[9px] font-black text-slate-400 uppercase whitespace-nowrap">{subDone}/{subTotal} PASSOS</span>
+      {expanded ? <ChevronUp size={14} className="text-slate-300"/> : <ChevronDown size={14} className="text-slate-300"/>}
+    </div>
+  )}
+</div>
         <div className="flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
           <button onClick={() => onEdit(task)} className={`p-2 rounded-xl transition-all border-2 ${isDoneToday ? 'text-green-600 border-transparent' : 'text-slate-300 hover:text-blue-600 hover:bg-blue-50 border-transparent'}`}><Edit3 size={24}/></button>
           <button onClick={async () => { if(confirm('Deseja deletar?')) { await supabase.from('tasks').delete().eq('id', task.id); onUpdate(); } }} className="text-slate-200 hover:text-red-600 p-2 hover:bg-red-50 rounded-xl transition-all"><Trash2 size={24}/></button>
