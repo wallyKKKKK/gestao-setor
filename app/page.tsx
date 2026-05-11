@@ -27,6 +27,7 @@ export default function App() {
   const [showEditModal, setShowEditModal] = useState(false)
   const [newName, setNewName] = useState('')
   const [editingTask, setEditingTask] = useState<any>(null)
+  const [tempSubtasks, setTempSubtasks] = useState<{title: string, done: boolean}[]>([])
 
   // Criação
   const [taskTitle, setTaskTitle] = useState('')
@@ -303,42 +304,103 @@ export default function App() {
 
             {/* CENTRO DE COMANDO Oculto */}
             {showCreateBox && (
-              <div className="bg-white p-8 rounded-[32px] border border-slate-200 shadow-[0_20px_50px_rgba(0,0,0,0.05)] mb-12 mt-4 relative overflow-hidden animate-in slide-in-from-top-4 duration-500">
-                <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-blue-500 to-indigo-600 opacity-60"></div>
-                <div className="flex flex-col gap-6">
-                  <input className="w-full text-3xl font-black outline-none placeholder-slate-300 text-slate-900 bg-transparent border-b-2 border-slate-100 focus:border-blue-500 transition-all pb-3 uppercase" placeholder="O QUE VAMOS CONSTRUIR?" value={taskTitle} onChange={e => setTaskTitle(e.target.value)} />
-                  <textarea className="w-full p-4 bg-slate-50 rounded-2xl font-medium text-slate-700 border border-slate-100 outline-none focus:border-blue-300 focus:bg-white transition-all min-h-[80px] resize-none" placeholder="Coordenadas da tarefa..." value={notes} onChange={e => setNotes(e.target.value)} />
-                  <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-stretch">
-                    <div className="md:col-span-4 space-y-4">
-                      <div className="flex flex-col"><label className="text-[9px] font-black uppercase text-slate-400 mb-1 ml-1 tracking-widest">Responsável</label>
-                      <select className="p-3.5 bg-slate-50 rounded-xl font-bold text-sm border border-slate-200 text-slate-700 focus:bg-white outline-none" value={assignedTo} onChange={e => setAssignedTo(e.target.value)}>{profiles.map(p => <option key={p.id} value={p.id}>{p.full_name || p.id.slice(0,5)}</option>)}</select></div>
-                      <div className="flex flex-col"><label className="text-[9px] font-black uppercase text-slate-400 mb-1 ml-1 tracking-widest">Setor</label>
-                      <select className="p-3.5 bg-slate-50 rounded-xl font-bold text-sm border border-slate-200 text-slate-700 focus:bg-white outline-none" value={category} onChange={e => setCategory(e.target.value)}><option>Trade</option><option>Reunião</option><option>Geral</option></select></div>
-                    </div>
-                    <div className="md:col-span-4 space-y-4">
-                      <label className="text-[9px] font-black uppercase text-slate-400 mb-1 ml-1 tracking-widest">Repetir nos Dias</label>
-                      <div className="flex gap-1.5 bg-slate-50 p-1.5 rounded-2xl border border-slate-100">{weekDays.map(day => (<button key={day.id} type="button" onClick={() => toggleDay(day.id)} className={`flex-1 h-9 rounded-xl font-black text-xs transition-all ${selectedDays.includes(day.id) ? 'bg-blue-600 text-white shadow-lg scale-105' : 'text-slate-400 hover:bg-slate-200/50'}`}>{day.label}</button>))}</div>
-                      <label className="text-[9px] font-black uppercase text-slate-400 mb-1 ml-1 tracking-widest">Intervalo (Semanas)</label>
-                      <input type="number" min="1" className="p-3.5 bg-slate-50 rounded-xl font-black border border-slate-200 text-slate-700 focus:bg-white outline-none" value={repeatInterval} onChange={e => setRepeatInterval(parseInt(e.target.value) || 1)} />
-                    </div>
-                    <div className="md:col-span-4 flex"><button onClick={addTask} className="w-full bg-blue-600 hover:bg-[#0F172A] text-white rounded-[32px] font-black uppercase tracking-widest transition-all duration-500 flex flex-row md:flex-col items-center justify-center gap-3 shadow-[0_10px_30px_rgba(37,99,235,0.3)] group active:scale-95 py-6 md:py-0"><Plus className="w-8 h-8 group-hover:rotate-90 transition-transform duration-500" strokeWidth={3} /><span className="text-sm">Lançar Missão</span></button></div>
-                  </div>
-                </div>
-              </div>
-            )}
+  <div className="max-w-4xl mx-auto bg-white p-8 rounded-[32px] border border-slate-200 shadow-[0_20px_50px_rgba(0,0,0,0.05)] mb-12 mt-4 relative overflow-hidden animate-in slide-in-from-top-4 duration-500">
+    <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-blue-500 to-indigo-600 opacity-60"></div>
+    
+    <div className="flex flex-col gap-6">
+      {/* TÍTULO */}
+      <input 
+        className="w-full text-3xl font-black outline-none placeholder-slate-300 text-slate-900 bg-transparent border-b-2 border-slate-100 focus:border-blue-500 transition-all pb-3 uppercase" 
+        placeholder="O QUE VAMOS CONSTRUIR?" 
+        value={taskTitle} 
+        onChange={e => setTaskTitle(e.target.value)} 
+      />
 
-            {/* LISTAGEM DE TAREFAS */}
-            <div className="space-y-6">
-              <h2 className="font-black uppercase text-slate-400 text-[10px] tracking-[0.3em] px-2 flex items-center gap-2"><ChevronRight size={14} className="text-blue-600" /> {activeTab} • {filteredTasks.length} ITENS</h2>
-              {filteredTasks.map(task => {
-                const lastS = getLastOccurrence(task); const lastD = task.last_done_date ? new Date(task.last_done_date) : new Date(0)
-                const isDone = lastD >= lastS; const isLate = !isDone && lastS < today;
-                return (<TaskBox key={task.id} task={task} profiles={profiles} isLate={isLate} isDoneToday={isDone} userRole={userRole} onToggle={() => toggleComplete(task)} onEdit={(t: any) => { setEditingTask(t); setShowEditModal(true); }} onUpdate={fetchTasks} />)
-              })}
+      {/* OBSERVAÇÕES */}
+      <div className="relative group">
+        <div className="absolute top-4 left-4 text-slate-400 group-focus-within:text-blue-500 transition-colors"><FileText size={18} /></div>
+        <textarea 
+          className="w-full pl-12 p-4 bg-slate-50 rounded-2xl font-medium text-slate-700 border border-slate-100 outline-none focus:border-blue-300 focus:bg-white transition-all min-h-[80px] resize-none" 
+          placeholder="Coordenadas da tarefa..." 
+          value={notes} 
+          onChange={e => setNotes(e.target.value)} 
+        />
+      </div>
+
+      {/* SEÇÃO DE SUBTAREFAS (NOVIDADE) */}
+      <div className="space-y-3 bg-slate-50/50 p-4 rounded-2xl border border-slate-100">
+        <label className="text-[10px] font-black uppercase text-slate-400 ml-1 tracking-widest flex items-center gap-2">
+          <ListChecks size={14} className="text-blue-500"/> Checklist de Passos
+        </label>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+          {tempSubtasks.map((sub, index) => (
+            <div key={index} className="flex items-center gap-2 bg-white p-2 rounded-xl border border-slate-200 shadow-sm">
+              <div className="w-2 h-2 rounded-full bg-blue-500"></div>
+              <input 
+                className="flex-1 text-xs font-bold text-slate-600 outline-none"
+                value={sub.title}
+                onChange={(e) => {
+                  const newSubs = [...tempSubtasks];
+                  newSubs[index].title = e.target.value;
+                  setTempSubtasks(newSubs);
+                }}
+                placeholder="Nome do passo..."
+              />
+              <button onClick={() => setTempSubtasks(tempSubtasks.filter((_, i) => i !== index))} className="text-red-400 p-1"><X size={14}/></button>
             </div>
-          </>
-        )}
-      </main>
+          ))}
+          <button 
+            onClick={() => setTempSubtasks([...tempSubtasks, { title: '', done: false }])}
+            className="flex items-center justify-center gap-2 p-2 border-2 border-dashed border-slate-200 rounded-xl text-slate-400 font-black text-[10px] hover:border-blue-400 hover:text-blue-500 transition-all uppercase"
+          >
+            <Plus size={14}/> Adicionar Passo
+          </button>
+        </div>
+      </div>
+
+      {/* GRID DE CONFIGURAÇÕES E BOTÃO */}
+      <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-end">
+        <div className="md:col-span-4 space-y-4">
+          <div className="flex flex-col">
+            <label className="text-[9px] font-black uppercase text-slate-400 mb-1 ml-1 tracking-widest">Responsável</label>
+            <select className="p-3 bg-slate-50 rounded-xl font-bold text-sm border border-slate-200 text-slate-700 focus:bg-white outline-none" value={assignedTo} onChange={e => setAssignedTo(e.target.value)}>
+              {profiles.map(p => <option key={p.id} value={p.id}>{p.full_name || p.id.slice(0,5)}</option>)}
+            </select>
+          </div>
+          <div className="flex flex-col">
+            <label className="text-[9px] font-black uppercase text-slate-400 mb-1 ml-1 tracking-widest">Setor</label>
+            <select className="p-3 bg-slate-50 rounded-xl font-bold text-sm border border-slate-200 text-slate-700 focus:bg-white outline-none" value={category} onChange={e => setCategory(e.target.value)}>
+              <option>Trade</option><option>Reunião</option><option>Geral</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="md:col-span-4 space-y-4">
+          <label className="text-[9px] font-black uppercase text-slate-400 mb-1 ml-1 tracking-widest">Repetir nos Dias</label>
+          <div className="flex gap-1.5 bg-slate-50 p-1.5 rounded-xl border border-slate-100">
+            {weekDays.map(day => (
+              <button key={day.id} type="button" onClick={() => toggleDay(day.id)} className={`flex-1 h-9 rounded-lg font-black text-xs transition-all ${selectedDays.includes(day.id) ? 'bg-blue-600 text-white shadow-lg scale-105' : 'text-slate-400 hover:bg-slate-200/50'}`}>{day.label}</button>
+            ))}
+          </div>
+          <div className="flex flex-col">
+            <label className="text-[9px] font-black uppercase text-slate-400 mb-1 ml-1 tracking-widest">Intervalo (Semanas)</label>
+            <input type="number" min="1" className="p-3 bg-slate-50 rounded-xl font-black border border-slate-200 text-slate-700 focus:bg-white outline-none" value={repeatInterval} onChange={e => setRepeatInterval(parseInt(e.target.value) || 1)} />
+          </div>
+        </div>
+
+        <div className="md:col-span-4">
+          <button 
+            onClick={addTask} 
+            className="w-full py-6 md:py-10 bg-blue-600 hover:bg-[#0F172A] text-white rounded-[32px] font-black uppercase tracking-widest transition-all duration-500 flex flex-col items-center justify-center gap-3 shadow-[0_10px_30px_rgba(37,99,235,0.3)] group active:scale-95"
+          >
+            <Plus className="w-8 h-8 group-hover:rotate-90 transition-transform duration-500" strokeWidth={3} />
+            <span className="text-sm">Lançar Missão</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+)}
 
       {/* MODAL PERFIL */}
       {showProfileModal && (
