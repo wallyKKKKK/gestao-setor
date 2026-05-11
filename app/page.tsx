@@ -106,30 +106,30 @@ export default function App() {
 }
 
   async function toggleComplete(task: any) {
-    const todayDate = new Date().toISOString().split('T')[0]
-    const lastS = getLastOccurrence(task)
-    const lastD = task.last_done_date ? new Date(task.last_done_date) : new Date(0)
-    const isCurrentlyDone = lastD >= lastS
-    const newDate = isCurrentlyDone ? null : todayDate
+  const todayDate = new Date().toISOString().split('T')[0];
+  
+  // Lógica: se a data da última conclusão for HOJE, ele desmarca (null).
+  // Se for qualquer outra coisa (ou vazio), ele marca como HOJE.
+  const isCurrentlyDone = task.last_done_date === todayDate;
+  const newDate = isCurrentlyDone ? null : todayDate;
 
-    if (!isCurrentlyDone) {
-      const profile = profiles.find(p => p.id === user.id)
-      await supabase.from('task_history').insert([{
-        task_id: task.id,
-        task_title: task.title,
-        user_name: profile?.full_name || user.email,
-        user_id: user.id,
-        category: task.category
-      }])
-    }
-
-    await supabase.from('tasks').update({ 
+  const { error } = await supabase
+    .from('tasks')
+    .update({ 
       last_done_date: newDate, 
       status: newDate ? 'concluido' : 'pendente' 
-    }).eq('id', task.id)
-    fetchTasks()
-    fetchHistory()
+    })
+    .eq('id', task.id);
+
+  if (error) {
+    console.error("Erro Supabase:", error);
+    alert("Erro ao salvar no banco: " + error.message);
+  } else {
+    // Recarrega as tarefas para o verde aparecer
+    fetchTasks(); 
+    fetchHistory();
   }
+}
 
   async function updateTask() {
     const { error } = await supabase.from('tasks').update({ 
@@ -332,13 +332,37 @@ export default function App() {
 
             {/* LISTA */}
             <div className="space-y-6">
-              <h2 className="font-black uppercase text-slate-400 text-[10px] tracking-[0.3em] px-2 flex items-center gap-2"><ChevronRight size={14} className="text-blue-600" /> {activeTab} • {filteredTasks.length} TAREFAS</h2>
-              {filteredTasks.map(task => {
-                const lastS = getLastOccurrence(task); const lastD = task.last_done_date ? new Date(task.last_done_date) : new Date(0);
-                const isDone = lastD >= lastS; const isLate = !isDone && lastS < today;
-                return (<TaskBox key={task.id} task={task} profiles={profiles} isLate={isLate} isDoneToday={isDone} userRole={userRole} onToggle={() => toggleComplete(task)} onEdit={(t: any) => { setEditingTask(t); setShowEditModal(true); }} onUpdate={fetchTasks} />)
-              })}
-            </div>
+  <h2 className="font-black uppercase text-slate-400 text-[10px] tracking-[0.3em] px-2 flex items-center gap-2">
+    <ChevronRight size={14} className="text-blue-600" /> {activeTab} • {filteredTasks.length} TAREFAS
+  </h2>
+  
+  {filteredTasks.map(task => {
+    const today = new Date(); today.setHours(0,0,0,0);
+    const todayDate = today.toISOString().split('T')[0];
+    
+    // Cálculo de status para o visual
+    const lastS = getLastOccurrence(task); 
+    const lastD = task.last_done_date ? new Date(task.last_done_date) : new Date(0);
+    
+    // Uma tarefa é considerada concluída se foi feita na data agendada ou depois
+    const isDone = lastD.getTime() >= lastS.getTime();
+    const isLate = !isDone && lastS < today;
+
+    return (
+      <TaskBox 
+        key={task.id} 
+        task={task} 
+        profiles={profiles} 
+        isLate={isLate} 
+        isDoneToday={isDone} // Passa o status de verde/branco
+        userRole={userRole} 
+        onToggle={() => toggleComplete(task)} // <--- CONEXÃO CRUCIAL
+        onEdit={(t: any) => { setEditingTask(t); setShowEditModal(true); }} 
+        onUpdate={fetchTasks} 
+      />
+    )
+  })}
+</div>
           </>
         )}
       </main>
