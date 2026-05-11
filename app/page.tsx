@@ -140,35 +140,32 @@ export default function App() {
   }
 
   const filteredTasks = tasks.filter(task => {
-  const lastS = getLastOccurrence(task); 
-  // Zeramos as horas para garantir que a comparação seja apenas por dia
-  lastS.setHours(0,0,0,0);
-  
-  const lastD = task.last_done_date ? new Date(task.last_done_date) : new Date(0);
-  lastD.setHours(0,0,0,0);
-  
-  // REGRA: Está concluída se a data que fiz é maior ou igual à data que era pra fazer
-  const isDone = lastD.getTime() >= lastS.getTime(); 
-  
-  const isDueToday = lastS.getTime() === today.getTime(); 
-  const isLate = !isDone && lastS < today;
+  const now = new Date();
+  now.setHours(0,0,0,0);
+  const todayTime = now.getTime();
 
-  // Filtro de Usuário
+  const lS = getLastOccurrence(task);
+  lS.setHours(0,0,0,0);
+  const lastSTime = lS.getTime();
+
+  const lD = task.last_done_date ? new Date(task.last_done_date) : new Date(0);
+  lD.setHours(0,0,0,0);
+  const lastDTime = lD.getTime();
+
+  const isDone = lastDTime >= lastSTime;
+  const isDueToday = lastSTime === todayTime;
+  const isLate = !isDone && lastSTime < todayTime;
+
   if (filterUser !== 'Todos' && task.assigned_to !== filterUser) return false;
-
-  // --- REGRAS DE EXIBIÇÃO POR ABA ---
   if (activeTab === 'ATRASADOS') return isLate;
   
   if (activeTab === 'HOJE') {
-    // Só aparece se for para hoje E NÃO estiver concluída (isDone tem que ser falso)
-    return isDueToday && !isDone;
+    // SÓ APARECE SE: É para hoje E não foi concluída para este ciclo
+    return isDueToday && !isDone; 
   }
   
   if (activeTab === 'Minhas') return userRole === 'admin' ? true : task.assigned_to === user?.id;
-  
   if (activeTab === 'Todas') return true;
-  
-  // Abas de Categoria (Trade, Reunião, etc)
   return task.category === activeTab;
 });
 
@@ -305,34 +302,50 @@ export default function App() {
                 </div>
               </div>
             )}
-
-            <div className="space-y-6">
-              <h2 className="font-black uppercase text-slate-400 text-[10px] tracking-[0.3em] px-2 flex items-center gap-2"><ChevronRight size={14} className="text-blue-600" /> {activeTab} • {filteredTasks.length} TAREFAS</h2>
-              {filteredTasks.map(task => {
-  const todayStr = new Date().toISOString().split('T')[0];
+<div className="space-y-6">
+  <h2 className="font-black uppercase text-slate-400 text-[10px] tracking-[0.3em] px-2 flex items-center gap-2">
+    <ChevronRight size={14} className="text-blue-600" /> {activeTab} • {filteredTasks.length} TAREFAS
+  </h2>
   
-  // REGRA SIMPLES: Se a última conclusão foi HOJE, fica VERDE.
-  const isDoneToday = task.last_done_date === todayStr;
+  {filteredTasks.map(task => {
+    // Normalização das datas para comparação precisa
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    const todayTime = now.getTime();
 
-  // Lógica de atraso (mantida para os outros casos)
-  const lS = getLastOccurrence(task);
-  const isLate = !isDoneToday && lS < today;
+    const lS = getLastOccurrence(task);
+    lS.setHours(0, 0, 0, 0);
+    const lastSTime = lS.getTime();
 
-  return (
-    <TaskBox 
-      key={task.id} 
-      task={task} 
-      profiles={profiles} 
-      isLate={isLate} 
-      isDoneToday={isDoneToday} // Passa o status correto
-      userRole={userRole} 
-      onToggle={() => toggleComplete(task)} 
-      onEdit={(t: any) => { setEditingTask(t); setShowEditModal(true); }} 
-      onUpdate={fetchTasks} 
-    />
-  )
-})}
-            </div>
+    const lD = task.last_done_date ? new Date(task.last_done_date) : new Date(0);
+    lD.setHours(0, 0, 0, 0);
+    const lastDTime = lD.getTime();
+
+    // Uma tarefa está concluída se foi feita na data agendada ou depois dela
+    const isDone = lastDTime >= lastSTime;
+    const isLate = !isDone && lastSTime < todayTime;
+
+    return (
+      <TaskBox 
+        key={task.id} 
+        task={task} 
+        profiles={profiles} 
+        isLate={isLate} 
+        isDoneToday={isDone} 
+        userRole={userRole} 
+        onToggle={() => toggleComplete(task)} 
+        onEdit={(t: any) => { setEditingTask(t); setShowEditModal(true); }} 
+        onUpdate={fetchTasks} 
+      />
+    );
+  })}
+
+  {filteredTasks.length === 0 && (
+    <div className="text-center py-20 bg-slate-50 rounded-[32px] border-4 border-dashed border-slate-200">
+      <p className="text-slate-400 font-black uppercase tracking-tighter">Nenhuma tarefa por aqui! 🚀</p>
+    </div>
+  )}
+</div>
           </>
         )}
       </main>
