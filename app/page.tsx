@@ -7,10 +7,7 @@ import {
   Activity, Clock, ListChecks, Users, Search, Moon, Sun, Megaphone, Send, ChevronDown, ChevronUp
 } from 'lucide-react'
 
-// ==========================================
-// 1. FUNÇÕES DE DATA (UTILITÁRIOS NO TOPO)
-// ==========================================
-
+// --- UTILITÁRIOS ---
 const getTodayStr = () => {
   const date = new Date();
   const offset = date.getTimezoneOffset();
@@ -61,23 +58,31 @@ const getNextOccurrence = (task: any) => {
   return '--/--';
 };
 
-// ==========================================
-// 2. COMPONENTE PRINCIPAL
-// ==========================================
-
 export default function App() {
-  const [user, setUser] = useState<any>(null); const [userRole, setUserRole] = useState('membro');
-  const [profiles, setProfiles] = useState<any[]>([]); const [tasks, setTasks] = useState<any[]>([]);
-  const [history, setHistory] = useState<any[]>([]); const [announcements, setAnnouncements] = useState<any[]>([]);
-  const [isDarkMode, setIsDarkMode] = useState(false); const [searchTerm, setSearchTerm] = useState('');
-  const [activeTab, setActiveTab] = useState('HOJE'); const [dashFilter, setDashFilter] = useState<'HOJE' | 'SEMANAL'>('HOJE');
-  const [filterUser, setFilterUser] = useState('Todos'); const [showCreateBox, setShowCreateBox] = useState(false);
-  const [showProfileModal, setShowProfileModal] = useState(false); const [showEditModal, setShowEditModal] = useState(false);
-  const [newName, setNewName] = useState(''); const [editingTask, setEditingTask] = useState<any>(null);
-  const [taskTitle, setTaskTitle] = useState(''); const [notes, setNotes] = useState('');
-  const [assignedTo, setAssignedTo] = useState(''); const [category, setCategory] = useState('Trade');
-  const [isPontual, setIsPontual] = useState(false); const [repeatInterval, setRepeatInterval] = useState(1);
-  const [selectedDays, setSelectedDays] = useState<string[]>([]); const [tempSubtasks, setTempSubtasks] = useState<any[]>([]);
+  const [user, setUser] = useState<any>(null);
+  const [userRole, setUserRole] = useState('membro');
+  const [profiles, setProfiles] = useState<any[]>([]);
+  const [tasks, setTasks] = useState<any[]>([]);
+  const [history, setHistory] = useState<any[]>([]);
+  const [announcements, setAnnouncements] = useState<any[]>([]);
+  const [isDarkMode, setIsDarkMode] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [activeTab, setActiveTab] = useState('HOJE');
+  const [dashFilter, setDashFilter] = useState<'HOJE' | 'SEMANAL'>('HOJE');
+  const [filterUser, setFilterUser] = useState('Todos');
+  const [showCreateBox, setShowCreateBox] = useState(false);
+  const [showProfileModal, setShowProfileModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [editingTask, setEditingTask] = useState<any>(null);
+  const [taskTitle, setTaskTitle] = useState('');
+  const [notes, setNotes] = useState('');
+  const [assignedTo, setAssignedTo] = useState('');
+  const [category, setCategory] = useState('Trade');
+  const [isPontual, setIsPontual] = useState(false);
+  const [repeatInterval, setRepeatInterval] = useState(1);
+  const [selectedDays, setSelectedDays] = useState<string[]>([]);
+  const [tempSubtasks, setTempSubtasks] = useState<any[]>([]);
   const [newAnnounce, setNewAnnounce] = useState({ title: '', content: '' });
 
   const categories = ['HOJE', 'ATRASADOS', 'Minhas', 'Todas', 'Trade', 'Reunião', 'COMUNICADOS', 'HISTÓRICO', 'DASHBOARD'];
@@ -86,7 +91,8 @@ export default function App() {
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user) {
-        setUser(session.user); setAssignedTo(session.user.id);
+        setUser(session.user);
+        setAssignedTo(session.user.id);
         supabase.from('profiles').select('role, full_name').eq('id', session.user.id).single().then(({ data }) => {
           if (data) { setUserRole(data.role || 'membro'); setNewName(data.full_name || ''); }
         });
@@ -100,8 +106,14 @@ export default function App() {
   const fetchHistory = async () => { const { data } = await supabase.from('task_history').select('*').order('created_at', { ascending: false }).limit(50); if (data) setHistory(data); }
   const fetchAnnouncements = async () => { const { data } = await supabase.from('announcements').select('*').order('created_at', { ascending: false }); if (data) setAnnouncements(data); }
 
+  async function updateProfile() {
+    await supabase.from('profiles').update({ full_name: newName }).eq('id', user.id);
+    setShowProfileModal(false); fetchProfiles();
+  }
+
   async function addTask() {
     if (!taskTitle) return;
+    const isRecurring = selectedDays.length > 0;
     const { error } = await supabase.from('tasks').insert([{ 
         title: taskTitle.toUpperCase(), assigned_to: assignedTo, status: 'pendente', category, notes, 
         repeat_days: isPontual ? "" : selectedDays.join(','), repeat_interval: isPontual ? 1 : repeatInterval,
@@ -147,11 +159,6 @@ export default function App() {
     setEditingTask({ ...editingTask, repeat_days: newDays.join(',') });
   };
 
-  async function updateProfile() {
-    await supabase.from('profiles').update({ full_name: newName }).eq('id', user.id);
-    setShowProfileModal(false); fetchProfiles();
-  }
-
   async function updateTask() {
     const { error } = await supabase.from('tasks').update({ 
       title: editingTask.title.toUpperCase(), notes: editingTask.notes, assigned_to: editingTask.assigned_to,
@@ -163,45 +170,70 @@ export default function App() {
   if (!user) return <Login />;
 
   return (
-    <div className={`min-h-screen transition-colors duration-300 ${isDarkMode ? 'bg-[#0A0A0A] text-white' : 'bg-[#F0F2F5] text-slate-900'} pb-20 font-sans`}>
+    <div className={`min-h-screen transition-colors duration-500 ${isDarkMode ? 'bg-[#0F111A] text-slate-100' : 'bg-[#F9FAFB] text-slate-900'} pb-20 font-sans`}>
       
-      {/* HEADER BRUTALISTA */}
-      <nav className={`sticky top-0 z-40 border-b-4 border-black px-6 h-20 flex justify-between items-center ${isDarkMode ? 'bg-[#1A1A1A]' : 'bg-[#0F172A]'} text-white shadow-xl`}>
-        <div className="flex items-center gap-3">
-          <div className="bg-blue-600 p-2 rounded-lg border-2 border-white shadow-lg"><Activity size={24} /></div>
-          <h1 className="text-xl font-black italic tracking-tighter uppercase">SUPPLY <span className="text-blue-500">PRO</span></h1>
-        </div>
-        <div className="flex items-center gap-4">
-           <button onClick={() => setIsDarkMode(!isDarkMode)} className="p-2 bg-white/10 rounded-xl hover:bg-blue-600 border-2 border-transparent hover:border-white transition-all">{isDarkMode ? <Sun size={20}/> : <Moon size={20}/>}</button>
-           <button onClick={() => setShowProfileModal(true)} className="flex items-center gap-3 bg-white/10 px-4 py-1.5 rounded-full border-2 border-white/20 hover:border-white">
-              <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-xs font-black border-2 border-white shadow-md">{userRole === 'admin' ? '👑' : 'U'}</div>
-              <span className="text-[11px] font-black uppercase hidden md:block">{newName || 'Perfil'}</span>
-           </button>
-           <button onClick={() => supabase.auth.signOut().then(() => window.location.reload())} className="text-red-500 p-2 hover:bg-red-500 hover:text-white rounded-lg transition-all"><LogOut size={20}/></button>
+      {/* NAVBAR HIGH-END */}
+      <nav className={`sticky top-0 z-50 backdrop-blur-xl border-b transition-all ${isDarkMode ? 'bg-[#161B22]/80 border-white/5' : 'bg-white/80 border-slate-200'}`}>
+        <div className="max-w-7xl mx-auto px-6 h-16 flex justify-between items-center">
+          <div className="flex items-center gap-3">
+            <div className="bg-indigo-600 p-2 rounded-xl shadow-indigo-500/20 shadow-lg">
+              <Activity size={20} className="text-white" />
+            </div>
+            <h1 className="text-lg font-bold tracking-tight">SUPPLY<span className="text-indigo-600">BUILDER</span></h1>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <button onClick={() => setIsDarkMode(!isDarkMode)} className={`p-2 rounded-full transition-all ${isDarkMode ? 'hover:bg-white/10 text-yellow-400' : 'hover:bg-slate-100 text-slate-500'}`}>
+              {isDarkMode ? <Sun size={18}/> : <Moon size={18}/>}
+            </button>
+            <div className="h-6 w-[1px] bg-slate-200 dark:bg-white/10 mx-2" />
+            <button onClick={() => setShowProfileModal(true)} className={`flex items-center gap-2 pl-1 pr-3 py-1 rounded-full border transition-all ${isDarkMode ? 'bg-white/5 border-white/10 hover:bg-white/10' : 'bg-slate-50 border-slate-200 hover:bg-slate-100'}`}>
+              <div className="w-7 h-7 bg-indigo-600 rounded-full flex items-center justify-center text-[10px] font-black text-white shadow-md">
+                {newName?.charAt(0) || 'U'}
+              </div>
+              <span className="text-[11px] font-semibold uppercase tracking-wider hidden sm:block">{newName || 'Perfil'}</span>
+            </button>
+            <button onClick={() => supabase.auth.signOut().then(() => window.location.reload())} className="text-slate-400 hover:text-red-500 transition-colors p-2">
+              <LogOut size={18}/>
+            </button>
+          </div>
         </div>
       </nav>
 
-      {/* FILTROS E PESQUISA (REAJUSTADOS) */}
-      <div className={`sticky top-20 z-30 border-b-4 border-black py-4 px-4 shadow-2xl transition-colors ${isDarkMode ? 'bg-[#1A1A1A]' : 'bg-white'}`}>
-        <div className="max-w-6xl mx-auto space-y-4">
-          <div className="flex flex-col md:flex-row gap-4">
-            {/* PESQUISA */}
-            <div className="relative flex-1">
-              <Search className="absolute left-4 top-4 text-slate-400" size={18} />
-              <input className={`w-full pl-12 pr-4 py-3.5 rounded-2xl border-4 border-black font-black outline-none transition-all ${isDarkMode ? 'bg-[#222] text-white focus:border-blue-500' : 'bg-slate-50 focus:border-blue-500'}`} placeholder="PESQUISAR MISSÃO..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+      {/* FILTER BAR (CLEAN & FLOATING) */}
+      <div className={`sticky top-16 z-40 border-b transition-all ${isDarkMode ? 'bg-[#0F111A]/95 border-white/5' : 'bg-[#F9FAFB]/95 border-slate-200'}`}>
+        <div className="max-w-5xl mx-auto px-6 py-4 space-y-4">
+          <div className="flex flex-col md:flex-row gap-4 items-center justify-between">
+            <div className="relative w-full md:w-72">
+              <Search className="absolute left-3.5 top-3 text-slate-400" size={16} />
+              <input 
+                className={`w-full pl-10 pr-4 py-2.5 rounded-2xl text-sm border-0 ring-1 outline-none transition-all ${isDarkMode ? 'bg-white/5 ring-white/10 focus:ring-indigo-500' : 'bg-white ring-slate-200 focus:ring-indigo-500 shadow-sm'}`} 
+                placeholder="Buscar missão..." 
+                value={searchTerm} 
+                onChange={e => setSearchTerm(e.target.value)} 
+              />
             </div>
-            {/* ABAS */}
-            <div className={`inline-flex p-1.5 rounded-[22px] border-4 border-black overflow-x-auto no-scrollbar ${isDarkMode ? 'bg-[#222]' : 'bg-slate-100'}`}>
+
+            <div className={`flex p-1 rounded-xl ring-1 overflow-x-auto no-scrollbar max-w-full ${isDarkMode ? 'bg-black/20 ring-white/5' : 'bg-slate-200/50 ring-slate-200'}`}>
               {categories.map(tab => (
-                <button key={tab} onClick={() => { setActiveTab(tab); setShowCreateBox(false); }} className={`px-5 py-2 rounded-2xl font-black text-[10px] uppercase transition-all whitespace-nowrap ${activeTab === tab ? 'bg-blue-600 text-white shadow-md ring-2 ring-white scale-105' : 'text-slate-500 opacity-70 hover:opacity-100'}`}>{tab}</button>
+                <button 
+                  key={tab} 
+                  onClick={() => setActiveTab(tab)} 
+                  className={`px-4 py-1.5 rounded-lg text-[10px] font-bold uppercase transition-all whitespace-nowrap ${
+                    activeTab === tab 
+                    ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/30' 
+                    : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+                  }`}
+                >{tab}</button>
               ))}
             </div>
           </div>
-          {/* FILTRO DE USUÁRIOS */}
-          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
-            <button onClick={() => setFilterUser('Todos')} className={`px-5 py-2 rounded-xl font-black text-[10px] uppercase border-4 border-black transition-all ${filterUser === 'Todos' ? 'bg-black text-white' : 'bg-white text-slate-400'}`}>TODOS</button>
+
+          <div className="flex items-center gap-3 overflow-x-auto no-scrollbar py-1">
+            <span className="text-[10px] font-bold uppercase text-slate-400 tracking-widest flex items-center gap-1.5"><Users size={12}/> Agentes:</span>
+            <button onClick={() => setFilterUser('Todos')} className={`px-3 py-1 rounded-full text-[9px] font-bold uppercase border transition-all ${filterUser === 'Todos' ? 'bg-slate-900 text-white dark:bg-indigo-600 border-transparent' : 'bg-white border-slate-200 dark:bg-white/5 dark:border-white/10 text-slate-500'}`}>Todos</button>
             {profiles.map(p => (
-              <button key={p.id} onClick={() => setFilterUser(p.id)} className={`px-5 py-2 rounded-xl font-black text-[10px] uppercase border-4 border-black flex items-center gap-2 transition-all ${filterUser === p.id ? 'bg-blue-600 text-white scale-105' : 'bg-white text-slate-400'}`}>
+              <button key={p.id} onClick={() => setFilterUser(p.id)} className={`px-3 py-1 rounded-full text-[9px] font-bold uppercase border transition-all flex items-center gap-1.5 ${filterUser === p.id ? 'bg-indigo-600 text-white border-transparent shadow-md' : 'bg-white border-slate-200 dark:bg-white/5 dark:border-white/10 text-slate-500 hover:border-indigo-400'}`}>
                 {p.full_name?.split(' ')[0]}
               </button>
             ))}
@@ -209,105 +241,97 @@ export default function App() {
         </div>
       </div>
 
-      <main className="max-w-4xl mx-auto p-4">
+      <main className="max-w-5xl mx-auto p-6">
         {activeTab === 'DASHBOARD' ? (
-          <div className="mt-6 space-y-8 animate-in fade-in">
-             <div className="flex justify-between items-center px-2">
-              <h2 className={`text-4xl font-black italic tracking-tighter flex items-center gap-4 ${isDarkMode ? 'text-white' : 'text-black'}`}><TrendingUp size={40} className="text-blue-600"/> PERFORMANCE</h2>
-              <div className="flex bg-slate-200 p-1 rounded-2xl border-4 border-black">
-                <button onClick={() => setDashFilter('HOJE')} className={`px-6 py-2 rounded-xl font-black text-xs uppercase transition-all ${dashFilter === 'HOJE' ? 'bg-black text-white shadow-lg' : 'text-slate-500'}`}>Hoje</button>
-                <button onClick={() => setDashFilter('SEMANAL')} className={`px-6 py-2 rounded-xl font-black text-xs uppercase transition-all ${dashFilter === 'SEMANAL' ? 'bg-black text-white shadow-lg' : 'text-slate-500'}`}>Semanal</button>
-              </div>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <DashboardCard label={`META ${dashFilter}`} val={stats.total} color={isDarkMode ? 'bg-[#222] border-white' : 'bg-white border-black'} />
-              <DashboardCard label="SUCESSO" val={stats.concluidas} color="bg-green-500 text-white border-black" />
-              <DashboardCard label="PENDÊNCIA" val={stats.pendentes} color="bg-red-500 text-white border-black" />
-            </div>
-            <div className={`p-16 rounded-[60px] border-8 border-black shadow-[20px_20px_0px_0px_#3b82f6] text-center ${isDarkMode ? 'bg-[#222]' : 'bg-white'}`}>
-                <h3 className={`text-[12rem] font-black tracking-tighter leading-none mb-6 ${isDarkMode ? 'text-white' : 'text-black'}`}>{stats.porcentagem}%</h3>
-                <div className="w-full bg-slate-100 h-20 rounded-[30px] border-4 border-black overflow-hidden p-1.5 shadow-inner">
-                  <div className="bg-gradient-to-r from-blue-600 to-green-500 h-full rounded-[20px] transition-all duration-1000" style={{ width: `${stats.porcentagem}%` }} />
-               </div>
-            </div>
-          </div>
-        ) : activeTab === 'COMUNICADOS' ? (
-           <div className="mt-8 space-y-6">
-            {userRole === 'admin' && (
-              <div className={`p-8 rounded-[40px] border-4 border-black shadow-[15px_15px_0px_0px_#000] ${isDarkMode ? 'bg-[#222]' : 'bg-white'}`}>
-                <h3 className="font-black uppercase text-xl mb-4 flex items-center gap-3"><Megaphone size={28}/> LANÇAR COMUNICADO</h3>
-                <input className="w-full p-5 rounded-2xl mb-4 font-black border-4 border-black text-slate-900 bg-slate-50" placeholder="TÍTULO DO ALERTA" value={newAnnounce.title} onChange={e => setNewAnnounce({...newAnnounce, title: e.target.value})} />
-                <textarea className="w-full p-5 rounded-2xl mb-4 font-bold border-4 border-black text-slate-900 bg-slate-50" placeholder="MENSAGEM..." rows={3} value={newAnnounce.content} onChange={e => setNewAnnounce({...newAnnounce, content: e.target.value})} />
-                <button onClick={async () => { await supabase.from('announcements').insert([{ ...newAnnounce, author_id: user.id }]); setNewAnnounce({title:'', content:''}); fetchAnnouncements(); }} className="w-full bg-blue-600 text-white p-5 rounded-[28px] font-black uppercase text-xl border-4 border-black shadow-lg">PUBLICAR AGORA</button>
-              </div>
-            )}
-            <div className="space-y-6">
-              {announcements.map(a => (
-                <div key={a.id} className={`p-8 rounded-[45px] border-4 border-black shadow-[12px_12px_0px_0px_#3b82f6] ${isDarkMode ? 'bg-[#222]' : 'bg-white text-black'}`}>
-                  <h4 className="text-3xl font-black mb-3 uppercase italic underline decoration-blue-600 underline-offset-8">{a.title}</h4>
-                  <p className="text-xl font-bold opacity-80 mb-6">{a.content}</p>
-                  <div className="text-[10px] font-black uppercase opacity-40 italic tracking-[0.2em] border-t-4 pt-4 border-black/10">POSTADO EM {new Date(a.created_at).toLocaleString('pt-BR')} • ADMIN SUPREMO</div>
+          <div className="space-y-8 animate-in fade-in duration-700">
+             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <DashboardCard label="Monitorados" val={stats.total} isDark={isDarkMode} />
+                <DashboardCard label="Concluídos" val={stats.concluidas} color="text-emerald-500" isDark={isDarkMode} />
+                <DashboardCard label="Pendentes" val={stats.pendentes} color="text-rose-500" isDark={isDarkMode} />
+             </div>
+             <div className={`p-16 rounded-[40px] border transition-all text-center ${isDarkMode ? 'bg-[#161B22] border-white/5' : 'bg-white border-slate-100 shadow-xl shadow-slate-200/50'}`}>
+                <div className="inline-flex items-center justify-center p-8 rounded-full bg-indigo-600/10 mb-6">
+                  <Activity size={48} className="text-indigo-600" />
                 </div>
-              ))}
-            </div>
+                <h3 className="text-8xl font-black tracking-tighter mb-4">{stats.porcentagem}%</h3>
+                <p className="text-xs font-bold uppercase text-slate-400 tracking-[0.3em]">Eficiência Operacional {dashFilter}</p>
+                <div className="mt-10 max-w-md mx-auto bg-slate-100 dark:bg-white/5 h-3 rounded-full overflow-hidden">
+                  <div className="bg-indigo-600 h-full transition-all duration-1000 shadow-[0_0_20px_rgba(79,70,229,0.5)]" style={{ width: `${stats.porcentagem}%` }} />
+                </div>
+             </div>
           </div>
         ) : (
           <>
-            <div className="mt-8 mb-10">
-              <button onClick={() => setShowCreateBox(!showCreateBox)} className={`w-full py-6 rounded-[35px] border-4 border-black font-black uppercase tracking-[0.4em] text-sm transition-all shadow-[12px_12px_0px_0px_#000] hover:translate-x-1 hover:translate-y-1 hover:shadow-none ${isDarkMode ? 'bg-white text-black' : 'bg-white text-black'}`}>
-                {showCreateBox ? <X size={28} strokeWidth={4}/> : <Plus size={28} strokeWidth={4} className="text-blue-600"/>} LANÇAR NOVA MISSÃO
+            {/* CLEAN ACTION BUTTON */}
+            <div className="mb-8 flex justify-center">
+              <button 
+                onClick={() => setShowCreateBox(!showCreateBox)} 
+                className={`flex items-center gap-3 px-8 py-3.5 rounded-full font-bold text-xs uppercase tracking-widest transition-all ${
+                  showCreateBox 
+                  ? 'bg-slate-200 dark:bg-white/10 text-slate-600 dark:text-white' 
+                  : 'bg-indigo-600 text-white shadow-xl shadow-indigo-600/25 hover:scale-105 active:scale-95'
+                }`}
+              >
+                {showCreateBox ? <X size={18}/> : <Plus size={18}/>}
+                {showCreateBox ? 'Fechar Painel' : 'Nova Missão'}
               </button>
             </div>
 
+            {/* HIGH-END COMMAND CENTER */}
             {showCreateBox && (
-              <div className={`p-10 rounded-[55px] border-4 border-black shadow-[20px_20px_0px_0px_rgba(0,0,0,0.1)] mb-12 animate-in slide-in-from-top-6 ${isDarkMode ? 'bg-[#1A1A1A]' : 'bg-white'}`}>
-                <input className={`w-full text-5xl font-black outline-none bg-transparent mb-10 border-b-4 uppercase ${isDarkMode ? 'text-white border-blue-500' : 'text-black border-slate-100 focus:border-blue-500'}`} placeholder="NOME DA MISSÃO" value={taskTitle} onChange={e => setTaskTitle(e.target.value)} />
-                <textarea className={`w-full p-8 rounded-[40px] mb-10 font-bold text-xl border-4 border-black ${isDarkMode ? 'bg-[#222] text-white' : 'bg-slate-50 text-black'}`} placeholder="INSTRUÇÕES E COORDENADAS..." rows={3} value={notes} onChange={e => setNotes(e.target.value)} />
+              <div className={`p-8 rounded-[32px] border mb-12 animate-in slide-in-from-top-8 duration-500 shadow-2xl ${isDarkMode ? 'bg-[#161B22] border-white/10' : 'bg-white border-slate-100'}`}>
+                <input className={`w-full text-4xl font-bold bg-transparent outline-none mb-8 placeholder-slate-300 ${isDarkMode ? 'text-white' : 'text-slate-900'}`} placeholder="Nome da missão" value={taskTitle} onChange={e => setTaskTitle(e.target.value)} />
+                <textarea className={`w-full p-6 rounded-2xl mb-8 font-medium text-lg border transition-all ${isDarkMode ? 'bg-white/5 border-white/10 focus:bg-white/10' : 'bg-slate-50 border-slate-100 focus:bg-white focus:ring-1 focus:ring-indigo-200 shadow-inner'}`} placeholder="Instruções e notas técnicas..." rows={2} value={notes} onChange={e => setNotes(e.target.value)} />
                 
-                <div className="space-y-6 bg-blue-600/5 p-8 rounded-[45px] border-4 border-dashed border-blue-600/20 mb-10">
-                  <label className="text-xs font-black uppercase tracking-widest flex items-center gap-3"><ListChecks size={22} className="text-blue-600"/> CHECKLIST DE PASSOS</label>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {tempSubtasks.map((sub, index) => (
-                      <div key={index} className="flex items-center gap-4 bg-white p-4 rounded-[25px] border-4 border-black shadow-md">
-                        <input className="flex-1 text-sm font-black text-black outline-none" value={sub.title} onChange={(e) => { const n = [...tempSubtasks]; n[index].title = e.target.value; setTempSubtasks(n); }} placeholder="DEFINIR PASSO..." />
-                        <button onClick={() => setTempSubtasks(tempSubtasks.filter((_, i) => i !== index))} className="text-red-500 p-1 hover:bg-red-50 rounded-lg transition-all"><X size={20}/></button>
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-8 items-end">
+                   <div className="md:col-span-4 space-y-4">
+                      <div className="flex flex-col">
+                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Agente Alocado</label>
+                        <select disabled={userRole === 'membro'} className="w-full p-3 rounded-xl bg-indigo-600 text-white font-bold text-sm border-none shadow-lg appearance-none cursor-pointer" value={assignedTo} onChange={e => setAssignedTo(e.target.value)}>
+                          {profiles.map(p => <option key={p.id} value={p.id} className="text-slate-900">{p.full_name}</option>)}
+                        </select>
                       </div>
-                    ))}
-                    <button onClick={() => setTempSubtasks([...tempSubtasks, { title: '', done: false }])} className="flex items-center justify-center gap-3 p-4 border-4 border-dashed border-black/20 rounded-[25px] text-slate-400 font-black text-xs hover:border-blue-600 hover:text-blue-600 transition-all">+ ADICIONAR PASSO</button>
-                  </div>
-                </div>
+                      <div className="flex flex-col">
+                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Segmento</label>
+                        <select className={`w-full p-3 rounded-xl font-bold text-sm border ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-white border-slate-200'}`} value={category} onChange={e => setCategory(e.target.value)}>
+                          <option>Trade</option><option>Reunião</option><option>Geral</option>
+                        </select>
+                      </div>
+                   </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-8 items-end">
-                   <div className="space-y-4">
-                      <label className="text-[11px] font-black uppercase opacity-40 ml-2">AGENTE RESPONSÁVEL</label>
-                      <select disabled={userRole === 'membro'} className="w-full p-5 bg-blue-600 text-white rounded-[25px] font-black border-4 border-black shadow-xl appearance-none text-lg" value={assignedTo} onChange={e => setAssignedTo(e.target.value)}>
-                        {profiles.map(p => <option key={p.id} value={p.id} className="text-black">{p.full_name}</option>)}
-                      </select>
-                   </div>
-                   <div className="space-y-4">
-                      <label className="text-[11px] font-black uppercase opacity-40 ml-2">TIPO DE OPERAÇÃO</label>
-                      <button onClick={() => setIsPontual(!isPontual)} className={`w-full p-5 rounded-[25px] font-black uppercase text-xs border-4 border-black transition-all ${isPontual ? 'bg-orange-500 text-white shadow-[8px_8px_0px_0px_#000]' : 'bg-slate-100 text-slate-500'}`}>
-                        {isPontual ? '⚡ MISSÃO ÚNICA' : '🔄 RECORRENTE'}
-                      </button>
-                   </div>
-                   {!isPontual && (
-                     <div className="space-y-4">
-                        <label className="text-[11px] font-black uppercase opacity-40 ml-2 italic tracking-widest">AGENDAMENTO</label>
-                        <div className="flex gap-2 bg-slate-200 p-2 rounded-[25px] border-4 border-black shadow-inner">
-                           {weekDays.map(day => (<button key={day.id} type="button" onClick={() => toggleDay(day.id)} className={`flex-1 h-12 rounded-2xl font-black text-xs border-2 border-black/10 transition-all ${selectedDays.includes(day.id) ? 'bg-blue-600 text-white scale-110 shadow-lg' : 'bg-white text-slate-400'}`}>{day.label}</button>))}
+                   <div className="md:col-span-5 space-y-4">
+                      <div className="flex flex-col">
+                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Frequência Semanal</label>
+                        <div className={`flex gap-1 p-1 rounded-xl border ${isDarkMode ? 'bg-black/20 border-white/10' : 'bg-slate-100 border-slate-200'}`}>
+                          {weekDays.map(day => (<button key={day.id} type="button" onClick={() => toggleDay(day.id)} className={`flex-1 h-9 rounded-lg font-black text-[10px] transition-all ${selectedDays.includes(day.id) ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-600'}`}>{day.label}</button>))}
                         </div>
-                        <div className="flex items-center gap-3 bg-white p-3 rounded-[20px] border-4 border-black shadow-md"><Repeat size={18} className="text-blue-600"/><input type="number" min="1" className="w-full bg-transparent font-black text-lg outline-none" value={repeatInterval} onChange={e => setRepeatInterval(parseInt(e.target.value))} /><span className="text-[10px] font-black opacity-30 whitespace-nowrap">SEMANAS</span></div>
-                     </div>
-                   )}
+                      </div>
+                      <div className="flex items-center gap-4">
+                        <button onClick={() => setIsPontual(!isPontual)} className={`flex-1 p-3 rounded-xl text-[10px] font-bold uppercase transition-all ${isPontual ? 'bg-amber-500 text-white shadow-lg shadow-amber-500/30' : 'bg-slate-100 dark:bg-white/5 text-slate-400'}`}>
+                          {isPontual ? '⚡ Única' : '🔄 Recorrente'}
+                        </button>
+                        {!isPontual && (
+                          <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/10">
+                            <Repeat size={14} className="text-slate-400"/>
+                            <input type="number" min="1" className="w-8 bg-transparent font-bold text-sm text-center" value={repeatInterval} onChange={e => setRepeatInterval(parseInt(e.target.value))} />
+                            <span className="text-[9px] font-bold text-slate-400">Semanas</span>
+                          </div>
+                        )}
+                      </div>
+                   </div>
+
+                   <div className="md:col-span-3">
+                      <button onClick={addTask} className="w-full bg-slate-900 dark:bg-indigo-600 text-white p-5 rounded-2xl font-bold uppercase text-xs tracking-widest shadow-2xl hover:scale-105 active:scale-95 transition-all">Lançar Missão</button>
+                   </div>
                 </div>
-                <button onClick={addTask} className="w-full mt-14 bg-blue-600 text-white p-8 rounded-[45px] font-black uppercase text-3xl border-4 border-black shadow-[15px_15px_0px_0px_#000] hover:bg-black active:translate-y-2 transition-all flex items-center justify-center gap-6">
-                  <div className="bg-white/20 p-3 rounded-full flex items-center justify-center border-4 border-white/30"><Plus size={40} strokeWidth={4}/></div> LANÇAR MISSÃO NO SISTEMA
-                </button>
               </div>
             )}
 
-            <div className="space-y-12">
-              <h2 className="font-black uppercase text-slate-400 text-sm tracking-[0.5em] px-4 flex items-center gap-4"><ChevronRight size={24} className="text-blue-600" /> {activeTab} • {filteredTasks.length} MISSÕES</h2>
+            {/* TASK LIST (CLEAN & SEPARATED) */}
+            <div className="space-y-4">
+              <h2 className="text-[10px] font-bold uppercase text-slate-400 tracking-[0.3em] px-2 flex items-center gap-2 mb-6">
+                <div className="w-8 h-[1px] bg-slate-200 dark:bg-white/10"/> {activeTab} • {filteredTasks.length} MISSÕES
+              </h2>
               {filteredTasks.map(task => {
                 const lSStr = getLastOccurrence(task); const lDStr = task.last_done_date || '1970-01-01';
                 const isDone = lDStr >= lSStr; const isLate = !isDone && lSStr < getTodayStr();
@@ -318,58 +342,55 @@ export default function App() {
         )}
       </main>
 
-      {/* MODAL PERFIL */}
+      {/* MODAL PERFIL (CLEAN) */}
       {showProfileModal && (
-        <div className="fixed inset-0 bg-black/95 z-50 flex items-center justify-center p-4 backdrop-blur-xl animate-in fade-in">
-          <div className="bg-white p-12 rounded-[60px] w-full max-w-sm border-8 border-black shadow-[25px_25px_0px_0px_#3b82f6]">
-            <h2 className="text-4xl font-black uppercase mb-10 text-black tracking-tighter italic underline decoration-blue-600">IDENTIDADE</h2>
-            <label className="text-[11px] font-black uppercase text-slate-400 ml-2 tracking-widest">NOME COMPLETO DO AGENTE</label>
-            <input className="w-full p-6 border-4 border-black rounded-[28px] font-black text-2xl mb-10 text-black outline-none bg-slate-50 focus:bg-white" placeholder="EX: WALLY LOHAN" value={newName} onChange={e => setNewName(e.target.value)} />
-            <button onClick={updateProfile} className="w-full bg-blue-600 text-white p-7 rounded-[30px] font-black uppercase text-2xl border-4 border-black shadow-xl hover:bg-black transition-all">SALVAR DADOS</button>
-            <button onClick={() => setShowProfileModal(false)} className="w-full mt-6 text-slate-400 font-black uppercase text-xs tracking-widest">VOLTAR</button>
+        <div className="fixed inset-0 bg-slate-900/60 z-[60] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
+          <div className={`p-10 rounded-[32px] w-full max-w-sm shadow-2xl ${isDarkMode ? 'bg-[#161B22] text-white' : 'bg-white text-slate-900'}`}>
+            <h2 className="text-xl font-bold mb-8">Configurar Identidade</h2>
+            <div className="space-y-4">
+              <input className={`w-full p-4 rounded-xl border transition-all ${isDarkMode ? 'bg-white/5 border-white/10 focus:border-indigo-500' : 'bg-slate-50 border-slate-100 focus:bg-white focus:ring-2 focus:ring-indigo-100'}`} placeholder="Nome Completo" value={newName} onChange={e => setNewName(e.target.value)} />
+              <button onClick={updateProfile} className="w-full bg-indigo-600 text-white p-4 rounded-xl font-bold shadow-xl shadow-indigo-600/20 hover:scale-[1.02] transition-all">Salvar Dados</button>
+              <button onClick={() => setShowProfileModal(false)} className="w-full text-slate-400 font-bold text-xs uppercase tracking-widest mt-2">Voltar</button>
+            </div>
           </div>
         </div>
       )}
 
-      {/* MODAL EDIÇÃO (Sincronizado com as novas funções) */}
+      {/* MODAL EDIÇÃO (ULTRA MODERN) */}
       {showEditModal && editingTask && (
-        <div className="fixed inset-0 bg-black/95 z-50 flex items-center justify-center p-4 backdrop-blur-2xl animate-in zoom-in-95">
-          <div className={`p-14 rounded-[70px] w-full max-w-3xl border-[10px] border-blue-600 shadow-2xl overflow-y-auto max-h-[95vh] ${isDarkMode ? 'bg-[#111] text-white' : 'bg-white text-black'}`}>
-             <h2 className="text-5xl font-black italic uppercase mb-12 tracking-tighter text-blue-600">MODIFICAR MISSÃO</h2>
-             <div className="space-y-10">
-                <div className="space-y-4">
-                  <label className="text-[11px] font-black uppercase opacity-40 ml-2 tracking-[0.2em]">IDENTIFICAÇÃO DA TAREFA</label>
-                  <input className={`w-full text-4xl font-black bg-transparent border-b-8 uppercase ${isDarkMode ? 'text-white border-slate-700' : 'text-black border-slate-100'}`} value={editingTask.title} onChange={e => setEditingTask({...editingTask, title: e.target.value})} />
-                </div>
+        <div className="fixed inset-0 bg-slate-900/60 z-[60] flex items-center justify-center p-4 backdrop-blur-md animate-in zoom-in-95">
+          <div className={`p-12 rounded-[40px] w-full max-w-2xl shadow-[0_30px_80px_rgba(0,0,0,0.4)] overflow-y-auto max-h-[90vh] ${isDarkMode ? 'bg-[#161B22] border border-white/5' : 'bg-white'}`}>
+             <div className="flex justify-between items-center mb-10">
+               <h2 className="text-2xl font-bold tracking-tight">Editar Missão</h2>
+               <button onClick={() => setShowEditModal(false)} className="text-slate-400 hover:text-slate-600"><X size={24}/></button>
+             </div>
+             <div className="space-y-8">
+                <input className={`w-full text-3xl font-bold bg-transparent outline-none border-b transition-all ${isDarkMode ? 'text-white border-white/10 focus:border-indigo-500' : 'text-slate-900 border-slate-100 focus:border-indigo-600'}`} value={editingTask.title} onChange={e => setEditingTask({...editingTask, title: e.target.value})} />
+                <textarea className={`w-full p-6 rounded-2xl font-medium border transition-all ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-100 focus:bg-white'}`} rows={3} value={editingTask.notes || ''} onChange={e => setEditingTask({...editingTask, notes: e.target.value})} />
                 
-                <div className="space-y-4">
-                  <label className="text-[11px] font-black uppercase opacity-40 ml-2 tracking-[0.2em]">NOTAS DE OPERAÇÃO</label>
-                  <textarea className={`w-full p-8 border-4 border-black rounded-[45px] font-bold text-2xl ${isDarkMode ? 'bg-[#222]' : 'bg-slate-50'}`} rows={3} value={editingTask.notes || ''} onChange={e => setEditingTask({...editingTask, notes: e.target.value})} />
+                <div className="grid grid-cols-2 gap-6">
+                   <div className="space-y-2">
+                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Responsável</label>
+                     <select className={`w-full p-4 rounded-xl font-bold border ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-white border-slate-200'}`} value={editingTask.assigned_to} onChange={e => setEditingTask({...editingTask, assigned_to: e.target.value})}>
+                       {profiles.map(p => <option key={p.id} value={p.id} className="text-slate-900">{p.full_name}</option>)}
+                     </select>
+                   </div>
+                   <div className="space-y-2">
+                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Intervalo (Semanas)</label>
+                     <input type="number" className={`w-full p-4 rounded-xl font-bold border ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200'}`} value={editingTask.repeat_interval || 1} onChange={e => setEditingTask({...editingTask, repeat_interval: parseInt(e.target.value)})} />
+                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                  <div className="space-y-4">
-                    <label className="text-[11px] font-black uppercase opacity-40 tracking-[0.2em]">RESPONSÁVEL ATUAL</label>
-                    <select className="w-full p-6 rounded-[30px] bg-blue-600 text-white border-4 border-black font-black text-2xl appearance-none shadow-xl" value={editingTask.assigned_to} onChange={e => setEditingTask({...editingTask, assigned_to: e.target.value})}>
-                      {profiles.map(p => <option key={p.id} value={p.id} className="text-black">{p.full_name}</option>)}
-                    </select>
-                  </div>
-                  <div className="space-y-4">
-                    <label className="text-[11px] font-black uppercase opacity-40 tracking-[0.2em]">INTERVALO (SEMANAS)</label>
-                    <input type="number" className="w-full p-6 rounded-[30px] bg-slate-100 text-black border-4 border-black font-black text-3xl text-center shadow-inner" value={editingTask.repeat_interval || 1} onChange={e => setEditingTask({...editingTask, repeat_interval: parseInt(e.target.value)})} />
-                  </div>
-                </div>
-
-                <div className="space-y-6">
-                  <label className="text-[11px] font-black uppercase opacity-40 tracking-[0.2em]">ATUALIZAR DIAS DA SEMANA</label>
-                  <div className="flex gap-3 bg-slate-100 p-3 rounded-[35px] border-4 border-black shadow-inner">
+                <div className="space-y-3">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Ajustar Dias</label>
+                  <div className={`flex gap-1 p-1 rounded-xl border ${isDarkMode ? 'bg-black/20 border-white/10' : 'bg-slate-100 border-slate-200'}`}>
                     {weekDays.map(day => (
-                      <button key={day.id} type="button" onClick={() => toggleDayInEdit(day.id)} className={`flex-1 h-16 rounded-[25px] font-black text-xl border-4 transition-all ${editingTask.repeat_days?.split(',').includes(day.id) ? 'bg-blue-600 border-black text-white scale-110 shadow-lg' : 'bg-white border-slate-200 text-slate-300 opacity-50'}`}>{day.label}</button>
+                      <button key={day.id} type="button" onClick={() => toggleDayInEdit(day.id)} className={`flex-1 h-10 rounded-lg font-black text-[10px] transition-all ${editingTask.repeat_days?.split(',').includes(day.id) ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}>{day.label}</button>
                     ))}
                   </div>
                 </div>
 
-                <button onClick={updateTask} className="w-full bg-slate-900 text-white p-9 rounded-[50px] font-black uppercase text-3xl border-4 border-blue-600 shadow-[15px_15px_0px_0px_#3b82f6] hover:bg-black active:scale-95 transition-all">CONSOLIDAR MUDANÇAS</button>
+                <button onClick={updateTask} className="w-full bg-indigo-600 text-white p-6 rounded-2xl font-bold uppercase text-xs tracking-widest shadow-xl shadow-indigo-600/20 hover:scale-[1.02] transition-all mt-4">Confirmar Alterações</button>
              </div>
           </div>
         </div>
@@ -378,9 +399,7 @@ export default function App() {
   )
 }
 
-// ==========================================
-// 3. COMPONENTES AUXILIARES (Design Maximizados)
-// ==========================================
+// --- COMPONENTES AUXILIARES ---
 
 function TaskBox({ task, profiles, isLate, isDoneToday, onToggle, onEdit, onUpdate, userRole, currentUserId, isDarkMode }: any) {
   const [expanded, setExpanded] = useState(false);
@@ -396,49 +415,68 @@ function TaskBox({ task, profiles, isLate, isDoneToday, onToggle, onEdit, onUpda
   };
 
   return (
-    <div className={`p-10 rounded-[60px] border-[6px] transition-all duration-500 flex flex-col gap-8 relative group shadow-[15px_15px_0px_0px_rgba(0,0,0,1)] ${isDoneToday ? 'bg-green-100/50 border-green-600 opacity-60' : isLate ? 'bg-red-100/50 border-red-600 animate-pulse' : isDarkMode ? 'bg-[#1A1A1A] border-white text-white' : 'bg-white border-black hover:-translate-y-2'}`}>
-      <div className="flex items-center gap-10">
-        {/* CHECKBOX GIGANTE */}
-        <button onClick={onToggle} className={`w-24 h-24 rounded-[35px] border-[8px] flex items-center justify-center transition-all flex-shrink-0 shadow-2xl ${isDoneToday ? 'bg-green-600 border-black text-white rotate-6' : 'bg-white border-black text-transparent hover:border-blue-600 hover:scale-110'}`}>
-          <Check size={55} strokeWidth={8}/>
+    <div className={`p-5 rounded-3xl border transition-all duration-300 flex flex-col gap-4 relative group ${
+      isDoneToday 
+      ? 'bg-slate-50 dark:bg-white/5 border-transparent opacity-60' 
+      : isLate 
+        ? 'bg-rose-50 dark:bg-rose-500/10 border-rose-200 dark:border-rose-500/30 shadow-lg shadow-rose-500/10' 
+        : isDarkMode ? 'bg-[#161B22] border-white/5 hover:border-indigo-500/50 shadow-2xl shadow-black/40' : 'bg-white border-slate-100 hover:border-indigo-200 shadow-xl shadow-slate-200/40 hover:-translate-y-1'
+    }`}>
+      <div className="flex items-center gap-5">
+        {/* CHECKMARK SOFT */}
+        <button 
+          onClick={onToggle} 
+          className={`w-11 h-11 rounded-2xl border-2 flex items-center justify-center transition-all flex-shrink-0 ${
+            isDoneToday 
+            ? 'bg-emerald-500 border-emerald-500 text-white' 
+            : isLate ? 'border-rose-400 text-transparent' : 'border-slate-200 dark:border-white/10 text-transparent hover:border-indigo-500'
+          }`}
+        >
+          <Check size={20} strokeWidth={4} />
         </button>
         
         <div className="flex-1 min-w-0 cursor-pointer" onClick={() => setExpanded(!expanded)}>
-          <h3 className={`text-5xl font-black leading-none tracking-tighter uppercase mb-4 ${isDoneToday ? 'line-through opacity-30' : isLate ? 'text-red-900' : ''}`}>
+          <h3 className={`text-lg font-bold tracking-tight transition-all ${isDoneToday ? 'line-through text-slate-400' : isLate ? 'text-rose-900 dark:text-rose-200' : 'text-slate-900 dark:text-slate-100'}`}>
             {task.title}
           </h3>
           
           {subTotal > 0 && (
-            <div className="flex items-center gap-6 mt-4">
-              <div className="flex-1 bg-black/10 h-6 rounded-full border-[3px] border-black overflow-hidden p-1 shadow-inner">
-                <div className="bg-blue-600 h-full rounded-full transition-all duration-1000 shadow-md" style={{ width: `${(subDone / subTotal) * 100}%` }} />
+            <div className="flex items-center gap-3 mt-1.5">
+              <div className="flex-1 bg-slate-100 dark:bg-white/5 h-1.5 rounded-full overflow-hidden border border-slate-200/50 dark:border-transparent">
+                <div className="bg-indigo-600 h-full transition-all duration-700" style={{ width: `${(subDone / subTotal) * 100}%` }} />
               </div>
-              <span className="text-[12px] font-black opacity-30 uppercase tracking-[0.3em] whitespace-nowrap">{subDone} / {subTotal} PASSOS</span>
-              {expanded ? <ChevronUp size={24} className="opacity-20" /> : <ChevronDown size={24} className="opacity-20" />}
+              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">{subDone}/{subTotal}</span>
+              {expanded ? <ChevronUp size={12} className="text-slate-300"/> : <ChevronDown size={12} className="text-slate-300"/>}
             </div>
           )}
 
-          <div className="flex flex-wrap gap-4 mt-8">
-            <span className="bg-black text-white px-5 py-2.5 rounded-2xl text-[11px] font-black uppercase tracking-widest flex items-center gap-3 border-2 border-white/10 shadow-lg"><User size={16}/> {profiles.find(p => p.id === task.assigned_to)?.full_name || 'ALOCADO'}</span>
-            <span className="bg-blue-600 text-white px-5 py-2.5 rounded-2xl text-[11px] font-black uppercase tracking-widest border-4 border-black shadow-[5px_5px_0px_0px_#000]"><Calendar size={16}/> PRÓXIMA: {getNextOccurrence(task)}</span>
-            <span className={`px-5 py-2.5 rounded-2xl text-[11px] font-black uppercase border-4 border-black ${isDarkMode ? 'bg-slate-700 border-white' : 'bg-slate-100 border-black'}`}>{task.category}</span>
+          <div className="flex flex-wrap gap-2 mt-3">
+            <span className={`px-2.5 py-1 rounded-lg text-[9px] font-bold uppercase tracking-wider flex items-center gap-1.5 border transition-all ${isDarkMode ? 'bg-white/5 border-white/5 text-slate-300' : 'bg-slate-100 border-slate-100 text-slate-600'}`}>
+              <User size={10} className="text-indigo-500"/> {profiles.find(p => p.id === task.assigned_to)?.full_name || 'Alocado'}
+            </span>
+            <span className={`px-2.5 py-1 rounded-lg text-[9px] font-bold uppercase tracking-wider border transition-all ${isDarkMode ? 'bg-indigo-600/10 border-indigo-600/20 text-indigo-400' : 'bg-indigo-50 border-indigo-100 text-indigo-600'}`}>
+              {task.category}
+            </span>
+            <span className={`px-2.5 py-1 rounded-lg text-[9px] font-bold uppercase border transition-all ${isDarkMode ? 'bg-black/20 border-white/5 text-slate-400' : 'bg-white border-slate-200 text-slate-400'}`}>
+              <Calendar size={10}/> Próxima: {getNextOccurrence(task)}
+            </span>
           </div>
         </div>
 
         {canModify && (
-          <div className="flex flex-col gap-4 opacity-0 group-hover:opacity-100 transition-all scale-75 group-hover:scale-100">
-            <button onClick={() => onEdit(task)} className="p-5 bg-white border-[5px] border-black rounded-[30px] text-blue-600 shadow-[8px_8px_0px_0px_#3b82f6] hover:bg-blue-50 transition-all"><Edit3 size={32} strokeWidth={3}/></button>
-            <button onClick={async () => { if(confirm('DELETAR MISSÃO DO SISTEMA?')) { await supabase.from('tasks').delete().eq('id', task.id); onUpdate(); } }} className="p-5 bg-white border-[5px] border-black rounded-[30px] text-red-600 shadow-[8px_8px_0px_0px_#ef4444] hover:bg-red-50 transition-all"><Trash2 size={32} strokeWidth={3}/></button>
+          <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            <button onClick={() => onEdit(task)} className="p-2 text-slate-400 hover:text-indigo-600 transition-all rounded-lg hover:bg-indigo-50 dark:hover:bg-white/5"><Edit3 size={18}/></button>
+            <button onClick={async () => { if(confirm('Excluir?')) { await supabase.from('tasks').delete().eq('id', task.id); onUpdate(); } }} className="p-2 text-slate-400 hover:text-rose-500 transition-all rounded-lg hover:bg-rose-50 dark:hover:bg-white/5"><Trash2 size={18}/></button>
           </div>
         )}
       </div>
 
       {expanded && subTotal > 0 && (
-        <div className="mt-6 space-y-4 border-t-[6px] border-black/5 pt-10 animate-in slide-in-from-top-10 duration-700">
+        <div className="mt-2 space-y-2 border-t border-slate-100 dark:border-white/5 pt-4 animate-in slide-in-from-top-2 duration-300">
           {subtasks.map((sub: any, idx: number) => (
-            <div key={idx} onClick={() => toggleSub(idx)} className={`flex items-center gap-6 p-7 rounded-[40px] border-4 transition-all cursor-pointer shadow-2xl ${sub.done ? 'bg-green-600/10 border-green-600 opacity-40 scale-[0.98]' : 'bg-slate-50 border-black hover:translate-x-4'}`}>
-              <div className={`w-14 h-14 rounded-[22px] border-[6px] flex items-center justify-center transition-all ${sub.done ? 'bg-green-600 border-black text-white' : 'bg-white border-black text-transparent'}`}><Check size={32} strokeWidth={8} /></div>
-              <span className={`text-3xl font-black uppercase tracking-tight ${sub.done ? 'line-through' : 'text-black'}`}>{sub.title}</span>
+            <div key={idx} onClick={() => toggleSub(idx)} className={`flex items-center gap-3 p-3 rounded-xl border transition-all cursor-pointer ${sub.done ? 'bg-emerald-500/5 border-emerald-500/20 text-emerald-600 opacity-60' : 'bg-slate-50 dark:bg-white/5 border-slate-100 dark:border-transparent hover:border-indigo-400'}`}>
+              <div className={`w-5 h-5 rounded-lg border-2 flex items-center justify-center transition-all ${sub.done ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300 text-transparent'}`}><Check size={12} strokeWidth={5} /></div>
+              <span className={`text-xs font-bold ${sub.done ? 'line-through' : ''}`}>{sub.title}</span>
             </div>
           ))}
         </div>
@@ -447,11 +485,11 @@ function TaskBox({ task, profiles, isLate, isDoneToday, onToggle, onEdit, onUpda
   )
 }
 
-function DashboardCard({ label, val, color }: any) {
+function DashboardCard({ label, val, color, isDark }: any) {
   return (
-    <div className={`p-12 rounded-[60px] border-[6px] border-black shadow-[15px_15px_0px_0px_rgba(0,0,0,1)] text-center transition-all hover:scale-105 hover:rotate-1 ${color}`}>
-      <span className="text-[13px] font-black uppercase tracking-[0.4em] block mb-6 opacity-30 italic leading-none">{label}</span>
-      <span className="text-8xl font-black tracking-tighter leading-none">{val}</span>
+    <div className={`p-8 rounded-[32px] border transition-all ${isDark ? 'bg-[#161B22] border-white/5' : 'bg-white border-slate-100 shadow-xl shadow-slate-200/40 hover:-translate-y-1'}`}>
+      <span className="text-[10px] font-bold uppercase tracking-[0.3em] block mb-2 opacity-40 italic">{label}</span>
+      <span className={`text-5xl font-black tracking-tight ${color || (isDark ? 'text-white' : 'text-slate-900')}`}>{val}</span>
     </div>
   )
 }
@@ -463,15 +501,16 @@ function Login() {
     if (error) alert(error.message); else window.location.reload()
   }
   return (
-    <div className="min-h-screen bg-[#050505] flex items-center justify-center p-6 font-sans">
-      <div className="bg-white p-16 rounded-[80px] w-full max-w-md border-b-[30px] border-blue-600 shadow-[0_0_100px_rgba(59,130,246,0.3)] text-center">
-        <div className="bg-blue-600 w-24 h-24 rounded-[35px] flex items-center justify-center mx-auto mb-10 shadow-[0_0_50px_rgba(37,99,235,0.6)] rotate-12 border-[6px] border-white"><Activity className="text-white" size={48} strokeWidth={3}/></div>
-        <h1 className="text-8xl font-black italic uppercase tracking-tighter text-black leading-[0.8]">SUPPLY<br/><span className="text-blue-600 text-4xl not-italic tracking-[0.3em] font-medium opacity-90 uppercase">Tasker</span></h1>
-        <div className="space-y-6 mt-16">
-          <input className="w-full p-8 bg-slate-50 border-[6px] border-black rounded-[35px] font-black text-2xl text-black outline-none focus:border-blue-600 transition-all placeholder-slate-300" placeholder="E-MAIL AGENTE" onChange={e => setEmail(e.target.value)} />
-          <input className="w-full p-8 bg-slate-50 border-[6px] border-black rounded-[35px] font-black text-2xl text-black outline-none focus:border-blue-600 transition-all" type="password" placeholder="SENHA ACESSO" onChange={e => setPassword(e.target.value)} />
-          <button onClick={processAuth} className="w-full bg-black text-white p-8 rounded-[35px] font-black uppercase text-2xl hover:bg-blue-600 transition-all shadow-2xl active:translate-y-2 mt-6 border-b-[10px] border-blue-900">{isSignUp ? 'CADASTRAR AGENTE' : 'ACESSAR CENTRO'}</button>
-          <button onClick={() => setIsSignUp(!isSignUp)} className="w-full text-sm font-black text-slate-400 uppercase tracking-[0.4em] text-center mt-8 hover:text-blue-600 transition-colors">{isSignUp ? 'JÁ POSSUO ACESSO' : 'SOLICITAR NOVA CONTA'}</button>
+    <div className="min-h-screen bg-[#0F111A] flex items-center justify-center p-6">
+      <div className="bg-white p-12 rounded-[48px] w-full max-w-sm shadow-[0_40px_100px_rgba(0,0,0,0.4)] text-center relative overflow-hidden">
+        <div className="absolute top-0 left-0 w-full h-2 bg-indigo-600"></div>
+        <div className="bg-indigo-600 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-8 shadow-xl shadow-indigo-600/40 rotate-12"><Activity className="text-white" size={32}/></div>
+        <h1 className="text-4xl font-bold tracking-tighter text-slate-900 leading-none mb-10">SUPPLY<br/><span className="text-indigo-600">PRO</span></h1>
+        <div className="space-y-4">
+          <input className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-100 transition-all border border-slate-100" placeholder="E-MAIL" onChange={e => setEmail(e.target.value)} />
+          <input className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-100 transition-all border border-slate-100" type="password" placeholder="SENHA" onChange={e => setPassword(e.target.value)} />
+          <button onClick={processAuth} className="w-full bg-slate-900 text-white p-5 rounded-2xl font-bold uppercase text-xs tracking-widest shadow-2xl hover:bg-indigo-600 transition-all mt-4">{isSignUp ? 'Criar Acesso' : 'Entrar no Sistema'}</button>
+          <button onClick={() => setIsSignUp(!isSignUp)} className="w-full text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-6 hover:text-indigo-600 transition-colors">{isSignUp ? 'Voltar para login' : 'Solicitar nova conta'}</button>
         </div>
       </div>
     </div>
