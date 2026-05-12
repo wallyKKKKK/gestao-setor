@@ -7,7 +7,7 @@ import {
   Activity, Clock, ListChecks, Users, Search, Moon, Sun, Megaphone, Send, ChevronDown, ChevronUp
 } from 'lucide-react'
 
-// --- UTILITÁRIOS (Lógica de Calendário) ---
+// --- 1. UTILITÁRIOS DE DATA (Fuso Horário Corrigido) ---
 const getTodayStr = () => {
   const date = new Date();
   const offset = date.getTimezoneOffset();
@@ -58,9 +58,7 @@ const getNextOccurrence = (task: any) => {
   return '--/--';
 };
 
-// ==========================================
-// COMPONENTE PRINCIPAL
-// ==========================================
+// --- 2. COMPONENTE PRINCIPAL ---
 export default function App() {
   const [user, setUser] = useState<any>(null);
   const [userRole, setUserRole] = useState('membro');
@@ -96,8 +94,7 @@ export default function App() {
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user) {
-        setUser(session.user);
-        setAssignedTo(session.user.id);
+        setUser(session.user); setAssignedTo(session.user.id);
         supabase.from('profiles').select('role, full_name').eq('id', session.user.id).single().then(({ data }) => {
           if (data) { setUserRole(data.role || 'membro'); setNewName(data.full_name || ''); }
         });
@@ -147,13 +144,13 @@ export default function App() {
     if (activeTab === 'HOJE') return isDueToday && !isDone;
     if (activeTab === 'Minhas') return task.assigned_to === user?.id;
     if (activeTab === 'Todas') return true;
+    if (activeTab === 'DASHBOARD' || activeTab === 'HISTÓRICO' || activeTab === 'COMUNICADOS') return false;
     return task.category === activeTab;
   });
 
   const stats = (() => {
-    const todayStr = getTodayStr();
     const base = tasks.filter(t => filterUser === 'Todos' || t.assigned_to === filterUser);
-    const relevant = base.filter(t => dashFilter === 'HOJE' ? getLastOccurrence(t) === todayStr : true);
+    const relevant = base.filter(t => dashFilter === 'HOJE' ? getLastOccurrence(t) === getTodayStr() : true);
     const done = relevant.filter(t => (t.last_done_date || '1970-01-01') >= getLastOccurrence(t)).length;
     return { total: relevant.length, concluidas: done, pendentes: relevant.length - done, porcentagem: relevant.length > 0 ? Math.round((done/relevant.length)*100) : 0 }
   })();
@@ -176,64 +173,51 @@ export default function App() {
   if (!user) return <Login />;
 
   return (
-    <div className={`min-h-screen transition-colors duration-500 ${isDarkMode ? 'bg-[#0F111A] text-slate-100' : 'bg-[#F4F7FA] text-slate-900'} pb-20 font-sans overflow-x-hidden w-full`}>
+    <div className={`min-h-screen transition-colors duration-500 ${isDarkMode ? 'bg-[#0F111A] text-slate-100' : 'bg-[#F9FAFB] text-slate-900'} pb-20 font-sans overflow-x-hidden w-full`}>
       
       {/* NAVBAR */}
-      <nav className={`sticky top-0 z-50 backdrop-blur-xl border-b transition-all ${isDarkMode ? 'bg-[#161B22]/90 border-white/5 shadow-2xl' : 'bg-white/90 border-slate-200 shadow-sm'}`}>
+      <nav className={`sticky top-0 z-50 backdrop-blur-xl border-b transition-all ${isDarkMode ? 'bg-[#161B22]/90 border-white/5 shadow-2xl' : 'bg-white/80 border-slate-200 shadow-sm'}`}>
         <div className="max-w-7xl mx-auto px-6 h-16 flex justify-between items-center">
           <div className="flex items-center gap-3">
             <div className="bg-indigo-600 p-2 rounded-xl shadow-lg shadow-indigo-500/30">
               <Activity size={20} className="text-white" />
             </div>
-            <h1 className="text-xl font-black tracking-tighter uppercase italic">Supply<span className="text-indigo-600">Builder</span></h1>
+            <h1 className={`text-lg font-bold tracking-tight ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>SUPPLY<span className="text-indigo-600">BUILDER</span></h1>
           </div>
 
           <div className="flex items-center gap-3">
-            <button onClick={() => setIsDarkMode(!isDarkMode)} className={`p-2 rounded-xl transition-all ${isDarkMode ? 'bg-white/5 text-yellow-400' : 'bg-slate-100 text-slate-500 hover:bg-indigo-50 hover:text-indigo-600'}`}>
+            <button onClick={() => setIsDarkMode(!isDarkMode)} className={`p-2 rounded-xl transition-all ${isDarkMode ? 'bg-white/5 text-yellow-400' : 'bg-slate-100 text-slate-500 hover:bg-indigo-50'}`}>
               {isDarkMode ? <Sun size={20}/> : <Moon size={20}/>}
             </button>
             <button onClick={() => setShowProfileModal(true)} className={`flex items-center gap-2 pl-1 pr-3 py-1 rounded-full border transition-all ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200'}`}>
-              <div className="w-7 h-7 bg-indigo-600 rounded-full flex items-center justify-center text-[10px] font-black text-white shadow-md">
-                {newName?.charAt(0) || 'U'}
-              </div>
-              <span className="text-[11px] font-black uppercase tracking-widest hidden sm:block">{newName || 'Perfil'}</span>
+              <div className="w-7 h-7 bg-indigo-600 rounded-full flex items-center justify-center text-[10px] font-black text-white shadow-md">{newName?.charAt(0) || 'U'}</div>
+              <span className={`text-[11px] font-bold uppercase tracking-wider hidden sm:block ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{newName || 'Perfil'}</span>
             </button>
-            <button onClick={() => supabase.auth.signOut().then(() => window.location.reload())} className="text-slate-400 hover:text-red-500 transition-colors p-2">
-              <LogOut size={20}/>
-            </button>
+            <button onClick={() => supabase.auth.signOut().then(() => window.location.reload())} className="text-slate-400 hover:text-red-500 p-2"><LogOut size={20}/></button>
           </div>
         </div>
       </nav>
 
-      {/* FILTER BAR (MODERNA E NÍTIDA) */}
-      <div className={`sticky top-16 z-40 border-b transition-all ${isDarkMode ? 'bg-[#0F111A]/95 border-white/5' : 'bg-[#F4F7FA]/95 border-slate-200 shadow-sm'}`}>
+      {/* FILTER BAR */}
+      <div className={`sticky top-16 z-40 border-b transition-all ${isDarkMode ? 'bg-[#0F111A]/95 border-white/5' : 'bg-[#F9FAFB]/95 border-slate-200 shadow-sm'}`}>
         <div className="max-w-6xl mx-auto px-6 py-5 space-y-5 text-center">
           <div className="flex flex-col md:flex-row gap-4 items-center justify-between">
             <div className="relative w-full md:w-80">
               <Search className="absolute left-4 top-3.5 text-slate-400" size={18} />
-              <input className={`w-full pl-11 pr-4 py-2.5 rounded-2xl text-sm font-bold border-0 ring-1 outline-none transition-all ${isDarkMode ? 'bg-white/5 ring-white/10 focus:ring-indigo-500 text-white' : 'bg-white ring-slate-200 focus:ring-indigo-600'}`} placeholder="Pesquisar missão..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+              <input className={`w-full pl-11 pr-4 py-2.5 rounded-2xl text-sm font-bold border-0 ring-1 outline-none transition-all ${isDarkMode ? 'bg-white/5 ring-white/10 text-white focus:ring-indigo-500' : 'bg-white ring-slate-200 text-slate-900 focus:ring-indigo-600'}`} placeholder="Buscar missão..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
             </div>
 
             <div className={`flex p-1 rounded-2xl ring-1 overflow-x-auto no-scrollbar max-w-full ${isDarkMode ? 'bg-black/40 ring-white/5' : 'bg-slate-200/50 ring-slate-200'}`}>
               {categories.map(tab => (
-                <button 
-                  key={tab} 
-                  onClick={() => { setActiveTab(tab); setShowCreateBox(false); }} 
-                  className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${
-                    activeTab === tab ? 'bg-indigo-600 text-white shadow-xl scale-105' : 'text-slate-500 hover:text-indigo-500'
-                  }`}
-                >{tab}</button>
+                <button key={tab} onClick={() => { setActiveTab(tab); setShowCreateBox(false); }} className={`px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all whitespace-nowrap ${activeTab === tab ? 'bg-indigo-600 text-white shadow-lg scale-105' : 'text-slate-500 hover:text-indigo-500'}`}>{tab}</button>
               ))}
             </div>
           </div>
 
-          {/* FILTRO DE USUÁRIO */}
           <div className="flex items-center justify-center gap-2 overflow-x-auto no-scrollbar pb-1">
             <button onClick={() => setFilterUser('Todos')} className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase border transition-all ${filterUser === 'Todos' ? 'bg-slate-900 text-white dark:bg-indigo-600 border-transparent shadow-lg' : 'bg-white border-slate-200 dark:bg-white/5 dark:text-slate-400'}`}>Todos</button>
             {profiles.map(p => (
-              <button key={p.id} onClick={() => setFilterUser(p.id)} className={`px-4 py-2 rounded-xl text-[9px] font-bold uppercase border transition-all flex items-center gap-2 ${filterUser === p.id ? 'bg-indigo-600 text-white border-transparent shadow-xl scale-110' : 'bg-white border-slate-200 dark:bg-white/5 dark:text-slate-500 hover:border-indigo-400'}`}>
-                {p.full_name?.split(' ')[0]}
-              </button>
+              <button key={p.id} onClick={() => setFilterUser(p.id)} className={`px-4 py-2 rounded-xl text-[9px] font-bold uppercase border transition-all flex items-center gap-2 ${filterUser === p.id ? 'bg-indigo-600 text-white border-transparent shadow-xl scale-110' : 'bg-white border-slate-200 dark:bg-white/5 dark:text-slate-500'}`}>{p.full_name?.split(' ')[0]}</button>
             ))}
           </div>
         </div>
@@ -241,93 +225,87 @@ export default function App() {
 
       <main className="max-w-5xl mx-auto p-6">
         {activeTab === 'DASHBOARD' ? (
-          /* DASHBOARD */
           <div className="space-y-8 animate-in fade-in duration-700 text-center mt-6">
              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <DashboardCard label="Metas" val={stats.total} isDark={isDarkMode} />
                 <DashboardCard label="Concluídas" val={stats.concluidas} color="text-emerald-500" isDark={isDarkMode} />
                 <DashboardCard label="Pendentes" val={stats.pendentes} color="text-rose-500" isDark={isDarkMode} />
              </div>
-             <div className={`p-16 rounded-[48px] border transition-all ${isDarkMode ? 'bg-[#161B22] border-white/5 shadow-none' : 'bg-white border-slate-100 shadow-2xl'}`}>
+             <div className={`p-16 rounded-[48px] border transition-all ${isDarkMode ? 'bg-[#161B22] border-white/5' : 'bg-white border-slate-100 shadow-2xl'}`}>
                 <h3 className={`text-[120px] font-black tracking-tighter mb-4 leading-none ${isDarkMode ? 'text-white' : 'text-slate-950'}`}>{stats.porcentagem}%</h3>
-                <p className="text-xs font-black uppercase text-slate-400 tracking-[0.4em]">Eficiência Operacional</p>
+                <p className="text-xs font-black uppercase text-slate-400 tracking-[0.4em]">Eficiência do Setor</p>
                 <div className="mt-12 max-w-lg mx-auto bg-slate-100 dark:bg-white/5 h-4 rounded-full overflow-hidden p-1 shadow-inner"><div className="bg-indigo-600 h-full transition-all duration-1000 shadow-[0_0_30px_rgba(79,70,229,0.8)] rounded-full" style={{ width: `${stats.porcentagem}%` }} /></div>
              </div>
           </div>
         ) : activeTab === 'COMUNICADOS' ? (
-          /* COMUNICADOS */
           <div className="mt-8 space-y-6 max-w-3xl mx-auto">
              {userRole === 'admin' && (
-               <div className={`p-10 rounded-[40px] border ${isDarkMode ? 'bg-[#161B22] border-white/10' : 'bg-white border-slate-200 shadow-xl'}`}>
-                  <h3 className="font-black uppercase text-xl mb-6 flex items-center gap-3"><Megaphone className="text-indigo-600"/> Lançar Alerta</h3>
-                  <input className={`w-full p-4 rounded-xl border mb-4 font-black ${isDarkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-slate-50 border-slate-100 text-slate-900'}`} placeholder="Título do Comunicado" value={newAnnounce.title} onChange={e => setNewAnnounce({...newAnnounce, title: e.target.value})} />
-                  <textarea className={`w-full p-4 rounded-xl border mb-6 font-bold ${isDarkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-slate-50 border-slate-100 text-slate-900'}`} placeholder="Mensagem..." rows={3} value={newAnnounce.content} onChange={e => setNewAnnounce({...newAnnounce, content: e.target.value})} />
-                  <button onClick={async () => { await supabase.from('announcements').insert([{ ...newAnnounce, author_id: user.id }]); setNewAnnounce({title:'', content:''}); fetchAnnouncements(); }} className="w-full bg-indigo-600 text-white p-5 rounded-3xl font-black uppercase shadow-xl hover:bg-indigo-700 active:scale-95 transition-all">Publicar Agora</button>
+               <div className={`p-10 rounded-[40px] border ${isDarkMode ? 'bg-[#161B22] border-white/10' : 'bg-white border-slate-100 shadow-xl'}`}>
+                  <h3 className={`font-black uppercase text-xl mb-6 flex items-center gap-3 ${isDarkMode ? 'text-white' : 'text-slate-900'}`}><Megaphone className="text-indigo-600"/> Lançar Alerta</h3>
+                  <input className={`w-full p-4 rounded-xl border mb-4 font-black ${isDarkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-slate-50 border-slate-200 text-slate-900'}`} placeholder="Título do Comunicado" value={newAnnounce.title} onChange={e => setNewAnnounce({...newAnnounce, title: e.target.value})} />
+                  <textarea className={`w-full p-4 rounded-xl border mb-6 font-bold ${isDarkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-slate-50 border-slate-200 text-slate-900'}`} placeholder="Mensagem..." rows={3} value={newAnnounce.content} onChange={e => setNewAnnounce({...newAnnounce, content: e.target.value})} />
+                  <button onClick={async () => { await supabase.from('announcements').insert([{ ...newAnnounce, author_id: user.id }]); setNewAnnounce({title:'', content:''}); fetchAnnouncements(); }} className="w-full bg-indigo-600 text-white p-5 rounded-3xl font-black uppercase shadow-lg shadow-indigo-600/20 hover:bg-indigo-700 transition-all">Publicar Agora</button>
                </div>
              )}
              {announcements.map(a => (
-               <div key={a.id} className={`p-10 rounded-[50px] border-l-[16px] border-indigo-600 shadow-2xl ${isDarkMode ? 'bg-[#161B22]' : 'bg-white'}`}>
-                 <h4 className="text-3xl font-black mb-4 uppercase italic tracking-tighter leading-none underline decoration-indigo-600/30">{a.title}</h4>
+               <div key={a.id} className={`p-10 rounded-[50px] border-l-[16px] border-indigo-600 shadow-2xl ${isDarkMode ? 'bg-[#161B22] text-white' : 'bg-white text-slate-900'}`}>
+                 <h4 className="text-3xl font-black mb-4 uppercase italic tracking-tighter underline decoration-indigo-600/30">{a.title}</h4>
                  <p className="text-xl font-bold opacity-80 mb-6 leading-relaxed">{a.content}</p>
                  <div className="text-[10px] font-black uppercase opacity-30 italic">Oficial • {new Date(a.created_at).toLocaleString()}</div>
                </div>
              ))}
           </div>
         ) : (
-          /* LISTA DE TAREFAS */
           <>
-            {/* GATILHO CENTRO DE COMANDO */}
+            {/* ACTION BUTTON */}
             <div className="mb-10 flex justify-center">
-              <button onClick={() => setShowCreateBox(!showCreateBox)} className={`flex items-center gap-3 px-10 py-4 rounded-full font-black text-xs uppercase tracking-widest transition-all ${showCreateBox ? 'bg-rose-500 text-white shadow-2xl shadow-rose-500/30' : 'bg-indigo-600 text-white shadow-2xl shadow-indigo-600/40 hover:scale-105 active:scale-95'}`}>
+              <button onClick={() => setShowCreateBox(!showCreateBox)} className={`flex items-center gap-3 px-10 py-4 rounded-full font-black text-xs uppercase tracking-widest transition-all ${showCreateBox ? 'bg-rose-500 text-white shadow-xl' : 'bg-indigo-600 text-white shadow-2xl hover:scale-105 active:scale-95'}`}>
                 {showCreateBox ? <X size={20}/> : <Plus size={20} strokeWidth={4}/>} {showCreateBox ? 'Cancelar Lançamento' : 'Nova Missão'}
               </button>
             </div>
 
-            {/* COMMAND CENTER (CENTRO DE CRIAÇÃO REORGANIZADO) */}
+            {/* COMMAND CENTER (COMPLETO E GRID 3 COLUNAS) */}
             {showCreateBox && (
               <div className={`p-10 rounded-[48px] border mb-16 animate-in slide-in-from-top-10 duration-500 shadow-2xl ${isDarkMode ? 'bg-[#161B22] border-white/5' : 'bg-white border-slate-100'}`}>
                 <input className={`w-full text-5xl font-black bg-transparent outline-none mb-10 placeholder-slate-200 uppercase ${isDarkMode ? 'text-white' : 'text-slate-950'}`} placeholder="Nome da Missão" value={taskTitle} onChange={e => setTaskTitle(e.target.value)} />
-                <textarea className={`w-full p-8 rounded-[35px] border mb-10 text-xl font-bold transition-all ${isDarkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-slate-50 border-slate-100 text-slate-900 focus:bg-white focus:ring-1 focus:ring-indigo-100'}`} placeholder="Instruções Técnicas..." rows={2} value={notes} onChange={e => setNotes(e.target.value)} />
+                <textarea className={`w-full p-8 rounded-[35px] border mb-10 text-xl font-bold transition-all ${isDarkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-slate-50 border-slate-100 text-slate-900 focus:bg-white'}`} placeholder="Instruções Técnicas..." rows={2} value={notes} onChange={e => setNotes(e.target.value)} />
                 
-                {/* CHECKLIST DE PASSOS */}
                 <div className="bg-indigo-600/5 p-8 rounded-[40px] border border-indigo-600/10 mb-10">
                    <label className="text-[11px] font-black uppercase text-indigo-600 mb-6 block tracking-[0.3em] flex items-center gap-3"><ListChecks size={20}/> Checklist de Passos</label>
                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                      {tempSubtasks.map((sub, idx) => (
-                       <div key={idx} className="flex items-center gap-3 bg-white dark:bg-black/20 p-4 rounded-2xl border border-slate-200 dark:border-white/10 shadow-sm">
-                         <input className={`flex-1 bg-transparent font-bold text-sm outline-none ${isDarkMode ? 'text-white' : 'text-slate-900'}`} value={sub.title} onChange={e => { const n = [...tempSubtasks]; n[idx].title = e.target.value; setTempSubtasks(n); }} placeholder="Definir objetivo..." />
-                         <button onClick={() => setTempSubtasks(tempSubtasks.filter((_, i) => i !== idx))} className="text-rose-400 hover:text-rose-600 transition-all"><X size={20}/></button>
+                       <div key={idx} className={`flex items-center gap-3 p-4 rounded-2xl border ${isDarkMode ? 'bg-black/20 border-white/5' : 'bg-white border-slate-200'}`}>
+                         <input className={`flex-1 bg-transparent font-bold text-sm outline-none ${isDarkMode ? 'text-white' : 'text-slate-950'}`} value={sub.title} onChange={e => { const n = [...tempSubtasks]; n[idx].title = e.target.value; setTempSubtasks(n); }} placeholder="Definir objetivo..." />
+                         <button onClick={() => setTempSubtasks(tempSubtasks.filter((_, i) => i !== idx))} className="text-rose-400"><X size={20}/></button>
                        </div>
                      ))}
                      <button onClick={() => setTempSubtasks([...tempSubtasks, {title: '', done: false}])} className="flex items-center justify-center gap-3 p-4 border-4 border-dashed border-slate-200 dark:border-white/10 rounded-[25px] text-slate-400 font-black text-xs hover:border-indigo-600 hover:text-indigo-600 transition-all uppercase">+ Adicionar Etapa</button>
                    </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-12 gap-8 items-end border-t border-slate-100 dark:border-white/5 pt-10 text-left">
-                   <div className="md:col-span-4 space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-8 items-end border-t border-slate-100 dark:border-white/5 pt-10 text-left">
+                   <div className="space-y-4">
                       <label className="text-[10px] font-black uppercase text-slate-400 ml-2 tracking-widest italic">Responsável</label>
                       <select disabled={userRole === 'membro'} className="w-full p-4 rounded-3xl bg-indigo-600 text-white font-black text-sm border-none shadow-xl cursor-pointer" value={assignedTo} onChange={e => setAssignedTo(e.target.value)}>{profiles.map(p => <option key={p.id} value={p.id} className="text-black">{p.full_name}</option>)}</select>
                    </div>
-                   <div className="md:col-span-5 space-y-5">
+                   <div className="md:col-span-1 space-y-5">
                       <div className="flex gap-2">
-                        <button onClick={() => setIsPontual(!isPontual)} className={`flex-1 p-4 rounded-2xl font-black uppercase text-[10px] border transition-all ${isPontual ? 'bg-amber-500 text-white border-transparent shadow-lg' : 'bg-slate-100 dark:bg-white/5 text-slate-400'}`}>{isPontual ? '⚡ Missão Única' : '🔄 Recorrente'}</button>
-                        {!isPontual && <div className="flex items-center gap-3 px-4 rounded-2xl bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/10"><Repeat size={18} className="text-indigo-500"/><input type="number" min="1" className="w-10 bg-transparent font-black text-lg text-center" value={repeatInterval} onChange={e => setRepeatInterval(parseInt(e.target.value))} /><span className="text-[9px] font-black opacity-30 whitespace-nowrap uppercase">Semanas</span></div>}
+                        <button onClick={() => setIsPontual(!isPontual)} className={`flex-1 p-4 rounded-2xl font-black uppercase text-[10px] border transition-all ${isPontual ? 'bg-amber-500 text-white border-transparent shadow-lg' : 'bg-slate-100 dark:bg-white/5 text-slate-400'}`}>{isPontual ? '⚡ Única' : '🔄 Recorrente'}</button>
+                        {!isPontual && <div className="flex items-center gap-3 px-4 rounded-2xl bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/10"><Repeat size={18} className="text-indigo-500"/><input type="number" min="1" className={`w-10 bg-transparent font-black text-lg text-center ${isDarkMode ? 'text-white' : 'text-slate-900'}`} value={repeatInterval} onChange={e => setRepeatInterval(parseInt(e.target.value))} /><span className="text-[9px] font-black opacity-30 whitespace-nowrap uppercase">Semanas</span></div>}
                       </div>
-                      {!isPontual && <div className="flex gap-1.5 bg-slate-100 dark:bg-white/5 p-1.5 rounded-2xl border border-slate-200 dark:border-white/5">{weekDays.map(day => (<button key={day.id} type="button" onClick={() => toggleDay(day.id)} className={`flex-1 h-10 rounded-xl font-black text-[10px] transition-all ${selectedDays.includes(day.id) ? 'bg-indigo-600 text-white shadow-lg scale-105' : 'text-slate-400 hover:text-slate-600'}`}>{day.label}</button>))}</div>}
+                      {!isPontual && <div className={`flex gap-1.5 p-1.5 rounded-2xl border ${isDarkMode ? 'bg-black/40 border-white/5' : 'bg-slate-100 border-slate-200'}`}>{weekDays.map(day => (<button key={day.id} type="button" onClick={() => toggleDay(day.id)} className={`flex-1 h-10 rounded-xl font-black text-[10px] transition-all ${selectedDays.includes(day.id) ? 'bg-indigo-600 text-white shadow-lg scale-105' : 'text-slate-400 hover:text-slate-600'}`}>{day.label}</button>))}</div>}
                    </div>
-                   <div className="md:col-span-3">
-                      <button onClick={addTask} className="w-full bg-slate-900 dark:bg-white dark:text-black text-white p-7 rounded-[35px] font-black uppercase text-xs tracking-[0.3em] shadow-2xl hover:scale-105 transition-all">Lançar Missão</button>
-                   </div>
+                   <button onClick={addTask} className="w-full bg-slate-950 dark:bg-white dark:text-black text-white p-7 rounded-[35px] font-black uppercase text-xs tracking-[0.3em] shadow-2xl hover:scale-105 transition-all">Lançar Missão</button>
                 </div>
               </div>
             )}
 
-            {/* LISTAGEM DE TAREFAS (CARDS HIGH-CONTRAST) */}
+            {/* LISTA DE TAREFAS */}
             <div className="space-y-6">
               <h2 className="text-[10px] font-black uppercase text-slate-400 tracking-[0.5em] flex items-center gap-4 mb-10"><div className="w-16 h-1 bg-indigo-600 rounded-full" /> {activeTab} • {filteredTasks.length} MISSÕES</h2>
               {filteredTasks.map(task => {
-                const todayStr = getTodayStr(); const lSStr = getLastOccurrence(task); const lDStr = task.last_done_date || '1970-01-01';
-                const isDone = lDStr >= lSStr; const isLate = !isDone && lSStr < todayStr;
+                const todayStr = getTodayStr(); const lS = getLastOccurrence(task); const lD = task.last_done_date || '1970-01-01';
+                const isDone = lD >= lS; const isLate = !isDone && lS < todayStr;
                 return (<TaskBox key={task.id} task={task} profiles={profiles} isLate={isLate} isDoneToday={isDone} userRole={userRole} currentUserId={user.id} isDarkMode={isDarkMode} onToggle={() => toggleComplete(task)} onEdit={(t: any) => { setEditingTask(t); setShowEditModal(true); }} onUpdate={fetchTasks} />)
               })}
             </div>
@@ -335,39 +313,25 @@ export default function App() {
         )}
       </main>
 
-      {/* MODAL PERFIL */}
-      {showProfileModal && (
-        <div className="fixed inset-0 bg-slate-900/70 z-[70] flex items-center justify-center p-6 backdrop-blur-md animate-in fade-in">
-          <div className={`p-12 rounded-[50px] w-full max-w-sm shadow-2xl ${isDarkMode ? 'bg-[#161B22] text-white border border-white/5' : 'bg-white text-slate-950'}`}>
-            <h2 className="text-2xl font-black uppercase mb-10 tracking-tighter italic underline decoration-indigo-600 underline-offset-8 text-center">Identidade</h2>
-            <div className="space-y-6">
-              <input className={`w-full p-5 rounded-3xl border font-black transition-all ${isDarkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-slate-50 border-slate-100 focus:bg-white'}`} placeholder="Nome Completo" value={newName} onChange={e => setNewName(e.target.value)} />
-              <button onClick={updateProfile} className="w-full bg-indigo-600 text-white p-5 rounded-3xl font-black uppercase text-sm tracking-widest shadow-2xl hover:scale-[1.02] transition-all">Salvar Dados</button>
-              <button onClick={() => setShowProfileModal(false)} className="w-full text-slate-400 font-black text-[10px] uppercase tracking-widest text-center mt-2">Fechar</button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* MODAL EDIÇÃO */}
       {showEditModal && editingTask && (
         <div className="fixed inset-0 bg-slate-900/70 z-[70] flex items-center justify-center p-4 backdrop-blur-md animate-in zoom-in-95">
-          <div className={`p-14 rounded-[60px] w-full max-w-2xl shadow-[0_50px_100px_rgba(0,0,0,0.5)] overflow-y-auto max-h-[95vh] ${isDarkMode ? 'bg-[#161B22]' : 'bg-white'}`}>
+          <div className={`p-14 rounded-[60px] w-full max-w-2xl shadow-2xl overflow-y-auto max-h-[95vh] ${isDarkMode ? 'bg-[#161B22] border border-white/5' : 'bg-white'}`}>
              <h2 className="text-4xl font-black uppercase mb-12 tracking-tighter text-indigo-600 italic">Modificar Operação</h2>
              <div className="space-y-10 text-left">
                 <input className={`w-full text-4xl font-black bg-transparent outline-none border-b-4 uppercase transition-all ${isDarkMode ? 'text-white border-white/10' : 'text-slate-950 border-slate-100'}`} value={editingTask.title} onChange={e => setEditingTask({...editingTask, title: e.target.value})} />
-                <textarea className={`w-full p-8 rounded-[40px] border-2 transition-all ${isDarkMode ? 'bg-white/5' : 'bg-slate-50'}`} rows={3} value={editingTask.notes || ''} onChange={e => setEditingTask({...editingTask, notes: e.target.value})} />
+                <textarea className={`w-full p-8 rounded-[40px] border-2 transition-all ${isDarkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-slate-50 border-slate-100 text-slate-900 focus:bg-white'}`} rows={3} value={editingTask.notes || ''} onChange={e => setEditingTask({...editingTask, notes: e.target.value})} />
                 <div className="space-y-4 border-t-4 pt-8 border-slate-100 dark:border-white/5">
-                  <label className="text-[11px] font-black uppercase opacity-40 flex items-center gap-3"><ListChecks size={18}/> Revisar Etapas</label>
+                  <label className="text-[11px] font-black uppercase opacity-40 flex items-center gap-3"><ListChecks size={18}/> Checklist de Passos</label>
                   <div className="space-y-3">
                     {(editingTask.subtasks || []).map((sub: any, idx: number) => (
                       <div key={idx} className="flex items-center gap-4 bg-slate-50 dark:bg-black/20 p-4 rounded-3xl border shadow-sm">
                         <input type="checkbox" checked={sub.done} onChange={e => { const n = [...editingTask.subtasks]; n[idx].done = e.target.checked; setEditingTask({...editingTask, subtasks: n}); }} className="w-7 h-7 rounded-lg accent-indigo-600" />
-                        <input className="flex-1 bg-transparent font-black text-lg text-slate-900 dark:text-white outline-none" value={sub.title} onChange={e => { const n = [...editingTask.subtasks]; n[idx].title = e.target.value; setEditingTask({...editingTask, subtasks: n}); }} />
+                        <input className={`flex-1 bg-transparent font-black text-lg outline-none ${isDarkMode ? 'text-white' : 'text-slate-950'}`} value={sub.title} onChange={e => { const n = [...editingTask.subtasks]; n[idx].title = e.target.value; setEditingTask({...editingTask, subtasks: n}); }} />
                         <button onClick={() => { const n = editingTask.subtasks.filter((_:any, i:number) => i !== idx); setEditingTask({...editingTask, subtasks: n}); }} className="text-rose-400 p-2"><X size={24}/></button>
                       </div>
                     ))}
-                    <button onClick={() => { const n = [...(editingTask.subtasks || []), {title:'', done:false}]; setEditingTask({...editingTask, subtasks: n}); }} className="w-full py-5 border-4 border-dashed rounded-[35px] text-slate-400 font-black uppercase text-[10px] hover:text-indigo-600 hover:text-indigo-600 transition-all">+ Inserir Nova Etapa</button>
+                    <button onClick={() => { const n = [...(editingTask.subtasks || []), {title:'', done:false}]; setEditingTask({...editingTask, subtasks: n}); }} className="w-full py-5 border-4 border-dashed rounded-[35px] text-slate-400 font-black uppercase text-[10px] hover:text-indigo-600">+ Adicionar Passo</button>
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-8">
@@ -375,7 +339,7 @@ export default function App() {
                    <input type="number" className={`w-full p-5 rounded-3xl font-black border text-center shadow-lg ${isDarkMode ? 'bg-white/5 text-white' : 'bg-slate-100 text-slate-950'}`} value={editingTask.repeat_interval || 1} onChange={e => setEditingTask({...editingTask, repeat_interval: parseInt(e.target.value)})} />
                 </div>
                 <div className="space-y-4">
-                  <div className={`flex gap-2 p-2 rounded-3xl border ${isDarkMode ? 'bg-black/30' : 'bg-slate-100'}`}>
+                  <div className={`flex gap-2 p-2 rounded-3xl border ${isDarkMode ? 'bg-black/30 border-white/5' : 'bg-slate-100 border-slate-200'}`}>
                     {weekDays.map(day => (<button key={day.id} type="button" onClick={() => toggleDayInEdit(day.id)} className={`flex-1 h-14 rounded-2xl font-black text-lg transition-all ${editingTask.repeat_days?.split(',').includes(day.id) ? 'bg-indigo-600 text-white shadow-xl' : 'text-slate-400'}`}>{day.label}</button>))}
                   </div>
                 </div>
@@ -407,7 +371,7 @@ function TaskBox({ task, profiles, isLate, isDoneToday, onToggle, onEdit, onUpda
       ? 'bg-slate-50/50 dark:bg-black/30 border-transparent opacity-60 shadow-none grayscale text-left' 
       : isLate 
         ? 'bg-rose-50/70 dark:bg-rose-950/20 border-rose-300 dark:border-rose-500/30 shadow-2xl shadow-rose-200/50 text-left' 
-        : isDarkMode ? 'bg-[#1C1F2E] border-white/5 shadow-[0_30px_60px_rgba(0,0,0,0.6)] text-left' : 'bg-white border-slate-100 shadow-[0_20px_50px_rgba(0,0,0,0.04)] hover:-translate-y-2 text-left'
+        : isDarkMode ? 'bg-[#1C1F2E] border-white/5 shadow-[0_30px_60px_rgba(0,0,0,0.6)] text-left' : 'bg-white border-slate-100 hover:border-indigo-200 shadow-[0_20px_50px_rgba(0,0,0,0.04)] hover:-translate-y-2 text-left'
     }`}>
       <div className="flex items-center gap-8 text-left">
         <button onClick={onToggle} className={`w-16 h-16 rounded-[24px] border-[3px] flex items-center justify-center transition-all flex-shrink-0 ${isDoneToday ? 'bg-emerald-500 border-emerald-500 text-white shadow-xl scale-95' : 'bg-white border-slate-200 dark:border-white/10 text-transparent hover:border-indigo-600 hover:scale-110'}`}><Check size={32} strokeWidth={5}/></button>
@@ -424,7 +388,7 @@ function TaskBox({ task, profiles, isLate, isDoneToday, onToggle, onEdit, onUpda
 
           {task.notes && <div className="flex items-start gap-2 mt-2 opacity-80"><FileText size={14} className="mt-1 text-indigo-500 flex-shrink-0" /><p className={`text-sm font-bold leading-relaxed line-clamp-1 ${isDoneToday ? 'text-slate-300' : 'text-slate-600 dark:text-slate-400'}`}>{task.notes}</p></div>}
 
-          <div className="flex flex-wrap gap-3 mt-6 font-sans">
+          <div className="flex flex-wrap gap-3 mt-6">
             <span className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest flex items-center gap-2 border transition-all ${isDoneToday ? 'bg-slate-100 border-transparent text-slate-300' : 'bg-slate-900 text-white border-slate-800 shadow-md'}`}><User size={12}/> {profiles.find(p => p.id === task.assigned_to)?.full_name || 'Agente Alocado'}</span>
             <span className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest border transition-all ${isDoneToday ? 'bg-slate-100 border-transparent text-slate-300' : 'bg-indigo-50 border-indigo-100 text-indigo-600'}`}>{task.category}</span>
             <span className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase border transition-all ${isDoneToday ? 'bg-slate-100 border-transparent text-slate-300' : 'bg-white border-slate-200 text-slate-500'}`}><Calendar size={12}/> Próxima: {getNextOccurrence(task)}</span>
@@ -472,7 +436,7 @@ function Login() {
           <input className="w-full p-5 bg-slate-50 border border-slate-100 rounded-[28px] font-black text-xl text-slate-950 outline-none focus:ring-4 focus:ring-indigo-50" placeholder="E-MAIL" onChange={e => setEmail(e.target.value)} />
           <input className="w-full p-5 bg-slate-50 border border-slate-100 rounded-[28px] font-black text-xl text-slate-950 outline-none focus:ring-4 focus:ring-indigo-50" type="password" placeholder="SENHA" onChange={e => setPassword(e.target.value)} />
           <button onClick={processAuth} className="w-full bg-slate-950 text-white p-6 rounded-[30px] font-black uppercase text-xs tracking-widest shadow-2xl hover:bg-indigo-600 transition-all mt-6">{isSignUp ? 'CRIAR ACESSO' : 'ACESSAR CENTRO'}</button>
-          <button onClick={() => setIsSignUp(!isSignUp)} className="w-full mt-8 text-[10px] font-black text-slate-400 uppercase tracking-widest hover:text-indigo-600 transition-colors uppercase">SOLICITAR CONTA</button>
+          <button onClick={() => setIsSignUp(!isSignUp)} className="w-full mt-8 text-[10px] font-black text-slate-400 uppercase tracking-widest hover:text-indigo-600 transition-colors uppercase font-sans">SOLICITAR CONTA</button>
         </div>
       </div>
     </div>
