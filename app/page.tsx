@@ -4,7 +4,7 @@ import { supabase } from '@/lib/supabase'
 import { 
   Plus, Trash2, CheckCircle2, LayoutDashboard, 
   LogOut, Calendar, User, X, Check, AlertCircle, TrendingUp,
-  Edit3, ChevronRight, Activity, ListChecks, ChevronDown, ChevronUp, FileText
+  Edit3, ChevronRight, Activity, ListChecks, ChevronDown, ChevronUp, FileText, Megaphone, Settings
 } from 'lucide-react'
 
 // --- FUNÇÕES DE UTILIDADE (FORA DO COMPONENTE) ---
@@ -78,7 +78,7 @@ export default function App() {
   const [dashFilter, setDashFilter] = useState<'HOJE' | 'SEMANAL'>('HOJE')
   const [filterUser, setFilterUser] = useState('Todos')
   const [showCreateBox, setShowCreateBox] = useState(false)
-  const categories = ['HOJE', 'ATRASADOS', 'Minhas', 'Todas', 'Trade', 'Reunião', 'HISTÓRICO', 'DASHBOARD']
+  const categories = ['HOJE', 'ATRASADOS', 'Minhas', 'Todas', 'Trade', 'Reunião', 'HISTÓRICO', 'DASHBOARD', 'COMUNICADOS']
 
   const [showProfileModal, setShowProfileModal] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
@@ -93,6 +93,16 @@ export default function App() {
   const [selectedDays, setSelectedDays] = useState<string[]>([])
   const [tempSubtasks, setTempSubtasks] = useState<{title: string, done: boolean}[]>([])
   const [viewingTask, setViewingTask] = useState<any>(null);
+  const [announcements, setAnnouncements] = useState<any[]>([])
+  const [annTitle, setAnnTitle] = useState('')
+  const [annContent, setAnnContent] = useState('')
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+
+// Função de Logout Centralizada
+const handleLogout = async () => {
+  await supabase.auth.signOut();
+  window.location.reload();
+};
   
   const weekDays = [{ id: 'seg', label: 'S' }, { id: 'ter', label: 'T' }, { id: 'qua', label: 'Q' }, { id: 'qui', label: 'Q' }, { id: 'sex', label: 'S' }]
 
@@ -105,7 +115,7 @@ export default function App() {
           .then(({ data }) => {
             if (data) { setUserRole(data.role || 'membro'); setNewName(data.full_name || ''); }
           })
-        fetchProfiles(); fetchTasks(); fetchHistory();
+        fetchProfiles(); fetchTasks(); fetchHistory(); fetchAnnouncements();
       }
     })
   }, [])
@@ -113,7 +123,46 @@ export default function App() {
   const fetchProfiles = async () => { const { data } = await supabase.from('profiles').select('*'); if (data) setProfiles(data); }
   const fetchTasks = async () => { const { data } = await supabase.from('tasks').select('*').order('created_at', { ascending: false }); if (data) setTasks(data); }
   const fetchHistory = async () => { const { data } = await supabase.from('task_history').select('*').order('created_at', { ascending: false }).limit(50); if (data) setHistory(data); }
+  const fetchAnnouncements = async () => { const { data } = await supabase.from('announcements').select('*, profiles(full_name)').order('created_at', { ascending: false }); if (data) setAnnouncements(data); }
 
+  async function changeRole(profileId: string, newRole: string) {
+  // 1. Faz a atualização no Supabase
+  const { error } = await supabase
+    .from('profiles')
+    .update({ role: newRole })
+    .eq('id', profileId);
+
+  if (error) {
+    alert("Erro ao mudar cargo: " + error.message);
+  } else {
+    // 2. ATUALIZAÇÃO LOCAL IMEDIATA (Optimistic Update)
+    // Isso muda a cor do botão na hora, antes mesmo de recarregar
+    setProfiles(prevProfiles => 
+      prevProfiles.map(p => 
+        p.id === profileId ? { ...p, role: newRole } : p
+      )
+    );
+
+    // 3. Se você estiver mudando o SEU PRÓPRIO cargo, 
+    // precisamos atualizar a variável de permissão do sistema também
+    if (profileId === user.id) {
+      setUserRole(newRole);
+    }
+
+    alert("Cargo atualizado com sucesso!");
+  }
+}
+
+  async function addAnnouncement() {
+  if (!annTitle || !annContent) return
+  const { error } = await supabase.from('announcements').insert([
+    { title: annTitle.toUpperCase(), content: annContent, created_by: user.id }
+  ])
+  if (!error) {
+    setAnnTitle(''); setAnnContent('');
+    fetchAnnouncements();
+  }
+}
   async function updateProfile() {
     const { error } = await supabase.from('profiles').update({ full_name: newName }).eq('id', user.id)
     if (!error) { alert("Perfil atualizado!"); setShowProfileModal(false); fetchProfiles(); }
@@ -176,46 +225,125 @@ export default function App() {
   }
 
   const filteredTasks = tasks.filter(task => {
-    const todayStr = getTodayStr();
-    const lastS = getLastOccurrence(task);
-    const lastD = task.last_done_date || '1970-01-01';
-    const isDone = lastD >= lastS;
-    const isDueToday = lastS === todayStr;
-    const isLate = !isDone && lastS < todayStr;
+  const todayStr = getTodayStr();
+  const lastS = getLastOccurrence(task);
+  const lastD = task.last_done_date || '1970-01-01';
+  const isDone = lastD >= lastS;
+  const isDueToday = lastS === todayStr;
+  const isLate = !isDone && lastS < todayStr;
 
-    if (filterUser !== 'Todos' && task.assigned_to !== filterUser) return false;
-    if (activeTab === 'ATRASADOS') return isLate;
-    if (activeTab === 'HOJE') return isDueToday && !isDone;
-    if (activeTab === 'Minhas') return userRole === 'admin' ? true : task.assigned_to === user?.id;
-    if (activeTab === 'Todas') return true;
-    return task.category === activeTab;
-  })
+  // --- REGRA DE VISIBILIDADE PARA MEMBROS ---
+  // Incluímos 'ATRASADOS' aqui para que eles vejam o status da equipe
+  const abasGlobais = ['Todas', 'HOJE', 'Trade', 'Reunião', 'Geral', 'ATRASADOS'];
+  const ehAbaGlobal = abasGlobais.includes(activeTab);
+
+  if (userRole === 'membro') {
+    // Se não for uma aba global e a tarefa não for dele, filtramos (escondemos).
+    if (!ehAbaGlobal && task.assigned_to !== user?.id) {
+      return false;
+    }
+  }
+
+  // --- FILTROS DE USUÁRIO (DROPDOWN) ---
+  if (filterUser !== 'Todos' && task.assigned_to !== filterUser) return false;
+
+  // --- FILTROS DE ABAS (LÓGICA DE STATUS) ---
+  if (activeTab === 'ATRASADOS') return isLate;
+  if (activeTab === 'HOJE') return isDueToday && !isDone;
+  if (activeTab === 'Minhas') return task.assigned_to === user?.id;
+  if (activeTab === 'Todas') return true;
+
+  return task.category === activeTab;
+});
 
   const stats = (() => {
-    const relevant = tasks.filter(t => activeTab === 'Todas' || t.repeat_days || t.due_date);
-    const total = relevant.length;
-    const done = relevant.filter(t => {
-      const s = getLastOccurrence(t); const d = t.last_done_date || '1970-01-01';
-      return d >= s;
-    }).length;
-    return { total, concluidas: done, pendentes: total - done, porcentagem: total > 0 ? Math.round((done/total)*100) : 0 }
-  })()
+  const todayStr = getTodayStr();
+  
+  // Calcular a data de início da semana (Segunda-feira)
+  const now = new Date();
+  const day = now.getDay() || 7;
+  const monday = new Date(now);
+  monday.setDate(now.getDate() - day + 1);
+  monday.setHours(0,0,0,0);
+  const startOfWeekStr = monday.toISOString().split('T')[0];
+
+  // 1. BASE GLOBAL: Aqui pegamos TODAS as tarefas do sistema (ignorando o userRole)
+  // Mas ainda respeitamos o Dropdown "filterUser" para permitir que 
+  // qualquer um veja a performance de um colega específico ou de "Todos".
+  let baseTasks = tasks;
+  
+  if (filterUser !== 'Todos') {
+    baseTasks = baseTasks.filter(t => t.assigned_to === filterUser);
+  }
+
+  let totalPeriodo = 0;
+  let concluidasPeriodo = 0;
+
+  if (dashFilter === 'HOJE') {
+    // Estatísticas de HOJE (Baseado na ocorrência prevista para hoje)
+    const hojeTasks = baseTasks.filter(t => getLastOccurrence(t) === todayStr);
+    totalPeriodo = hojeTasks.length;
+    concluidasPeriodo = hojeTasks.filter(t => t.last_done_date === todayStr).length;
+  } else {
+    // Estatísticas SEMANAIS (Tudo o que foi feito desde segunda-feira)
+    // Para o Total Semanal, consideramos o volume total de tarefas ativas no filtro
+    totalPeriodo = baseTasks.length;
+    concluidasPeriodo = baseTasks.filter(t => 
+      t.last_done_date && t.last_done_date >= startOfWeekStr
+    ).length;
+  }
+
+  const pendentes = totalPeriodo - concluidasPeriodo;
+  const porcentagem = totalPeriodo > 0 ? Math.round((concluidasPeriodo / totalPeriodo) * 100) : 0;
+
+  return { 
+    total: totalPeriodo, 
+    concluidas: concluidasPeriodo, 
+    pendentes: pendentes < 0 ? 0 : pendentes, 
+    porcentagem 
+  };
+})();
 
   if (!user) return <Login />
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] text-slate-900 pb-20 font-sans overflow-x-hidden w-full">
       <nav className="bg-[#0F172A] text-white sticky top-0 z-30 shadow-2xl border-b border-white/10 px-6 h-20 flex justify-between items-center">
-        <div className="flex items-center gap-3"><div className="bg-blue-600 p-2 rounded-xl"><LayoutDashboard size={24} /></div>
-        <h1 className="text-xl font-black italic tracking-tighter uppercase">Supply <span className="text-blue-500 text-sm block not-italic font-medium">Task Builder</span></h1></div>
-        <div className="flex items-center gap-4">
-           <button onClick={() => setShowProfileModal(true)} className="flex items-center gap-3 bg-white/5 pl-2 pr-4 py-1.5 rounded-full border border-white/10 hover:bg-white/10 transition-all shadow-sm">
-              <div className="w-8 h-8 bg-gradient-to-tr from-blue-600 to-indigo-600 rounded-full flex items-center justify-center text-xs font-black shadow-lg">{profiles.find(p => p.id === user.id)?.full_name?.charAt(0) || 'U'}</div>
-              <span className="text-[11px] font-bold uppercase text-slate-300 hidden md:block">{profiles.find(p => p.id === user.id)?.full_name || 'Meu Perfil'} {userRole === 'admin' && '👑'}</span>
-           </button>
-           <button onClick={() => supabase.auth.signOut().then(() => window.location.reload())} className="text-slate-400 hover:text-red-400"><LogOut size={20}/></button>
-        </div>
-      </nav>
+  {/* LOGO */}
+  <div className="flex items-center gap-3">
+    <div className="bg-blue-600 p-2 rounded-xl">
+      <LayoutDashboard size={24} />
+    </div>
+    <h1 className="text-xl font-black italic tracking-tighter uppercase">
+      WALLY<span className="text-blue-500 text-sm block not-italic font-medium">Task Manager</span>
+    </h1>
+  </div>
+
+  {/* BOTÕES DA DIREITA */}
+  <div className="flex items-center gap-4">
+    {/* BOTÃO DE PERFIL */}
+    <button 
+      onClick={() => setShowProfileModal(true)} 
+      className="flex items-center gap-3 bg-white/5 pl-2 pr-4 py-1.5 rounded-full border border-white/10 hover:bg-white/10 transition-all shadow-sm"
+    >
+      <div className="w-8 h-8 bg-gradient-to-tr from-blue-600 to-indigo-600 rounded-full flex items-center justify-center text-[10px] font-black shadow-lg">
+        {profiles.find(p => p.id === user.id)?.full_name?.charAt(0) || 'U'}
+      </div>
+      <span className="text-[11px] font-bold uppercase text-slate-300 hidden md:block">
+        {profiles.find(p => p.id === user.id)?.full_name || 'Meu Perfil'} 
+        {userRole === 'admin' ? ' 👑' : userRole === 'gerente' ? ' ⚡' : ''}
+      </span>
+    </button>
+    
+    {/* NOVO BOTÃO DE CONFIGURAÇÕES (SUBSTITUI O LOGOUT DIRETO) */}
+    <button 
+      onClick={() => setShowSettingsModal(true)} 
+      className="w-10 h-10 flex items-center justify-center bg-white/5 rounded-xl border border-white/10 text-slate-400 hover:text-white hover:bg-white/10 transition-all"
+    >
+      <Settings size={20} />
+    </button>
+  </div>
+</nav>
 
       <div className="bg-white/80 backdrop-blur-md border-b border-slate-200 sticky top-20 z-20 py-4 px-4 flex flex-col gap-4 items-center">
         <div className="inline-flex bg-slate-200/60 p-1 rounded-[24px] border border-slate-300/50 shadow-inner overflow-x-auto no-scrollbar max-w-full">
@@ -228,109 +356,182 @@ export default function App() {
       </div>
 
       <main className="max-w-4xl mx-auto p-4">
-        {activeTab === 'DASHBOARD' ? (
-          <div className="mt-6 space-y-6 animate-in fade-in duration-500">
-             <div className="flex flex-col md:flex-row justify-between items-center gap-4 px-2">
-               <h2 className="text-3xl font-black uppercase italic tracking-tighter flex items-center gap-2"><TrendingUp className="text-blue-600"/> Performance</h2>
-               <div className="flex bg-slate-200 p-1 rounded-2xl border-2 border-slate-900 shadow-sm w-full md:w-auto">
-                 <button onClick={() => setDashFilter('HOJE')} className={`flex-1 px-6 py-2 rounded-xl font-black text-xs uppercase transition-all ${dashFilter === 'HOJE' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-500'}`}>Hoje</button>
-                 <button onClick={() => setDashFilter('SEMANAL')} className={`flex-1 px-6 py-2 rounded-xl font-black text-xs uppercase transition-all ${dashFilter === 'SEMANAL' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-500'}`}>Semanal</button>
-               </div>
-             </div>
-             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-               <DashboardCard label={`Total ${dashFilter}`} val={stats.total} color="border-slate-900 bg-white" />
-               <DashboardCard label="Concluídas" val={stats.concluidas} color="border-green-600 bg-green-50 text-green-700" />
-               <DashboardCard label="Pendentes" val={stats.pendentes} color="border-blue-600 bg-blue-50 text-blue-700" />
-             </div>
-             <div className="bg-white p-12 rounded-[48px] border-4 border-slate-900 shadow-[15px_15px_0px_0px_rgba(15,23,42,1)] text-center">
-                <h3 className="text-9xl font-black mb-8 tracking-tighter">{stats.porcentagem}%</h3>
-                <div className="w-full bg-slate-100 h-16 rounded-3xl border-4 border-slate-900 overflow-hidden shadow-inner p-1"><div className="bg-green-500 h-full rounded-2xl transition-all duration-1000" style={{ width: `${stats.porcentagem}%` }} /></div>
-             </div>
+  {activeTab === 'DASHBOARD' ? (
+    <div className="mt-6 space-y-6 animate-in fade-in duration-500">
+        <div className="flex flex-col md:flex-row justify-between items-center gap-4 px-2">
+          <h2 className="text-3xl font-black uppercase italic tracking-tighter flex items-center gap-2"><TrendingUp className="text-blue-600"/> Performance</h2>
+          <div className="flex bg-slate-200 p-1 rounded-2xl border-2 border-slate-900 shadow-sm w-full md:w-auto">
+            <button onClick={() => setDashFilter('HOJE')} className={`flex-1 px-6 py-2 rounded-xl font-black text-xs uppercase transition-all ${dashFilter === 'HOJE' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-500'}`}>Hoje</button>
+            <button onClick={() => setDashFilter('SEMANAL')} className={`flex-1 px-6 py-2 rounded-xl font-black text-xs uppercase transition-all ${dashFilter === 'SEMANAL' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-500'}`}>Semanal</button>
           </div>
-        ) : activeTab === 'HISTÓRICO' ? (
-          <div className="mt-8 space-y-6 animate-in slide-in-from-bottom-4 duration-500">
-             <h2 className="text-3xl font-black uppercase italic tracking-tighter">Linha do Tempo</h2>
-             <div className="relative border-l-4 border-slate-200 ml-4 pl-8 space-y-8 py-4">
-              {history.map((log) => (
-                <div key={log.id} className="relative">
-                  <div className="absolute -left-[42px] top-0 w-5 h-5 bg-blue-600 rounded-full border-4 border-white shadow-md"></div>
-                  <div className="bg-white p-6 rounded-[32px] border border-slate-200 shadow-sm">
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-2">{new Date(log.created_at).toLocaleString('pt-BR')}</p>
-                    <h4 className="text-xl font-black text-slate-900 mb-2">{log.task_title}</h4>
-                    <p className="text-[10px] font-black text-blue-600 uppercase">Concluído por {log.user_name}</p>
-                  </div>
-                </div>
-              ))}
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <DashboardCard label={`Total ${dashFilter}`} val={stats.total} color="border-slate-900 bg-white" />
+          <DashboardCard label="Concluídas" val={stats.concluidas} color="border-green-600 bg-green-50 text-green-700" />
+          <DashboardCard label="Pendentes" val={stats.pendentes} color="border-blue-600 bg-blue-50 text-blue-700" />
+        </div>
+        <div className="bg-white p-12 rounded-[48px] border-4 border-slate-900 shadow-[15px_15px_0px_0px_rgba(15,23,42,1)] text-center">
+          <h3 className="text-9xl font-black mb-8 tracking-tighter">{stats.porcentagem}%</h3>
+          <div className="w-full bg-slate-100 h-16 rounded-3xl border-4 border-slate-900 overflow-hidden shadow-inner p-1"><div className="bg-green-500 h-full rounded-2xl transition-all duration-1000" style={{ width: `${stats.porcentagem}%` }} /></div>
+        </div>
+    </div>
+  ) : activeTab === 'HISTÓRICO' ? (
+    <div className="mt-8 space-y-6 animate-in slide-in-from-bottom-4 duration-500">
+        <h2 className="text-3xl font-black uppercase italic tracking-tighter">Linha do Tempo</h2>
+        <div className="relative border-l-4 border-slate-200 ml-4 pl-8 space-y-8 py-4">
+        {history.map((log) => (
+          <div key={log.id} className="relative">
+            <div className="absolute -left-[42px] top-0 w-5 h-5 bg-blue-600 rounded-full border-4 border-white shadow-md"></div>
+            <div className="bg-white p-6 rounded-[32px] border border-slate-200 shadow-sm">
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-2">{new Date(log.created_at).toLocaleString('pt-BR')}</p>
+              <h4 className="text-xl font-black text-slate-900 mb-2">{log.task_title}</h4>
+              <p className="text-[10px] font-black text-blue-600 uppercase">Concluído por {log.user_name}</p>
             </div>
           </div>
-        ) : (
-          <>
-            <div className="max-w-4xl mx-auto mt-8 mb-6 px-4">
-              <button onClick={() => setShowCreateBox(!showCreateBox)} className={`w-full py-5 rounded-[32px] font-black uppercase tracking-[0.2em] text-[11px] transition-all duration-500 flex items-center justify-center gap-3 border-4 ${showCreateBox ? 'bg-slate-100 border-slate-200 text-slate-400' : 'bg-white border-slate-900 text-slate-900 shadow-[10px_10px_0px_0px_rgba(15,23,42,1)] hover:translate-x-1 hover:translate-y-1'}`}>
-                {showCreateBox ? <><X size={20} /> Cancelar Operação</> : <><Plus size={20} strokeWidth={3} className="text-blue-600" /> Lançar Nova Missão</>}
-              </button>
-            </div>
-
-            {showCreateBox && (
-              <div className="max-w-4xl mx-auto bg-white p-8 rounded-[32px] border border-slate-200 shadow-[0_20px_50px_rgba(0,0,0,0.05)] mb-12 mt-4 relative overflow-hidden animate-in slide-in-from-top-4 duration-500">
-                <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-blue-500 to-indigo-600 opacity-60"></div>
-                <div className="flex flex-col gap-6">
-                  <input className="w-full text-3xl font-black outline-none placeholder-slate-300 text-slate-900 bg-transparent border-b-2 border-slate-100 focus:border-blue-500 transition-all pb-3 uppercase" placeholder="O QUE VAMOS CONSTRUIR?" value={taskTitle} onChange={e => setTaskTitle(e.target.value)} />
-                  <textarea className="w-full p-4 bg-slate-50 rounded-2xl font-medium text-slate-700 border border-slate-100 outline-none focus:border-blue-300 focus:bg-white transition-all min-h-[80px] resize-none" placeholder="Coordenadas da tarefa..." value={notes} onChange={e => setNotes(e.target.value)} />
-                  <div className="space-y-3 bg-slate-50/50 p-4 rounded-2xl border border-slate-100">
-                    <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest flex items-center gap-2"><ListChecks size={14} className="text-blue-500"/> Checklist de Passos</label>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                      {tempSubtasks.map((sub, index) => (
-                        <div key={index} className="flex items-center gap-2 bg-white p-2 rounded-xl border border-slate-200 shadow-sm">
-                          <input className="flex-1 text-xs font-bold text-slate-600 outline-none" value={sub.title} onChange={(e) => { const newSubs = [...tempSubtasks]; newSubs[index].title = e.target.value; setTempSubtasks(newSubs); }} placeholder="Nome do passo..." />
-                          <button onClick={() => setTempSubtasks(tempSubtasks.filter((_, i) => i !== index))} className="text-red-400 p-1"><X size={14}/></button>
-                        </div>
-                      ))}
-                      <button onClick={() => setTempSubtasks([...tempSubtasks, { title: '', done: false }])} className="flex items-center justify-center gap-2 p-2 border-2 border-dashed border-slate-200 rounded-xl text-slate-400 font-black text-[10px] hover:border-blue-400 transition-all uppercase"><Plus size={14}/> Adicionar Passo</button>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-stretch">
-                    <div className="md:col-span-4 space-y-4">
-                      <select className="w-full p-3.5 bg-slate-50 rounded-xl font-bold text-sm border border-slate-200 text-slate-700 outline-none" value={assignedTo} onChange={e => setAssignedTo(e.target.value)}>{profiles.map(p => <option key={p.id} value={p.id}>{p.full_name || p.id.slice(0,5)}</option>)}</select>
-                      <select className="w-full p-3.5 bg-slate-50 rounded-xl font-bold text-sm border border-slate-200 text-slate-700 outline-none" value={category} onChange={e => setCategory(e.target.value)}><option>Trade</option><option>Reunião</option><option>Geral</option></select>
-                    </div>
-                    <div className="md:col-span-4 space-y-4">
-                      <div className="flex gap-1.5 bg-slate-50 p-1.5 rounded-xl border border-slate-100">{weekDays.map(day => (<button key={day.id} type="button" onClick={() => toggleDay(day.id)} className={`flex-1 h-9 rounded-lg font-black text-xs transition-all ${selectedDays.includes(day.id) ? 'bg-blue-600 text-white shadow-lg scale-105' : 'text-slate-400 hover:bg-slate-200/50'}`}>{day.label}</button>))}</div>
-                      <input type="number" min="1" className="w-full p-3.5 bg-slate-50 rounded-xl font-black border border-slate-200 text-slate-700 outline-none" value={repeatInterval} onChange={e => setRepeatInterval(parseInt(e.target.value) || 1)} />
-                    </div>
-                    <div className="md:col-span-4 flex"><button onClick={addTask} className="w-full py-6 md:py-10 bg-blue-600 hover:bg-[#0F172A] text-white rounded-[32px] font-black uppercase tracking-widest transition-all duration-500 flex flex-row md:flex-col items-center justify-center gap-3 shadow-[0_10px_30px_rgba(37,99,235,0.3)] active:scale-95 group"><Plus size={32} strokeWidth={3} /><span className="text-sm">Lançar Missão</span></button></div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            <div className="space-y-6">
-              <h2 className="font-black uppercase text-slate-400 text-[10px] tracking-[0.3em] px-2 flex items-center gap-2"><ChevronRight size={14} className="text-blue-600" /> {activeTab} • {filteredTasks.length} TAREFAS</h2>
-{filteredTasks.map(task => {
-  const lS = getLastOccurrence(task); const lD = task.last_done_date || '1970-01-01';
-  const isDone = lD >= lS; const isLate = !isDone && lS < getTodayStr();
-  return (
-    <TaskBox 
-      key={task.id} 
-      task={task} 
-      profiles={profiles} 
-      isLate={isLate} 
-      isDoneToday={isDone} 
-      userRole={userRole} 
-      currentUser={user}
-      onView={(t: any) => setViewingTask(t)}
-      onToggle={() => toggleComplete(task)} 
-      onEdit={(t: any) => { setEditingTask(t); setShowEditModal(true); }} 
-      onUpdate={() => { fetchTasks(); fetchHistory(); }} 
-    />
-  )
-})}
-            </div>
-          </>
+        ))}
+      </div>
+    </div>
+  ) : activeTab === 'COMUNICADOS' ? (
+    /* NOVA ABA DE COMUNICADOS */
+    <div className="mt-8 space-y-8 animate-in fade-in duration-500">
+      <div className="flex flex-col md:flex-row justify-between items-center gap-4">
+        <h2 className="text-3xl font-black uppercase italic tracking-tighter flex items-center gap-2">
+          <Activity className="text-red-600 animate-pulse" /> Mural de Alertas
+        </h2>
+        {userRole === 'admin' && (
+          <span className="text-[9px] font-black bg-red-100 text-red-600 px-4 py-2 rounded-full border-2 border-red-200">
+            MODO ADMIN SUPREMO 👑
+          </span>
         )}
-      </main>
+      </div>
 
-      {/* MODALS */}
+      {userRole === 'admin' && (
+        <div className="bg-white p-8 rounded-[40px] border-4 border-slate-900 shadow-[15px_15px_0px_0px_rgba(15,23,42,1)] space-y-4">
+          <input 
+            className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-black text-slate-900 outline-none focus:border-red-500"
+            placeholder="TÍTULO DO ALERTA"
+            value={annTitle}
+            onChange={e => setAnnTitle(e.target.value)}
+          />
+          <textarea 
+            className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold text-slate-700 outline-none focus:border-red-500 min-h-[100px]"
+            placeholder="MENSAGEM PARA A EQUIPE..."
+            value={annContent}
+            onChange={e => setAnnContent(e.target.value)}
+          />
+          <button 
+            onClick={addAnnouncement}
+            className="w-full bg-red-600 text-white p-5 rounded-3xl font-black uppercase tracking-widest hover:bg-slate-900 transition-all flex items-center justify-center gap-3"
+          >
+            Transmitir Alerta
+          </button>
+        </div>
+      )}
+
+      <div className="space-y-6">
+        {announcements.map((ann) => (
+          <div key={ann.id} className="bg-white border-4 border-slate-900 rounded-[40px] p-8 shadow-[10px_10px_0px_0px_rgba(248,113,113,1)] relative overflow-hidden group">
+            <div className="absolute top-0 left-0 w-2 h-full bg-red-600"></div>
+            <div className="flex justify-between items-start mb-4">
+              <div>
+                <p className="text-[10px] font-black text-red-600 uppercase tracking-widest mb-1 flex items-center gap-2">
+                  <AlertCircle size={12}/> ALERTA OFICIAL
+                </p>
+                <h4 className="text-2xl font-black text-slate-900 leading-none">{ann.title}</h4>
+              </div>
+              <span className="text-[9px] font-black text-slate-400 uppercase">
+                {new Date(ann.created_at).toLocaleDateString('pt-BR')}
+              </span>
+            </div>
+            <div className="bg-slate-50 p-6 rounded-3xl border-2 border-slate-100 text-slate-700 font-bold leading-relaxed whitespace-pre-wrap">
+              {ann.content}
+            </div>
+            <div className="mt-6 flex justify-between items-center">
+              <p className="text-[9px] font-black text-slate-400 uppercase">
+                Transmitido por: <span className="text-slate-900">{ann.profiles?.full_name || 'Admin'}</span>
+              </p>
+              {userRole === 'admin' && (
+                <button 
+                  onClick={async () => { if(confirm('Remover alerta?')) { await supabase.from('announcements').delete().eq('id', ann.id); fetchAnnouncements(); }}}
+                  className="text-red-400 hover:text-red-600 transition-colors"
+                >
+                  <Trash2 size={18}/>
+                </button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  ) : (
+    /* ABA PADRÃO DE TAREFAS */
+    <>
+      <div className="max-w-4xl mx-auto mt-8 mb-6 px-4">
+        <button onClick={() => setShowCreateBox(!showCreateBox)} className={`w-full py-5 rounded-[32px] font-black uppercase tracking-[0.2em] text-[11px] transition-all duration-500 flex items-center justify-center gap-3 border-4 ${showCreateBox ? 'bg-slate-100 border-slate-200 text-slate-400' : 'bg-white border-slate-900 text-slate-900 shadow-[10px_10px_0px_0px_rgba(15,23,42,1)] hover:translate-x-1 hover:translate-y-1'}`}>
+          {showCreateBox ? <><X size={20} /> Cancelar Operação</> : <><Plus size={20} strokeWidth={3} className="text-blue-600" /> Lançar Nova Missão</>}
+        </button>
+      </div>
+
+      {showCreateBox && (
+        <div className="max-w-4xl mx-auto bg-white p-8 rounded-[32px] border border-slate-200 shadow-[0_20px_50px_rgba(0,0,0,0.05)] mb-12 mt-4 relative overflow-hidden animate-in slide-in-from-top-4 duration-500">
+          <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-blue-500 to-indigo-600 opacity-60"></div>
+          <div className="flex flex-col gap-6">
+            <input className="w-full text-3xl font-black outline-none placeholder-slate-300 text-slate-900 bg-transparent border-b-2 border-slate-100 focus:border-blue-500 transition-all pb-3 uppercase" placeholder="O QUE VAMOS CONSTRUIR?" value={taskTitle} onChange={e => setTaskTitle(e.target.value)} />
+            <textarea className="w-full p-4 bg-slate-50 rounded-2xl font-medium text-slate-700 border border-slate-100 outline-none focus:border-blue-300 focus:bg-white transition-all min-h-[80px] resize-none" placeholder="Coordenadas da tarefa..." value={notes} onChange={e => setNotes(e.target.value)} />
+            <div className="space-y-3 bg-slate-50/50 p-4 rounded-2xl border border-slate-100">
+              <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest flex items-center gap-2"><ListChecks size={14} className="text-blue-500"/> Checklist de Passos</label>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                {tempSubtasks.map((sub, index) => (
+                  <div key={index} className="flex items-center gap-2 bg-white p-2 rounded-xl border border-slate-200 shadow-sm">
+                    <input className="flex-1 text-xs font-bold text-slate-600 outline-none" value={sub.title} onChange={(e) => { const newSubs = [...tempSubtasks]; newSubs[index].title = e.target.value; setTempSubtasks(newSubs); }} placeholder="Nome do passo..." />
+                    <button onClick={() => setTempSubtasks(tempSubtasks.filter((_, i) => i !== index))} className="text-red-400 p-1"><X size={14}/></button>
+                  </div>
+                ))}
+                <button onClick={() => setTempSubtasks([...tempSubtasks, { title: '', done: false }])} className="flex items-center justify-center gap-2 p-2 border-2 border-dashed border-slate-200 rounded-xl text-slate-400 font-black text-[10px] hover:border-blue-400 transition-all uppercase"><Plus size={14}/> Adicionar Passo</button>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-stretch">
+              <div className="md:col-span-4 space-y-4">
+                {/* Localize o select de AssignedTo no formulário de criação */}
+<select 
+  className="w-full p-3.5 bg-slate-50 rounded-xl font-bold text-sm border border-slate-200 text-slate-700 outline-none disabled:opacity-50" 
+  value={assignedTo} 
+  onChange={e => setAssignedTo(e.target.value)}
+  disabled={userRole === 'membro'} // MEMBRO NÃO DELEGA
+>
+  {userRole === 'membro' ? (
+    <option value={user.id}>Atribuído a mim</option>
+  ) : (
+    profiles.map(p => <option key={p.id} value={p.id}>{p.full_name || p.id.slice(0,5)}</option>)
+  )}
+</select>
+                <select className="w-full p-3.5 bg-slate-50 rounded-xl font-bold text-sm border border-slate-200 text-slate-700 outline-none" value={category} onChange={e => setCategory(e.target.value)}><option>Trade</option><option>Reunião</option><option>Geral</option></select>
+              </div>
+              <div className="md:col-span-4 space-y-4">
+                <div className="flex gap-1.5 bg-slate-50 p-1.5 rounded-xl border border-slate-100">{weekDays.map(day => (<button key={day.id} type="button" onClick={() => toggleDay(day.id)} className={`flex-1 h-9 rounded-lg font-black text-xs transition-all ${selectedDays.includes(day.id) ? 'bg-blue-600 text-white shadow-lg scale-105' : 'text-slate-400 hover:bg-slate-200/50'}`}>{day.label}</button>))}</div>
+                <input type="number" min="1" className="w-full p-3.5 bg-slate-50 rounded-xl font-black border border-slate-200 text-slate-700 outline-none" value={repeatInterval} onChange={e => setRepeatInterval(parseInt(e.target.value) || 1)} />
+              </div>
+              <div className="md:col-span-4 flex"><button onClick={addTask} className="w-full py-6 md:py-10 bg-blue-600 hover:bg-[#0F172A] text-white rounded-[32px] font-black uppercase tracking-widest transition-all duration-500 flex flex-row md:flex-col items-center justify-center gap-3 shadow-[0_10px_30px_rgba(37,99,235,0.3)] active:scale-95 group"><Plus size={32} strokeWidth={3} /><span className="text-sm">Lançar Missão</span></button></div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="space-y-6">
+        <h2 className="font-black uppercase text-slate-400 text-[10px] tracking-[0.3em] px-2 flex items-center gap-2"><ChevronRight size={14} className="text-blue-600" /> {activeTab} • {filteredTasks.length} TAREFAS</h2>
+        {filteredTasks.map(task => {
+          const lS = getLastOccurrence(task); const lD = task.last_done_date || '1970-01-01';
+          const isDone = lD >= lS; const isLate = !isDone && lS < getTodayStr();
+          return (<TaskBox key={task.id} task={task} profiles={profiles} isLate={isLate} isDoneToday={isDone} userRole={userRole} currentUser={user} onToggle={() => toggleComplete(task)} onView={(t:any) => setViewingTask(t)} onEdit={(t: any) => { setEditingTask(t); setShowEditModal(true); }} onUpdate={fetchTasks} />)
+        })}
+      </div>
+    </>
+  )}
+</main>
+
+      {/* --- MODALS --- */}
+      
+      {/* 1. Modal de Perfil */}
       {showProfileModal && (
         <div className="fixed inset-0 bg-slate-900/90 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
           <div className="bg-white p-10 rounded-[40px] w-full max-w-sm border-4 border-slate-900 shadow-2xl text-center">
@@ -342,6 +543,7 @@ export default function App() {
         </div>
       )}
 
+      {/* 2. Modal de Edição */}
       {showEditModal && editingTask && (
         <div className="fixed inset-0 bg-slate-900/90 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in zoom-in-95">
           <div className="bg-white p-10 rounded-[48px] w-full max-w-2xl border-4 border-slate-900 shadow-2xl overflow-y-auto max-h-[90vh]">
@@ -372,61 +574,113 @@ export default function App() {
           </div>
         </div>
       )}
-      {/* BARRA LATERAL DE DETALHES (SIDEBAR) */}
-<div className={`fixed top-0 right-0 h-full bg-white w-full md:w-[450px] border-l-4 border-slate-900 z-50 shadow-[-20px_0px_60px_rgba(0,0,0,0.1)] transition-transform duration-500 transform ${viewingTask ? 'translate-x-0' : 'translate-x-full'}`}>
-  {viewingTask && (
-    <div className="flex flex-col h-full">
-      <div className={`p-8 border-b-4 border-slate-900 ${viewingTask.last_done_date ? 'bg-green-500' : 'bg-blue-600'} text-white`}>
-        <div className="flex justify-between items-start mb-6">
-          <span className="bg-black/20 px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest">{viewingTask.category}</span>
-          <button onClick={() => setViewingTask(null)} className="hover:scale-110 transition-transform"><X size={32} strokeWidth={3}/></button>
-        </div>
-        <h2 className="text-3xl font-black uppercase italic tracking-tighter leading-none">{viewingTask.title}</h2>
-      </div>
 
-      <div className="flex-1 overflow-y-auto p-8 space-y-8">
-        <div>
-          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-3">Coordenadas da Missão</label>
-          <div className="bg-slate-50 p-6 rounded-3xl border-2 border-slate-100 text-slate-700 font-bold leading-relaxed whitespace-pre-wrap text-sm">
-            {viewingTask.notes || "Sem observações detalhadas."}
-          </div>
-        </div>
-
-        <div>
-          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-4 text-center">Status do Checklist</label>
-          <div className="space-y-2">
-            {(viewingTask.subtasks || []).map((sub: any, i: number) => (
-              <div key={i} className={`flex items-center gap-3 p-4 rounded-2xl border-2 ${sub.done ? 'bg-green-50 border-green-200 text-green-700' : 'bg-slate-50 border-slate-100 text-slate-500'}`}>
-                {sub.done ? <CheckCircle2 size={18} /> : <div className="w-4 h-4 rounded-full border-2 border-slate-300" />}
-                <span className="text-xs font-black uppercase">{sub.title}</span>
+      {/* 3. BARRA LATERAL (SIDEBAR) */}
+      <div className={`fixed top-0 right-0 h-full bg-white w-full md:w-[450px] border-l-4 border-slate-900 z-50 shadow-[-20px_0px_60px_rgba(0,0,0,0.1)] transition-transform duration-500 transform ${viewingTask ? 'translate-x-0' : 'translate-x-full'}`}>
+        {viewingTask && (
+          <div className="flex flex-col h-full">
+            <div className={`p-8 border-b-4 border-slate-900 ${viewingTask.last_done_date ? 'bg-green-500' : 'bg-blue-600'} text-white`}>
+              <div className="flex justify-between items-start mb-6">
+                <span className="bg-black/20 px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest">{viewingTask.category}</span>
+                <button onClick={() => setViewingTask(null)} className="hover:scale-110 transition-transform"><X size={32} strokeWidth={3}/></button>
               </div>
-            ))}
+              <h2 className="text-3xl font-black uppercase italic tracking-tighter leading-none">{viewingTask.title}</h2>
+            </div>
+            <div className="flex-1 overflow-y-auto p-8 space-y-8">
+              <div>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-3">Coordenadas da Missão</label>
+                <div className="bg-slate-50 p-6 rounded-3xl border-2 border-slate-100 text-slate-700 font-bold leading-relaxed whitespace-pre-wrap text-sm">{viewingTask.notes || "Sem observações detalhadas."}</div>
+              </div>
+              <div>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-4 text-center">Status do Checklist</label>
+                <div className="space-y-2">
+                  {(viewingTask.subtasks || []).map((sub: any, i: number) => (
+                    <div key={i} className={`flex items-center gap-3 p-4 rounded-2xl border-2 ${sub.done ? 'bg-green-50 border-green-200 text-green-700' : 'bg-slate-50 border-slate-100 text-slate-500'}`}>
+                      {sub.done ? <CheckCircle2 size={18} /> : <div className="w-4 h-4 rounded-full border-2 border-slate-300" />}
+                      <span className="text-xs font-black uppercase">{sub.title}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="p-8 border-t-4 border-slate-900 bg-slate-50">
+              {(userRole === 'admin' || userRole === 'gerente' || viewingTask.assigned_to === user.id) ? (
+                <button onClick={() => { setEditingTask(viewingTask); setShowEditModal(true); setViewingTask(null); }} className="w-full bg-slate-900 text-white p-5 rounded-2xl font-black uppercase tracking-widest hover:bg-blue-600 transition-all flex items-center justify-center gap-3"><Edit3 size={20} /> Editar Missão</button>
+              ) : ( <p className="text-center text-[10px] font-black text-slate-400 uppercase">Visualização restrita</p> )}
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
-      <div className="p-8 border-t-4 border-slate-900 bg-slate-50">
-        <button 
-          onClick={() => { setEditingTask(viewingTask); setShowEditModal(true); setViewingTask(null); }}
-          className="w-full bg-slate-900 text-white p-5 rounded-2xl font-black uppercase tracking-widest hover:bg-blue-600 transition-all flex items-center justify-center gap-3"
-        >
-          <Edit3 size={20} /> 
-        </button>
-      </div>
-    </div>
-  )}
-</div>
-    </div>
-  )
-}
+      {/* 4. MODAL DE CONFIGURAÇÕES (FORA DA SIDEBAR) */}
+      {showSettingsModal && (
+        <div className="fixed inset-0 bg-slate-900/95 z-[60] flex items-center justify-center p-4 backdrop-blur-md animate-in fade-in">
+          <div className="bg-white w-full max-w-2xl rounded-[48px] border-4 border-slate-900 shadow-[20px_20px_0px_0px_rgba(37,99,235,1)] flex flex-col max-h-[90vh] overflow-hidden">
+            <div className="p-8 border-b-4 border-slate-100 flex justify-between items-center bg-slate-50">
+              <div>
+                <h2 className="text-3xl font-black uppercase italic tracking-tighter text-slate-900">Configurações</h2>
+                <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest">Painel de Controle</p>
+              </div>
+              <button onClick={() => setShowSettingsModal(false)}><X size={32} strokeWidth={3} /></button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-8 space-y-10">
+              {userRole === 'admin' ? (
+                <div className="space-y-6">
+                  <div className="flex items-center gap-2"><User size={20} className="text-blue-600"/><h3 className="font-black uppercase text-sm tracking-widest text-slate-900">Gestão de Tropa</h3></div>
+                  <div className="space-y-3">
+                    {profiles.map((profile) => (
+                      <div key={profile.id} className="flex flex-col md:flex-row md:items-center justify-between p-4 bg-slate-50 rounded-3xl border-2 border-slate-100 gap-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 bg-slate-900 text-white rounded-2xl flex items-center justify-center font-black text-xs">{profile.full_name?.charAt(0)}</div>
+                          <div><p className="font-black text-slate-900 text-sm leading-tight">{profile.full_name || 'Sem Nome'}</p><p className="text-[9px] font-bold text-slate-400 uppercase">{profile.role || 'membro'}</p></div>
+                        </div>
+                        <div className="flex gap-1.5">
+                          {['membro', 'gerente', 'admin'].map((role) => (
+                            <button key={role} onClick={() => changeRole(profile.id, role)} className={`px-3 py-1.5 rounded-xl font-black text-[9px] uppercase border-2 transition-all ${profile.role === role ? 'bg-slate-900 border-slate-900 text-white' : 'bg-white border-slate-200 text-slate-400'}`}>{role}</button>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : ( <div className="p-8 bg-blue-50 rounded-[32px] text-center text-xs font-black text-blue-900 uppercase">Gestão restrita ao Admin</div> )}
+              <div className="space-y-6 pt-6 border-t-2 border-slate-100">
+                <button onClick={async () => { await supabase.auth.signOut(); window.location.reload(); }} className="w-full flex items-center justify-between p-6 bg-red-50 hover:bg-red-100 border-2 border-red-100 rounded-3xl transition-all">
+                  <div className="flex items-center gap-4"><div className="p-3 bg-white rounded-2xl text-red-600 border-2 border-red-50"><LogOut size={24} /></div><div className="text-left"><p className="font-black text-red-600 uppercase text-sm">Sair do Sistema</p></div></div>
+                  <ChevronRight className="text-red-300" />
+                </button>
+              </div>
+            </div>
+            <div className="p-6 bg-slate-50 border-t-4 border-slate-100 text-center"><p className="text-[9px] font-black text-slate-400 uppercase tracking-[0.4em]">WALLY Task Builder • v2.0</p></div>
+          </div>
+        </div>
+      )}
+
+    </div> // Fim do div principal
+  );
+} // Fim do export default
+
 function TaskBox({ task, profiles, onUpdate, onEdit, isLate, isDoneToday, onToggle, userRole, currentUser, onView }: any) {
   const [expanded, setExpanded] = useState(false);
+  
+  // --- LÓGICA DE PERMISSÕES ---
+  const isOwner = task.assigned_to === currentUser?.id;
+  const isAdmin = userRole === 'admin';
+  const isGerente = userRole === 'gerente';
+  const canManage = isAdmin || isGerente || isOwner; // Regra: Admin, Gerente ou o próprio Dono podem gerenciar
+
   const subtasks = task.subtasks || [];
   const subDone = subtasks.filter((s: any) => s.done).length;
   const subTotal = subtasks.length;
 
   // Função para marcar/desmarcar subtarefa
   const toggleSubtask = async (index: number) => {
+    // Bloqueio de segurança
+    if (!canManage) {
+      alert("Acesso negado: Você só pode concluir suas próprias tarefas.");
+      return;
+    }
+
     const newSubtasks = [...subtasks];
     newSubtasks[index].done = !newSubtasks[index].done;
 
@@ -470,14 +724,17 @@ function TaskBox({ task, profiles, onUpdate, onEdit, isLate, isDoneToday, onTogg
       {/* LINHA PRINCIPAL */}
       <div className="flex items-center gap-5">
         {/* CHECKBOX GRANDE (Tarefa Pai) */}
-        <button onClick={onToggle} className={`w-16 h-16 rounded-[22px] border-4 flex items-center justify-center transition-all flex-shrink-0 shadow-sm
-            ${isDoneToday ? 'bg-green-600 border-green-700 text-white' : isLate ? 'bg-white border-red-600 text-red-600' : 'bg-white border-slate-200 text-transparent hover:border-blue-500'}`}>
-          <CheckCircle2 size={40} strokeWidth={3} />
-        </button>
+<button 
+  onClick={canManage ? onToggle : () => alert("Acesso negado: Você não é o responsável por esta missão.")} 
+  className={`w-16 h-16 rounded-[22px] border-4 flex items-center justify-center transition-all flex-shrink-0 shadow-sm
+    ${!canManage ? 'opacity-30 grayscale cursor-not-allowed' : ''} // <--- ADICIONE ESTA LINHA: Fica cinza se não puder mexer
+    ${isDoneToday ? 'bg-green-600 border-green-700 text-white' : isLate ? 'bg-white border-red-600 text-red-600' : 'bg-white border-slate-200 text-transparent hover:border-blue-500'}`}
+>
+  <CheckCircle2 size={40} strokeWidth={3} />
+</button>
 
         {/* CONTEÚDO CENTRAL */}
         <div className="flex-1 min-w-0">
-          {/* TÍTULO E NOTAS -> Abrem a Sidebar */}
           <div className="cursor-pointer group/title" onClick={() => onView(task)}>
             <h3 className={`text-2xl font-black leading-tight tracking-tight truncate ${isDoneToday ? 'line-through text-green-900/50' : isLate ? 'text-red-900' : 'text-slate-900'} group-hover/title:text-blue-600`}>
               {task.title}
@@ -489,7 +746,6 @@ function TaskBox({ task, profiles, onUpdate, onEdit, isLate, isDoneToday, onTogg
             )}
           </div>
 
-          {/* BARRA DE PROGRESSO E BOTÃO EXPANDIR */}
           {subTotal > 0 && (
             <div className="flex items-center gap-3 mt-3">
               <div className="flex-1 bg-slate-100 h-2 rounded-full overflow-hidden border border-slate-200">
@@ -507,10 +763,14 @@ function TaskBox({ task, profiles, onUpdate, onEdit, isLate, isDoneToday, onTogg
           )}
         </div>
 
-        {/* BOTÕES DE AÇÃO (EDITAR/DELETAR) */}
+        {/* BOTÕES DE AÇÃO (EDITAR/DELETAR) - Só aparecem se tiver permissão */}
         <div className="flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-          <button onClick={() => onEdit(task)} className="text-slate-300 hover:text-blue-600 p-2 transition-all"><Edit3 size={24}/></button>
-          <button onClick={async () => { if(confirm('Deletar missão?')) { await supabase.from('tasks').delete().eq('id', task.id); onUpdate(); } }} className="text-slate-200 hover:text-red-600 p-2 transition-all"><Trash2 size={24}/></button>
+          {canManage && (
+            <>
+              <button onClick={() => onEdit(task)} className="text-slate-300 hover:text-blue-600 p-2 transition-all"><Edit3 size={24}/></button>
+              <button onClick={async () => { if(confirm('Deletar missão?')) { await supabase.from('tasks').delete().eq('id', task.id); onUpdate(); } }} className="text-slate-200 hover:text-red-600 p-2 transition-all"><Trash2 size={24}/></button>
+            </>
+          )}
         </div>
       </div>
 
@@ -519,19 +779,20 @@ function TaskBox({ task, profiles, onUpdate, onEdit, isLate, isDoneToday, onTogg
         <div className="mt-2 space-y-2 border-t-4 border-slate-100 pt-4 animate-in slide-in-from-top-2 duration-300">
           {subtasks.map((sub: any, index: number) => (
             <div 
-              key={index} 
-              onClick={() => toggleSubtask(index)}
-              className={`flex items-center gap-3 p-4 rounded-2xl border-2 transition-all cursor-pointer
-                ${sub.done ? 'bg-green-100/50 border-green-200 text-green-700 opacity-70' : 'bg-slate-50 border-slate-100 text-slate-700 hover:border-blue-200'}
-              `}
-            >
+  key={index} 
+  onClick={() => toggleSubtask(index)} // A função já tem a trava canManage que colocamos antes
+  className={`flex items-center gap-3 p-4 rounded-2xl border-2 transition-all cursor-pointer
+    ${!canManage ? 'opacity-50 cursor-not-allowed' : 'hover:border-blue-200'} // <--- Feedback visual
+    ${sub.done ? 'bg-green-100/50 border-green-200 text-green-700 opacity-70' : 'bg-slate-50 border-slate-100 text-slate-700'}
+  `}
+>
               <div className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all
                 ${sub.done ? 'bg-green-500 border-green-500 text-white' : 'bg-white border-slate-300 text-transparent'}
               `}>
                 <Check size={14} strokeWidth={4} />
               </div>
-              <span className={`text-xs font-black uppercase ${sub.done ? 'line-through' : ''}`}>{sub.title}</span>
-            </div>
+               <span className={`text-xs font-black uppercase ${sub.done ? 'line-through' : ''}`}>{sub.title}</span>
+              </div>
           ))}
         </div>
       )}
@@ -559,7 +820,7 @@ function Login() {
     <div className="min-h-screen bg-[#0F172A] flex items-center justify-center p-4 text-center font-sans">
       <div className="bg-white p-12 rounded-[60px] w-full max-w-sm border-b-[24px] border-blue-600 shadow-2xl">
         <div className="bg-blue-600 w-16 h-16 rounded-[20px] flex items-center justify-center mx-auto mb-8 shadow-[0_0_30px_rgba(37,99,235,0.5)] rotate-12"><Activity className="text-white" size={32}/></div>
-        <h1 className="text-6xl font-black italic uppercase tracking-tighter text-slate-900 leading-none">SUPPLY<br/><span className="text-blue-600 text-3xl not-italic tracking-[0.2em] font-medium opacity-80 uppercase">Task Builder</span></h1>
+        <h1 className="text-6xl font-black italic uppercase tracking-tighter text-slate-900 leading-none">WALLY<br/><span className="text-blue-600 text-3xl not-italic tracking-[0.2em] font-medium opacity-80 uppercase">TASK MANAGER</span></h1>
         <div className="space-y-4 mt-12">
           <input className="w-full p-6 bg-slate-50 border-4 border-slate-100 rounded-[28px] font-black text-slate-900 outline-none focus:border-blue-500 transition-all placeholder-slate-300" placeholder="E-MAIL" onChange={e => setEmail(e.target.value)} />
           <input className="w-full p-6 bg-slate-50 border-4 border-slate-100 rounded-[28px] font-black text-slate-900 outline-none focus:border-blue-500 transition-all" type="password" placeholder="SENHA" onChange={e => setPassword(e.target.value)} />
