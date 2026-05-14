@@ -33,3 +33,7 @@ body {
     scrollbar-width: none;
   }
 }
+html {
+  /* Reserva o espaço da scrollbar sem necessariamente mostrá-la */
+  scrollbar-gutter: stable;
+}

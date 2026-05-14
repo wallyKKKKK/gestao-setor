@@ -1,77 +1,141 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo, memo, useCallback, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
 import { 
   Plus, Trash2, CheckCircle2, LayoutDashboard, 
   LogOut, Calendar, User, X, Check, AlertCircle, TrendingUp,
-  Edit3, ChevronRight, Activity, ListChecks, ChevronDown, ChevronUp, FileText, Megaphone, Settings
+  Edit3, ChevronRight, Activity, ListChecks, ChevronDown, ChevronUp, FileText, Megaphone, Settings, Search
 } from 'lucide-react'
+
+// 1. Defina exatamente o que é cada dado no seu sistema
+interface Subtask {
+  title: string;
+  done: boolean;
+}
+
+interface Task {
+  id: string;
+  title: string;
+  notes: string;
+  assigned_to: string;
+  category: string;
+  status: 'pendente' | 'concluido';
+  last_done_date: string | null;
+  repeat_days: string;
+  repeat_interval: number;
+  subtasks: Subtask[];
+  created_at: string;
+  // Campos que vamos calcular e "pendurar" no objeto para performance:
+  lastOcc?: string; 
+  nextOcc?: string;
+  isDoneToday?: boolean;
+}
+
+interface Profile {
+  id: string;
+  full_name: string;
+  role: 'admin' | 'gerente' | 'membro';
+}
 
 // --- FUNÇÕES DE UTILIDADE (FORA DO COMPONENTE) ---
 const getTodayStr = () => {
-  const date = new Date();
-  const offset = date.getTimezoneOffset();
-  const localDate = new Date(date.getTime() - (offset * 60 * 1000));
-  return localDate.toISOString().split('T')[0];
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 };
 
-const getLastOccurrence = (task: any) => {
+const formatToBR = (dateStr: string) => {
+  if (!dateStr || dateStr === '1970-01-01' || dateStr.includes('/')) return dateStr;
+  const [y, m, d] = dateStr.split('-');
+  return `${d}/${m}/${y}`;
+};
+
+const getLastOccurrence = (task: Task) => {
   const todayStr = getTodayStr();
-  const daysMap: any = { seg: 1, ter: 2, qua: 3, qui: 4, sex: 5 };
-  if (!task.repeat_days || task.repeat_days === "") return task.due_date || '1970-01-01';
+  const createdAtStr = task.created_at.split('T')[0];
+  
+  if (!task.repeat_days || task.repeat_days === "") return task.last_done_date || '1970-01-01';
 
-  const taskDays = task.repeat_days.split(',').map((d: string) => daysMap[d]);
-  const startDate = new Date(task.created_at);
-  const startMonday = new Date(startDate);
-  startMonday.setDate(startDate.getDate() - (startDate.getDay() === 0 ? 6 : startDate.getDay() - 1));
+  let theoreticalLastStr = '1970-01-01';
 
-  let lastDateStr = '1970-01-01';
-  for (let w = 0; w < 52; w++) {
-    if (w % (task.repeat_interval || 1) === 0) {
-      const currWeekMon = new Date(startMonday);
-      currWeekMon.setDate(startMonday.getDate() + (w * 7));
-      for (let dayOffset of taskDays) {
-        const occurrence = new Date(currWeekMon);
-        occurrence.setDate(currWeekMon.getDate() + (dayOffset - 1));
-        const occStr = occurrence.toISOString().split('T')[0];
-        if (occStr <= todayStr && occStr > lastDateStr) lastDateStr = occStr;
+  const dayOfMonth = parseInt(task.repeat_days);
+  if (!isNaN(dayOfMonth) && !task.repeat_days.includes(',')) {
+    const today = new Date();
+    const thisMonthOcc = new Date(today.getFullYear(), today.getMonth(), dayOfMonth);
+    const lastMonthOcc = new Date(today.getFullYear(), today.getMonth() - 1, dayOfMonth);
+    
+    const targetDate = (today.getDate() >= dayOfMonth) ? thisMonthOcc : lastMonthOcc;
+    theoreticalLastStr = targetDate.toISOString().split('T')[0];
+  } 
+  else {
+    const daysMap: Record<string, number> = { seg: 1, ter: 2, qua: 3, qui: 4, sex: 5 };
+    const taskDays = task.repeat_days.split(',').map((d: string) => daysMap[d as keyof typeof daysMap]);
+    const startDate = new Date(task.created_at);
+    const startMonday = new Date(startDate);
+    startMonday.setDate(startDate.getDate() - (startDate.getDay() === 0 ? 6 : startDate.getDay() - 1));
+
+    for (let w = 0; w < 52; w++) {
+      if (w % (task.repeat_interval || 1) === 0) {
+        const currWeekMon = new Date(startMonday);
+        currWeekMon.setDate(startMonday.getDate() + (w * 7));
+        for (let dayOffset of taskDays) {
+          const occurrence = new Date(currWeekMon);
+          occurrence.setDate(currWeekMon.getDate() + (dayOffset - 1));
+          const occStr = occurrence.toISOString().split('T')[0];
+          if (occStr <= todayStr && occStr > theoreticalLastStr) theoreticalLastStr = occStr;
+        }
       }
+      const nextW = new Date(startMonday); 
+      nextW.setDate(startMonday.getDate() + ((w + 1) * 7));
+      if (nextW.toISOString().split('T')[0] > todayStr) break;
     }
-    const nextW = new Date(startMonday); nextW.setDate(startMonday.getDate() + ((w + 1) * 7));
-    if (nextW.toISOString().split('T')[0] > todayStr) break;
   }
-  return lastDateStr;
+
+  if (theoreticalLastStr < createdAtStr) {
+    const nextOccBR = getNextOccurrence(task);
+    const [d, m, y] = nextOccBR.split('/');
+    return `${y}-${m}-${d}`;
+  }
+
+  return theoreticalLastStr;
 };
 
-const getNextOccurrence = (task: any) => {
+const getNextOccurrence = (task: Task) => {
+  const today = new Date();
   const todayStr = getTodayStr();
-  const daysMap: any = { seg: 1, ter: 2, qua: 3, qui: 4, sex: 5 };
-  if (!task.repeat_days || task.repeat_days === "") return task.due_date ? task.due_date.split('-').reverse().slice(0,2).join('/') : '--/--';
+  if (!task.repeat_days || task.repeat_days === "") return '--/--/----';
 
-  const taskDays = task.repeat_days.split(',').map((d: string) => daysMap[d]);
+  const dayOfMonth = parseInt(task.repeat_days);
+  if (!isNaN(dayOfMonth) && !task.repeat_days.includes(',')) {
+    const thisMonthOcc = new Date(today.getFullYear(), today.getMonth(), dayOfMonth);
+    const nextMonthOcc = new Date(today.getFullYear(), today.getMonth() + (task.repeat_interval || 1), dayOfMonth);
+    let nextDate = (today.getDate() < dayOfMonth) ? thisMonthOcc : nextMonthOcc;
+    return formatToBR(nextDate.toISOString().split('T')[0]);
+  }
+
+  const daysMap: Record<string, number> = { seg: 1, ter: 2, qua: 3, qui: 4, sex: 5 };
+  const taskDays = task.repeat_days.split(',').map((d: string) => daysMap[d as keyof typeof daysMap]);
   const startDate = new Date(task.created_at);
   const startMonday = new Date(startDate);
   startMonday.setDate(startDate.getDate() - (startDate.getDay() === 0 ? 6 : startDate.getDay() - 1));
 
   for (let w = 0; w < 52; w += (task.repeat_interval || 1)) {
-    const currMon = new Date(startMonday); currMon.setDate(startMonday.getDate() + (w * 7));
+    const currMon = new Date(startMonday);
+    currMon.setDate(startMonday.getDate() + (w * 7));
     for (let dayOffset of taskDays) {
-      const occ = new Date(currMon); occ.setDate(currMon.getDate() + (dayOffset - 1));
+      const occ = new Date(currMon);
+      occ.setDate(currMon.getDate() + (dayOffset - 1));
       const occStr = occ.toISOString().split('T')[0];
-      if (occStr >= todayStr) {
-        const [y, m, d] = occStr.split('-');
-        return `${d}/${m}`;
-      }
+      if (occStr >= todayStr) return formatToBR(occStr);
     }
   }
-  return '--/--';
+  return '--/--/----';
 };
 
 export default function App() {
   const [user, setUser] = useState<any>(null)
   const [userRole, setUserRole] = useState('membro')
-  const [profiles, setProfiles] = useState<any[]>([])
-  const [tasks, setTasks] = useState<any[]>([])
+  const [profiles, setProfiles] = useState<Profile[]>([])
+  const [tasks, setTasks] = useState<Task[]>([])
   const [history, setHistory] = useState<any[]>([])
   
   const [activeTab, setActiveTab] = useState('HOJE')
@@ -97,6 +161,32 @@ export default function App() {
   const [annTitle, setAnnTitle] = useState('')
   const [annContent, setAnnContent] = useState('')
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [displayDate, setDisplayDate] = useState('DD/MM/YYYY');
+  const dateInputRef = useRef<HTMLInputElement>(null);
+  const [editDisplayDate, setEditDisplayDate] = useState('DD/MM/YYYY');
+  const editDateInputRef = useRef<HTMLInputElement>(null);
+  const [editMode, setEditMode] = useState('semanal');
+  const [searchTerm, setSearchTerm] = useState('');
+
+  // Este bloco pega as tasks brutas do Supabase e calcula a recorrência apenas quando necessário
+  const processedTasks = useMemo(() => {
+  const today = getTodayStr();
+
+  return tasks.map((task: Task) => {
+    const last = getLastOccurrence(task);
+    const next = getNextOccurrence(task);
+    
+    // NOVA LÓGICA: Está pronta se (foi feita hoje) OU (a data da última conclusão é >= data prevista)
+    const doneToday = (task.last_done_date === today) || (task.last_done_date && task.last_done_date >= last);
+
+    return {
+      ...task,
+      lastOcc: last,
+      nextOcc: next,
+      isDoneToday: !!doneToday // O !! garante que seja um valor verdadeiro/falso (booleano)
+    };
+  });
+}, [tasks]);
 
 // Função de Logout Centralizada
 const handleLogout = async () => {
@@ -107,18 +197,52 @@ const handleLogout = async () => {
   const weekDays = [{ id: 'seg', label: 'S' }, { id: 'ter', label: 'T' }, { id: 'qua', label: 'Q' }, { id: 'qui', label: 'Q' }, { id: 'sex', label: 'S' }]
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) {
-        setUser(session.user)
-        setAssignedTo(session.user.id)
-        supabase.from('profiles').select('role, full_name').eq('id', session.user.id).single()
-          .then(({ data }) => {
-            if (data) { setUserRole(data.role || 'membro'); setNewName(data.full_name || ''); }
-          })
-        fetchProfiles(); fetchTasks(); fetchHistory(); fetchAnnouncements();
-      }
-    })
-  }, [])
+  let channel: any ; // Declaramos a variável fora para usá-la na limpeza
+
+  supabase.auth.getSession().then(({ data: { session } }) => {
+    if (session?.user) {
+      setUser(session.user);
+      setAssignedTo(session.user.id);
+      
+      supabase.from('profiles').select('role, full_name').eq('id', session.user.id).single()
+        .then(({ data }) => {
+          if (data) { 
+            setUserRole(data.role || 'membro'); 
+            setNewName(data.full_name || ''); 
+          }
+        });
+      
+      fetchProfiles(); 
+      fetchTasks(); 
+      fetchHistory();
+      if (typeof fetchAnnouncements === 'function') fetchAnnouncements();
+
+      // --- CONFIGURAÇÃO CORRETA DO REALTIME ---
+      // 1. Criamos o canal
+      // 2. Adicionamos o evento .on ANTES do .subscribe
+      channel = supabase
+        .channel('db-realtime-tasks') // Nome único para o canal
+        .on(
+          'postgres_changes', 
+          { event: '*', schema: 'public', table: 'tasks' }, 
+          (payload) => {
+            console.log("Mudança detectada!", payload);
+            fetchTasks(); 
+          }
+        )
+        .subscribe((status) => {
+          console.log("Status da conexão realtime:", status);
+        });
+    }
+  });
+
+  // FUNÇÃO DE LIMPEZA: Importante para evitar o erro que você recebeu
+  return () => {
+    if (channel) {
+      supabase.removeChannel(channel);
+    }
+  };
+}, []);
 
   const fetchProfiles = async () => { const { data } = await supabase.from('profiles').select('*'); if (data) setProfiles(data); }
   const fetchTasks = async () => { const { data } = await supabase.from('tasks').select('*').order('created_at', { ascending: false }); if (data) setTasks(data); }
@@ -135,18 +259,17 @@ const handleLogout = async () => {
   if (error) {
     alert("Erro ao mudar cargo: " + error.message);
   } else {
-    // 2. ATUALIZAÇÃO LOCAL IMEDIATA (Optimistic Update)
-    // Isso muda a cor do botão na hora, antes mesmo de recarregar
-    setProfiles(prevProfiles => 
+    // 2. ATUALIZAÇÃO LOCAL (Onde dava o erro)
+    // Usamos "as any" aqui para dizer ao TypeScript que nós garantimos 
+    // que o texto em newRole é um cargo válido.
+    setProfiles((prevProfiles: Profile[]) => 
       prevProfiles.map(p => 
-        p.id === profileId ? { ...p, role: newRole } : p
+        p.id === profileId ? { ...p, role: newRole as any } : p
       )
     );
 
-    // 3. Se você estiver mudando o SEU PRÓPRIO cargo, 
-    // precisamos atualizar a variável de permissão do sistema também
-    if (profileId === user.id) {
-      setUserRole(newRole);
+    if (profileId === user?.id) {
+      setUserRole(newRole as any);
     }
 
     alert("Cargo atualizado com sucesso!");
@@ -176,38 +299,66 @@ const handleLogout = async () => {
         repeat_days: selectedDays.join(','), repeat_interval: repeatInterval, subtasks: tempSubtasks,
         due_date: isRecurring ? null : getTodayStr()
     }])
-    if (!error) { setTaskTitle(''); setNotes(''); setSelectedDays([]); setTempSubtasks([]); setShowCreateBox(false); fetchTasks(); }
+    if (!error) { setTaskTitle(''), setDisplayDate('DD/MM/YYYY'); setNotes(''); setSelectedDays([]); setTempSubtasks([]); setShowCreateBox(false); fetchTasks(); }
   }
 
-  async function toggleComplete(task: any) {
-  const todayStr = getTodayStr()
-  const lastS = getLastOccurrence(task)
-  const lastD = task.last_done_date || '1970-01-01'
-  const isCurrentlyDone = lastD >= lastS
-  const newDate = isCurrentlyDone ? null : todayStr
+  // 1. Localize e substitua a função toggleComplete dentro do App
+  const toggleComplete = useCallback(async (task: Task) => {
+  const todayStr = getTodayStr();
+  
+  // Usamos a propriedade isDoneToday que calculamos no useMemo
+  const isCurrentlyDone = task.isDoneToday;
+  const newDate = isCurrentlyDone ? null : todayStr;
 
-  // SINCRONIZAÇÃO: Se marcar a principal, marca todas as sub
+  // Sincroniza todas as subtarefas automaticamente (Regra de Negócio)
   const updatedSubtasks = (task.subtasks || []).map((sub: any) => ({
     ...sub,
     done: !isCurrentlyDone
-  }))
+  }));
 
+  // Optimistic Update: Atualiza a interface instantaneamente antes mesmo do banco
+  setTasks(prevTasks => prevTasks.map(t => 
+    t.id === task.id ? { ...t, last_done_date: newDate, subtasks: updatedSubtasks } : t
+  ));
+
+  // Grava no histórico se estiver concluindo
   if (!isCurrentlyDone) {
-    const profile = profiles.find(p => p.id === user.id)
+    const profile = profiles.find(p => p.id === user.id);
     await supabase.from('task_history').insert([{
-      task_id: task.id, task_title: task.title, user_name: profile?.full_name || user.email, user_id: user.id, category: task.category
-    }])
+      task_id: task.id,
+      task_title: task.title,
+      user_name: profile?.full_name || user.email,
+      user_id: user.id,
+      category: task.category
+    }]);
   }
 
-  // IMPORTANTE: Atualizamos o last_done_date E o array de subtasks
-  await supabase.from('tasks').update({ 
+  // Atualiza o Banco de Dados
+  const { error } = await supabase.from('tasks').update({ 
     last_done_date: newDate, 
     status: newDate ? 'concluido' : 'pendente',
     subtasks: updatedSubtasks 
-  }).eq('id', task.id)
-  
-  fetchTasks(); fetchHistory();
-}
+  }).eq('id', task.id);
+
+  if (error) {
+    alert("Erro ao salvar: " + error.message);
+    fetchTasks(); // Se deu erro, recarrega os dados originais
+  }
+}, [user, profiles]); // Dependências do useCallback
+
+const deleteTask = useCallback(async (taskId: string) => {
+  if (!confirm('Deseja realmente deletar esta missão?')) return;
+
+  // Optimistic Update: Remove da tela na hora
+  setTasks(prev => prev.filter(t => t.id !== taskId));
+
+  const { error } = await supabase.from('tasks').delete().eq('id', taskId);
+
+  if (error) {
+    alert("Erro ao deletar: " + error.message);
+    fetchTasks(); // Recarrega se der erro
+  }
+}, []);
 
   async function updateTask() {
     const { error } = await supabase.from('tasks').update({ 
@@ -224,42 +375,47 @@ const handleLogout = async () => {
     setEditingTask({ ...editingTask, repeat_days: newDays.join(',') })
   }
 
-  const filteredTasks = tasks.filter(task => {
-  const todayStr = getTodayStr();
-  const lastS = getLastOccurrence(task);
-  const lastD = task.last_done_date || '1970-01-01';
-  const isDone = lastD >= lastS;
-  const isDueToday = lastS === todayStr;
-  const isLate = !isDone && lastS < todayStr;
+  const filteredTasks = useMemo(() => {
+  return processedTasks.filter(task => {
+    const todayStr = getTodayStr();
 
-  // --- REGRA DE VISIBILIDADE PARA MEMBROS ---
-  // Incluímos 'ATRASADOS' aqui para que eles vejam o status da equipe
-  const abasGlobais = ['Todas', 'HOJE', 'Trade', 'Reunião', 'Geral', 'ATRASADOS'];
-  const ehAbaGlobal = abasGlobais.includes(activeTab);
+    // --- 1. LÓGICA DE PESQUISA ---
+    // Verifica se o termo pesquisado existe no título ou nas observações
+    const term = searchTerm.toLowerCase();
+    const matchesSearch = 
+      task.title.toLowerCase().includes(term) || 
+      (task.notes && task.notes.toLowerCase().includes(term));
 
-  if (userRole === 'membro') {
-    // Se não for uma aba global e a tarefa não for dele, filtramos (escondemos).
-    if (!ehAbaGlobal && task.assigned_to !== user?.id) {
+    // Se houver algo escrito e não bater com a busca, descarta a tarefa
+    if (searchTerm && !matchesSearch) return false;
+
+    // --- 2. LÓGICA DE VISIBILIDADE (Permissões de Classe) ---
+    const abasGlobais = ['Todas', 'HOJE', 'Trade', 'Reunião', 'ATRASADOS'];
+    if (userRole === 'membro' && !abasGlobais.includes(activeTab) && task.assigned_to !== user?.id) {
       return false;
     }
-  }
 
-  // --- FILTROS DE USUÁRIO (DROPDOWN) ---
-  if (filterUser !== 'Todos' && task.assigned_to !== filterUser) return false;
+    // --- 3. FILTRO DE USUÁRIO (Dropdown) ---
+    if (filterUser !== 'Todos' && task.assigned_to !== filterUser) return false;
 
-  // --- FILTROS DE ABAS (LÓGICA DE STATUS) ---
-  if (activeTab === 'ATRASADOS') return isLate;
-  if (activeTab === 'HOJE') return isDueToday && !isDone;
-  if (activeTab === 'Minhas') return task.assigned_to === user?.id;
-  if (activeTab === 'Todas') return true;
+    // --- 4. LÓGICA DE STATUS / ABAS ---
+    const isLate = !task.isDoneToday && task.lastOcc < todayStr;
+    const isDueToday = task.lastOcc === todayStr;
 
-  return task.category === activeTab;
-});
+    if (activeTab === 'ATRASADOS') return isLate;
+    if (activeTab === 'HOJE') return isDueToday && !task.isDoneToday;
+    if (activeTab === 'Minhas') return task.assigned_to === user?.id;
+    if (activeTab === 'Todas') return true;
 
-  const stats = (() => {
+    // Categorias específicas
+    return task.category === activeTab;
+  });
+}, [processedTasks, activeTab, filterUser, userRole, user?.id, searchTerm]); // <--- searchTerm adicionado aqui
+
+  const stats = useMemo(() => {
   const todayStr = getTodayStr();
   
-  // Calcular a data de início da semana (Segunda-feira)
+  // Cálculo da segunda-feira (semana)
   const now = new Date();
   const day = now.getDay() || 7;
   const monday = new Date(now);
@@ -267,10 +423,8 @@ const handleLogout = async () => {
   monday.setHours(0,0,0,0);
   const startOfWeekStr = monday.toISOString().split('T')[0];
 
-  // 1. BASE GLOBAL: Aqui pegamos TODAS as tarefas do sistema (ignorando o userRole)
-  // Mas ainda respeitamos o Dropdown "filterUser" para permitir que 
-  // qualquer um veja a performance de um colega específico ou de "Todos".
-  let baseTasks = tasks;
+  // Base global (conforme solicitado anteriormente)
+  let baseTasks = processedTasks;
   
   if (filterUser !== 'Todos') {
     baseTasks = baseTasks.filter(t => t.assigned_to === filterUser);
@@ -280,29 +434,23 @@ const handleLogout = async () => {
   let concluidasPeriodo = 0;
 
   if (dashFilter === 'HOJE') {
-    // Estatísticas de HOJE (Baseado na ocorrência prevista para hoje)
-    const hojeTasks = baseTasks.filter(t => getLastOccurrence(t) === todayStr);
+    const hojeTasks = baseTasks.filter(t => t.lastOcc === todayStr);
     totalPeriodo = hojeTasks.length;
-    concluidasPeriodo = hojeTasks.filter(t => t.last_done_date === todayStr).length;
+    concluidasPeriodo = hojeTasks.filter(t => t.isDoneToday).length;
   } else {
-    // Estatísticas SEMANAIS (Tudo o que foi feito desde segunda-feira)
-    // Para o Total Semanal, consideramos o volume total de tarefas ativas no filtro
     totalPeriodo = baseTasks.length;
-    concluidasPeriodo = baseTasks.filter(t => 
-      t.last_done_date && t.last_done_date >= startOfWeekStr
-    ).length;
+    concluidasPeriodo = baseTasks.filter(t => t.isDoneToday).length;
   }
 
-  const pendentes = totalPeriodo - concluidasPeriodo;
   const porcentagem = totalPeriodo > 0 ? Math.round((concluidasPeriodo / totalPeriodo) * 100) : 0;
 
   return { 
     total: totalPeriodo, 
     concluidas: concluidasPeriodo, 
-    pendentes: pendentes < 0 ? 0 : pendentes, 
+    pendentes: totalPeriodo - concluidasPeriodo, 
     porcentagem 
   };
-})();
+}, [processedTasks, dashFilter, filterUser]); // <--- Só recalcula se esses valores mudarem
 
   if (!user) return <Login />
 
@@ -345,15 +493,66 @@ const handleLogout = async () => {
   </div>
 </nav>
 
-      <div className="bg-white/80 backdrop-blur-md border-b border-slate-200 sticky top-20 z-20 py-4 px-4 flex flex-col gap-4 items-center">
-        <div className="inline-flex bg-slate-200/60 p-1 rounded-[24px] border border-slate-300/50 shadow-inner overflow-x-auto no-scrollbar max-w-full">
-          {categories.map(tab => (<button key={tab} onClick={() => { setActiveTab(tab); setShowCreateBox(false); }} className={`px-6 py-2.5 rounded-[20px] font-black text-[10px] uppercase tracking-wider transition-all duration-500 whitespace-nowrap ${activeTab === tab ? 'bg-white text-blue-600 shadow-lg ring-1 ring-slate-200' : 'text-slate-500 hover:text-slate-900 opacity-70'}`}>{tab}</button>))}
-        </div>
-        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar max-w-full pb-1">
-          <button onClick={() => setFilterUser('Todos')} className={`px-4 py-1.5 rounded-full font-black text-[9px] uppercase border-2 transition-all ${filterUser === 'Todos' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-400 border-slate-100'}`}>Todos</button>
-          {profiles.map(p => (<button key={p.id} onClick={() => setFilterUser(p.id)} className={`px-4 py-1.5 rounded-full font-black text-[9px] uppercase border-2 transition-all flex items-center gap-2 ${filterUser === p.id ? 'bg-blue-600 text-white border-blue-600 shadow-md scale-105' : 'bg-white text-slate-400 border-slate-100'}`}><div className="w-3 h-3 bg-blue-100 rounded-full text-blue-600 flex items-center justify-center text-[6px]">{p.full_name?.charAt(0)}</div> {p.full_name?.split(' ')[0]}</button>))}
-        </div>
+      {/* ÁREA DE CONTROLE: ABAS + FILTROS + PESQUISA */}
+<div className="bg-white/80 backdrop-blur-md border-b border-slate-200 sticky top-20 z-30 py-4 px-4 shadow-sm">
+  <div className="max-w-7xl mx-auto space-y-4">
+    
+    {/* LINHA 1: CONTAINER RELATIVO PARA ABAS E PESQUISA */}
+    <div className="relative flex items-center justify-center">
+      
+      {/* ABAS PRINCIPAIS (Ficam no centro) */}
+      <div className="inline-flex bg-slate-100 p-1 rounded-full border border-slate-200 overflow-x-auto no-scrollbar max-w-[80%]">
+        {['HOJE', 'ATRASADOS', 'Minhas', 'Todas', 'Trade', 'Reunião', 'HISTÓRICO', 'DASHBOARD', 'COMUNICADOS'].map(tab => (
+          <button 
+            key={tab} 
+            onClick={() => { setActiveTab(tab); setShowCreateBox(false); }} 
+            className={`px-6 py-2 rounded-full font-black text-[10px] uppercase transition-all whitespace-nowrap ${activeTab === tab ? 'bg-white text-blue-600 shadow-md ring-1 ring-slate-200' : 'text-slate-400 hover:text-slate-600'}`}
+          >
+            {tab}
+          </button>
+        ))}
       </div>
+
+      {/* BARRA DE PESQUISA (Alinhada à Direita) */}
+      {/* O valor -right-16 move ela cerca de 64px para a direita do limite original */}
+<div className="absolute -right-8 xl:-right-16 hidden lg:block group w-30 xl:w-55">
+        <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors" />
+        <input 
+          type="text"
+          placeholder="BUSCAR MISSÃO..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          className="w-full pl-10 pr-4 py-2 bg-slate-50 border-2 border-slate-100 rounded-full font-bold text-[10px] outline-none focus:border-blue-500 focus:bg-white focus:shadow-md transition-all uppercase placeholder:text-slate-300"
+        />
+      </div>
+    </div>
+
+    {/* LINHA 2: FILTROS DE USUÁRIO (Centralizados ou à esquerda) */}
+    <div className="flex justify-center">
+      <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
+        <button 
+          onClick={() => setFilterUser('Todos')} 
+          className={`px-4 py-1.5 rounded-full font-black text-[9px] uppercase border-2 transition-all ${filterUser === 'Todos' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-400 border-slate-100'}`}
+        >
+          Todos
+        </button>
+        {profiles.map(p => (
+          <button 
+            key={p.id} 
+            onClick={() => setFilterUser(p.id)} 
+            className={`px-4 py-1.5 rounded-full font-black text-[9px] uppercase border-2 flex items-center gap-2 transition-all ${filterUser === p.id ? 'bg-blue-600 text-white border-blue-600 shadow-md' : 'bg-white text-slate-400 border-slate-100'}`}
+          >
+            <div className={`w-3 h-3 rounded-full flex items-center justify-center text-[6px] ${filterUser === p.id ? 'bg-white text-blue-600' : 'bg-blue-100 text-blue-600'}`}>
+              {p.full_name?.charAt(0)}
+            </div>
+            {p.full_name?.split(' ')[0]}
+          </button>
+        ))}
+      </div>
+    </div>
+
+  </div>
+</div>
 
       <main className="max-w-4xl mx-auto p-4">
   {activeTab === 'DASHBOARD' ? (
@@ -492,25 +691,92 @@ const handleLogout = async () => {
             </div>
             <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-stretch">
               <div className="md:col-span-4 space-y-4">
-                {/* Localize o select de AssignedTo no formulário de criação */}
-<select 
-  className="w-full p-3.5 bg-slate-50 rounded-xl font-bold text-sm border border-slate-200 text-slate-700 outline-none disabled:opacity-50" 
-  value={assignedTo} 
-  onChange={e => setAssignedTo(e.target.value)}
-  disabled={userRole === 'membro'} // MEMBRO NÃO DELEGA
->
-  {userRole === 'membro' ? (
-    <option value={user.id}>Atribuído a mim</option>
-  ) : (
-    profiles.map(p => <option key={p.id} value={p.id}>{p.full_name || p.id.slice(0,5)}</option>)
+  {/* SELETOR DE MODO: SEMANAL OU MENSAL */}
+  <div className="flex bg-slate-100 p-1 rounded-2xl border border-slate-200">
+    <button 
+      type="button"
+      onClick={() => setSelectedDays([])}
+      className={`flex-1 py-2 rounded-xl font-black text-[10px] uppercase transition-all ${selectedDays.length === 0 || isNaN(parseInt(selectedDays[0])) ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}
+    >
+      Semanal
+    </button>
+    <button 
+      type="button"
+      onClick={() => setSelectedDays(['1'])}
+      className={`flex-1 py-2 rounded-xl font-black text-[10px] uppercase transition-all ${!isNaN(parseInt(selectedDays[0])) ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}
+    >
+      Mensal
+    </button>
+  </div>
+
+  {/* LÓGICA DINÂMICA: MENSAL OU SEMANAL */}
+  {!isNaN(parseInt(selectedDays[0])) ? (
+  // --- BLOCO MENSAL COM ACIONAMENTO FORÇADO ---
+  <div className="space-y-2">
+    <label className="text-[9px] font-black uppercase text-slate-400 ml-2 italic">Data de Início da Recorrência</label>
+    
+    <div 
+      className="relative h-[60px] group cursor-pointer"
+      // Quando clicar em qualquer lugar da div, força o calendário a abrir
+      onClick={() => dateInputRef.current?.showPicker()}
+    >
+      {/* Camada Visual (O que você vê) */}
+      <div className="absolute inset-0 flex items-center justify-center bg-slate-50 rounded-xl border-2 border-slate-200 font-black text-slate-700 text-xl pointer-events-none group-hover:border-blue-500 transition-all uppercase">
+        {displayDate}
+        <Calendar size={20} className="absolute right-4 text-blue-500" />
+      </div>
+
+      {/* Input Real (Escondido mas funcional) */}
+      <input 
+        ref={dateInputRef} // Conecta com a nossa referência
+        type="date" 
+        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+        onChange={e => {
+          const dateVal = e.target.value;
+          if(dateVal) {
+            const [y, m, d] = dateVal.split('-');
+            const formatted = `${d}/${m}/${y}`;
+            setDisplayDate(formatted);
+            setSelectedDays([d]);
+          }
+        }}
+      />
+    </div>
+    
+    <p className="text-[8px] font-bold text-blue-500 text-center mt-1 uppercase tracking-tighter">
+      {displayDate !== 'DD/MM/YYYY' ? `TODO DIA ${selectedDays[0]} DE CADA MÊS` : 'CLIQUE NA CAIXA PARA ABRIR O CALENDÁRIO'}
+    </p>
+  </div>
+) : (
+    // --- BLOCO MODO SEMANAL ---
+    <div className="flex gap-1.5 bg-slate-50 p-1.5 rounded-xl border border-slate-100">
+      {weekDays.map(day => (
+        <button 
+          key={day.id} 
+          type="button" 
+          onClick={() => toggleDay(day.id)} 
+          className={`flex-1 h-9 rounded-lg font-black text-xs transition-all ${selectedDays.includes(day.id) ? 'bg-blue-600 text-white shadow-lg scale-105' : 'text-slate-400 hover:bg-slate-200/50'}`}
+        >
+          {day.label}
+        </button>
+      ))}
+    </div>
   )}
-</select>
-                <select className="w-full p-3.5 bg-slate-50 rounded-xl font-bold text-sm border border-slate-200 text-slate-700 outline-none" value={category} onChange={e => setCategory(e.target.value)}><option>Trade</option><option>Reunião</option><option>Geral</option></select>
-              </div>
-              <div className="md:col-span-4 space-y-4">
-                <div className="flex gap-1.5 bg-slate-50 p-1.5 rounded-xl border border-slate-100">{weekDays.map(day => (<button key={day.id} type="button" onClick={() => toggleDay(day.id)} className={`flex-1 h-9 rounded-lg font-black text-xs transition-all ${selectedDays.includes(day.id) ? 'bg-blue-600 text-white shadow-lg scale-105' : 'text-slate-400 hover:bg-slate-200/50'}`}>{day.label}</button>))}</div>
-                <input type="number" min="1" className="w-full p-3.5 bg-slate-50 rounded-xl font-black border border-slate-200 text-slate-700 outline-none" value={repeatInterval} onChange={e => setRepeatInterval(parseInt(e.target.value) || 1)} />
-              </div>
+
+  {/* CAMPO DE INTERVALO */}
+  <div className="space-y-2">
+    <label className="text-[9px] font-black uppercase text-slate-400 ml-2">
+      Repetir a cada quanto(s) {!isNaN(parseInt(selectedDays[0])) ? 'mês/meses' : 'semana(s)'}?
+    </label>
+    <input 
+      type="number" 
+      min="1" 
+      className="w-full p-3.5 bg-slate-50 rounded-xl font-black border border-slate-200 text-slate-700 outline-none focus:border-blue-500 text-center" 
+      value={repeatInterval} 
+      onChange={e => setRepeatInterval(parseInt(e.target.value) || 1)} 
+    />
+  </div>
+</div>
               <div className="md:col-span-4 flex"><button onClick={addTask} className="w-full py-6 md:py-10 bg-blue-600 hover:bg-[#0F172A] text-white rounded-[32px] font-black uppercase tracking-widest transition-all duration-500 flex flex-row md:flex-col items-center justify-center gap-3 shadow-[0_10px_30px_rgba(37,99,235,0.3)] active:scale-95 group"><Plus size={32} strokeWidth={3} /><span className="text-sm">Lançar Missão</span></button></div>
             </div>
           </div>
@@ -519,11 +785,30 @@ const handleLogout = async () => {
 
       <div className="space-y-6">
         <h2 className="font-black uppercase text-slate-400 text-[10px] tracking-[0.3em] px-2 flex items-center gap-2"><ChevronRight size={14} className="text-blue-600" /> {activeTab} • {filteredTasks.length} TAREFAS</h2>
-        {filteredTasks.map(task => {
-          const lS = getLastOccurrence(task); const lD = task.last_done_date || '1970-01-01';
-          const isDone = lD >= lS; const isLate = !isDone && lS < getTodayStr();
-          return (<TaskBox key={task.id} task={task} profiles={profiles} isLate={isLate} isDoneToday={isDone} userRole={userRole} currentUser={user} onToggle={() => toggleComplete(task)} onView={(t:any) => setViewingTask(t)} onEdit={(t: any) => { setEditingTask(t); setShowEditModal(true); }} onUpdate={fetchTasks} />)
-        })}
+        {/* Localize este bloco no seu App.tsx */}
+{filteredTasks.map(task => (
+  <TaskItem 
+    key={task.id} 
+    task={task} 
+    profiles={profiles} 
+    userRole={userRole} 
+    currentUser={user} 
+    onToggle={toggleComplete} 
+    onView={setViewingTask} 
+    onEdit={(t: any) => { 
+  setEditingTask(t); 
+  const isMonthly = t.repeat_days && !t.repeat_days.includes(',') && !isNaN(parseInt(t.repeat_days));
+  setEditMode(isMonthly ? 'mensal' : 'semanal');
+  
+  // Se for mensal, mostra o dia atual na legenda, senão reseta para o padrão
+  setEditDisplayDate(isMonthly ? `DIA ${t.repeat_days} (MANTIDO)` : 'DD/MM/YYYY');
+  
+  setShowEditModal(true); 
+}}
+    onUpdate={fetchTasks} // <--- VOLTE PARA fetchTasks (para atualizar subtarefas)
+    onDelete={deleteTask} // <--- ADICIONE ESTA NOVA PROPRIEDADE
+  />
+))}
       </div>
     </>
   )}
@@ -568,7 +853,104 @@ const handleLogout = async () => {
                 <select className="p-4 bg-slate-100 rounded-2xl font-black border-2 border-slate-200" value={editingTask.assigned_to} onChange={e => setEditingTask({...editingTask, assigned_to: e.target.value})}>{profiles.map(p => <option key={p.id} value={p.id}>{p.full_name || p.id.slice(0,5)}</option>)}</select>
                 <select className="p-4 bg-slate-100 rounded-2xl font-black border-2 border-slate-200" value={editingTask.category} onChange={e => setEditingTask({...editingTask, category: e.target.value})}><option>Trade</option><option>Reunião</option><option>Geral</option></select>
               </div>
-              <div className="flex gap-2">{weekDays.map(day => (<button key={day.id} type="button" onClick={() => toggleDayInEdit(day.id)} className={`w-14 h-14 rounded-2xl font-black border-4 transition-all ${editingTask.repeat_days?.split(',').includes(day.id) ? 'bg-blue-600 border-blue-600 text-white scale-110 shadow-lg' : 'bg-white border-slate-200 text-slate-400'}`}>{day.label}</button>))}</div>
+              {/* --- SELETOR DE RECORRÊNCIA NO MODAL DE EDIÇÃO --- */}
+<div className="space-y-4 pt-6 border-t border-slate-100">
+  <label className="text-[10px] font-black uppercase text-slate-400 ml-1 tracking-widest flex items-center gap-2">
+    Configuração de Repetição
+  </label>
+  
+  {/* Alternador Semanal / Mensal */}
+  <div className="flex bg-slate-100 p-1 rounded-2xl border border-slate-200">
+    <button 
+      type="button"
+      onClick={() => {
+        setEditMode('semanal');
+        setEditingTask({...editingTask, repeat_days: ''});
+      }}
+      className={`flex-1 py-2 rounded-xl font-black text-[10px] uppercase transition-all ${editMode === 'semanal' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}
+    >
+      Semanal
+    </button>
+    <button 
+      type="button"
+      onClick={() => {
+        setEditMode('mensal');
+        setEditingTask({...editingTask, repeat_days: '1'});
+      }}
+      className={`flex-1 py-2 rounded-xl font-black text-[10px] uppercase transition-all ${editMode === 'mensal' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}
+    >
+      Mensal
+    </button>
+  </div>
+
+  {/* Interface de Edição Dinâmica */}
+  {editMode === 'mensal' ? (
+    // --- NOVO BLOCO MENSAL COM CALENDÁRIO ---
+    <div className="space-y-4">
+      <div className="space-y-2">
+        <label className="text-[9px] font-black uppercase text-slate-400 ml-2 italic text-center block">Nova Data de Referência</label>
+        <div 
+          className="relative h-[60px] group cursor-pointer"
+          onClick={() => editDateInputRef.current?.showPicker()}
+        >
+          <div className="absolute inset-0 flex items-center justify-center bg-slate-50 rounded-3xl border-2 border-slate-100 font-black text-slate-700 text-xl pointer-events-none group-hover:border-blue-500 transition-all uppercase">
+            {editDisplayDate}
+            <Calendar size={20} className="absolute right-6 text-blue-500" />
+          </div>
+          <input 
+            ref={editDateInputRef}
+            type="date" 
+            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+            onChange={e => {
+              const dateVal = e.target.value;
+              if(dateVal) {
+                const [y, m, d] = dateVal.split('-');
+                setEditDisplayDate(`${d}/${m}/${y}`);
+                setEditingTask({...editingTask, repeat_days: d});
+              }
+            }}
+          />
+        </div>
+      </div>
+      <div className="bg-slate-50 p-4 rounded-3xl border-2 border-slate-100 text-center">
+        <label className="text-[9px] font-black uppercase text-slate-400 block mb-1 italic">Repetir a cada (meses)</label>
+        <input 
+          type="number" 
+          min="1"
+          className="w-full bg-transparent font-black text-2xl text-slate-700 outline-none text-center"
+          value={editingTask.repeat_interval}
+          onChange={e => setEditingTask({...editingTask, repeat_interval: parseInt(e.target.value) || 1})}
+        />
+      </div>
+    </div>
+  ) : (
+    // --- BLOCO SEMANAL (O seu original) ---
+    <div className="space-y-4">
+      <div className="flex gap-2 justify-center">
+        {weekDays.map(day => (
+          <button 
+            key={day.id} 
+            type="button" 
+            onClick={() => toggleDayInEdit(day.id)} 
+            className={`w-12 h-12 rounded-2xl font-black border-4 transition-all ${editingTask.repeat_days?.split(',').includes(day.id) ? 'bg-blue-600 border-blue-600 text-white scale-110 shadow-lg' : 'bg-white border-slate-200 text-slate-400'}`}
+          >
+            {day.label}
+          </button>
+        ))}
+      </div>
+      <div className="bg-slate-50 p-4 rounded-3xl border-2 border-slate-100">
+        <label className="text-[9px] font-black uppercase text-slate-400 block mb-1 text-center italic">Intervalo de Semanas</label>
+        <input 
+          type="number" 
+          min="1"
+          className="w-full bg-transparent font-black text-2xl text-slate-700 outline-none text-center"
+          value={editingTask.repeat_interval}
+          onChange={e => setEditingTask({...editingTask, repeat_interval: parseInt(e.target.value) || 1})}
+        />
+      </div>
+    </div>
+  )}
+</div>
               <button onClick={updateTask} className="w-full bg-blue-600 text-white p-6 rounded-[32px] font-black uppercase text-xl shadow-xl hover:bg-[#0F172A] transition-all flex items-center justify-center gap-3 mt-4"><Check size={32}/> Atualizar Missão</button>
             </div>
           </div>
@@ -660,24 +1042,23 @@ const handleLogout = async () => {
   );
 } // Fim do export default
 
-function TaskBox({ task, profiles, onUpdate, onEdit, isLate, isDoneToday, onToggle, userRole, currentUser, onView }: any) {
+// 1. Substitua todo o bloco da TaskBox por este:
+const TaskItem = memo(({ task, profiles, onUpdate, onEdit, userRole, currentUser, onView, onToggle, onDelete }: any) => {
   const [expanded, setExpanded] = useState(false);
   
-  // --- LÓGICA DE PERMISSÕES ---
+  // Usamos as permissões pré-calculadas
   const isOwner = task.assigned_to === currentUser?.id;
-  const isAdmin = userRole === 'admin';
-  const isGerente = userRole === 'gerente';
-  const canManage = isAdmin || isGerente || isOwner; // Regra: Admin, Gerente ou o próprio Dono podem gerenciar
+  const canManage = userRole === 'admin' || userRole === 'gerente' || isOwner;
 
   const subtasks = task.subtasks || [];
   const subDone = subtasks.filter((s: any) => s.done).length;
   const subTotal = subtasks.length;
 
-  // Função para marcar/desmarcar subtarefa
+  // Função interna de subtarefas preservada e otimizada
   const toggleSubtask = async (index: number) => {
-    // Bloqueio de segurança
-    if (!canManage) {
-      alert("Acesso negado: Você só pode concluir suas próprias tarefas.");
+    if (!canManage) return alert("Acesso negado.");
+    if (!currentUser?.id) {
+      console.error("Usuário não identificado");
       return;
     }
 
@@ -687,124 +1068,164 @@ function TaskBox({ task, profiles, onUpdate, onEdit, isLate, isDoneToday, onTogg
     const allDone = newSubtasks.length > 0 && newSubtasks.every((s: any) => s.done);
     const todayStr = getTodayStr();
 
-    if (allDone && !isDoneToday) {
+    if (allDone && !task.isDoneToday) {
       const profile = profiles.find((p: any) => p.id === currentUser.id);
       await supabase.from('task_history').insert([{
         task_id: task.id,
         task_title: task.title,
-        user_name: profile?.full_name || currentUser.email,
+        user_name: profile?.full_name || currentUser.email || 'Usuário',
         user_id: currentUser.id,
         category: task.category
       }]);
     }
 
-    const updates: any = {
+    await supabase.from('tasks').update({
       subtasks: newSubtasks,
       last_done_date: allDone ? todayStr : null,
       status: allDone ? 'concluido' : 'pendente'
-    };
-
-    const { error } = await supabase.from('tasks').update(updates).eq('id', task.id);
-    if (!error) onUpdate();
+    }).eq('id', task.id);
+    
+    onUpdate(); // Atualiza a lista geral
   };
 
   return (
-    <div className={`p-6 rounded-[32px] border-[4px] transition-all duration-300 flex flex-col gap-4 relative group 
-      ${isDoneToday ? 'bg-green-50 border-green-600 shadow-[8px_8px_0px_0px_rgba(22,101,52,1)] opacity-90' : 
-        isLate ? 'bg-red-50 border-red-600 shadow-[8px_8px_0px_0px_rgba(153,27,27,1)]' : 
-        'bg-white border-slate-900 shadow-[8px_8px_0px_0px_rgba(15,23,42,1)] hover:translate-x-2'
-      }`}
-    >
-      {isLate && !isDoneToday && (
-        <div className="absolute -top-4 -right-2 bg-red-600 text-white p-1.5 rounded-full border-4 border-white shadow-lg z-10 animate-bounce">
-          <AlertCircle size={20} strokeWidth={3} />
-        </div>
-      )}
-
-      {/* LINHA PRINCIPAL */}
-      <div className="flex items-center gap-5">
-        {/* CHECKBOX GRANDE (Tarefa Pai) */}
-<button 
-  onClick={canManage ? onToggle : () => alert("Acesso negado: Você não é o responsável por esta missão.")} 
-  className={`w-16 h-16 rounded-[22px] border-4 flex items-center justify-center transition-all flex-shrink-0 shadow-sm
-    ${!canManage ? 'opacity-30 grayscale cursor-not-allowed' : ''} // <--- ADICIONE ESTA LINHA: Fica cinza se não puder mexer
-    ${isDoneToday ? 'bg-green-600 border-green-700 text-white' : isLate ? 'bg-white border-red-600 text-red-600' : 'bg-white border-slate-200 text-transparent hover:border-blue-500'}`}
+    // Dentro do return do TaskItem, verifique se a primeira linha está assim:
+<div className={`p-6 rounded-[32px] border-[4px] transition-all duration-300 flex flex-col gap-4 relative group 
+  ${task.isDoneToday ? 'bg-green-50 border-green-600 shadow-[8px_8px_0px_0px_rgba(22,101,52,1)] opacity-90' : 
+    (task.lastOcc < getTodayStr() && !task.isDoneToday && task.lastOcc !== '1970-01-01') ? 'bg-red-50 border-red-600 shadow-[8px_8px_0px_0px_rgba(153,27,27,1)]' : 
+    'bg-white border-slate-900 shadow-[8px_8px_0px_0px_rgba(15,23,42,1)] hover:translate-x-2'
+  }`}
 >
-  <CheckCircle2 size={40} strokeWidth={3} />
+      <div className="flex items-center gap-5">
+        <button 
+          onClick={() => canManage ? onToggle(task) : alert("Acesso negado.")}  
+          className={`w-16 h-16 rounded-[22px] border-4 flex items-center justify-center transition-all flex-shrink-0 shadow-sm
+            ${!canManage ? 'opacity-30 grayscale cursor-not-allowed' : ''}
+            ${task.isDoneToday ? 'bg-green-600 border-green-700 text-white' : 'bg-white border-slate-200 text-transparent hover:border-blue-500'}`}
+        >
+          <CheckCircle2 size={40} strokeWidth={3} />
 </button>
 
         {/* CONTEÚDO CENTRAL */}
-        <div className="flex-1 min-w-0">
-          <div className="cursor-pointer group/title" onClick={() => onView(task)}>
-            <h3 className={`text-2xl font-black leading-tight tracking-tight truncate ${isDoneToday ? 'line-through text-green-900/50' : isLate ? 'text-red-900' : 'text-slate-900'} group-hover/title:text-blue-600`}>
-              {task.title}
-            </h3>
-            {task.notes && (
-              <p className="text-[11px] font-bold text-slate-400 mt-0.5 italic line-clamp-1 italic">
-                {task.notes}
-              </p>
-            )}
-          </div>
+<div className="flex-1 min-w-0">
+  {/* ÁREA INTERATIVA DO TÍTULO E NOTAS */}
+  <div 
+    className="inline-block cursor-pointer group/title select-none"
+    onClick={() => onView(task)}
+  >
+    {/* Título com mudança de cor no hover */}
+    <h3 className={`text-2xl font-black leading-tight truncate transition-all duration-200 
+      ${task.isDoneToday 
+        ? 'line-through text-green-900/40' 
+        : 'text-slate-900 group-hover/title:text-blue-600 group-hover/title:translate-x-1'}
+    `}>
+      {task.title}
+    </h3>
+    
+    {/* Notas com mudança de opacidade no hover */}
+    {task.notes && (
+      <p className={`text-[11px] font-bold mt-0.5 line-clamp-1 italic transition-colors
+        ${task.isDoneToday 
+          ? 'text-green-700/30' 
+          : 'text-slate-400 group-hover/title:text-slate-600'}
+      `}>
+        {task.notes}
+      </p>
+    )}
+  </div>
 
-          {subTotal > 0 && (
-            <div className="flex items-center gap-3 mt-3">
-              <div className="flex-1 bg-slate-100 h-2 rounded-full overflow-hidden border border-slate-200">
-                <div className="bg-blue-500 h-full transition-all duration-500" style={{ width: `${(subDone / subTotal) * 100}%` }} />
-              </div>
-              <button 
-                onClick={() => setExpanded(!expanded)}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border-2 transition-all font-black text-[10px] uppercase tracking-tighter
-                  ${expanded ? 'bg-slate-900 border-slate-900 text-white shadow-md' : 'bg-white border-slate-200 text-slate-500 hover:border-blue-500'}`}
-              >
-                {subDone}/{subTotal} PASSOS
-                {expanded ? <ChevronUp size={14}/> : <ChevronDown size={14}/>}
-              </button>
-            </div>
-          )}
-        </div>
+  {/* BOTÃO DE PASSOS (Fora da área de clique do título) */}
+  {subTotal > 0 && (
+    <div className="flex items-center gap-3 mt-3">
+      <div className="flex-1 bg-slate-100 h-2 rounded-full overflow-hidden border border-slate-200">
+        <div className="bg-blue-500 h-full transition-all duration-500" style={{ width: `${(subDone / subTotal) * 100}%` }} />
+      </div>
+      <button 
+        onClick={(e) => {
+          e.stopPropagation(); // Garante que não abra a sidebar ao expandir passos
+          setExpanded(!expanded);
+        }}
+        className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border-2 transition-all font-black text-[10px] uppercase
+          ${expanded ? 'bg-slate-900 border-slate-900 text-white shadow-md' : 'bg-white border-slate-200 text-slate-500 hover:border-blue-500'}`}
+      >
+        {subDone}/{subTotal} PASSOS
+        {expanded ? <ChevronUp size={14}/> : <ChevronDown size={14}/>}
+      </button>
+    </div>
+  )}
+</div>
 
-        {/* BOTÕES DE AÇÃO (EDITAR/DELETAR) - Só aparecem se tiver permissão */}
         <div className="flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
           {canManage && (
             <>
-              <button onClick={() => onEdit(task)} className="text-slate-300 hover:text-blue-600 p-2 transition-all"><Edit3 size={24}/></button>
-              <button onClick={async () => { if(confirm('Deletar missão?')) { await supabase.from('tasks').delete().eq('id', task.id); onUpdate(); } }} className="text-slate-200 hover:text-red-600 p-2 transition-all"><Trash2 size={24}/></button>
+              <button onClick={() => onEdit(task)} className="text-slate-300 hover:text-blue-600 p-2"><Edit3 size={24}/></button>
+<button 
+  onClick={(e) => { 
+    e.stopPropagation(); 
+    onDelete(task.id);
+  }} 
+  className="text-slate-200 hover:text-red-600 p-2 transition-all"
+>
+  <Trash2 size={24}/>
+</button>
             </>
           )}
         </div>
       </div>
 
-      {/* ÁREA EXPANSÍVEL (CHECKLIST) */}
       {expanded && subTotal > 0 && (
-        <div className="mt-2 space-y-2 border-t-4 border-slate-100 pt-4 animate-in slide-in-from-top-2 duration-300">
+        <div className="mt-2 space-y-2 border-t-4 border-slate-100 pt-4 animate-in slide-in-from-top-2">
           {subtasks.map((sub: any, index: number) => (
             <div 
-  key={index} 
-  onClick={() => toggleSubtask(index)} // A função já tem a trava canManage que colocamos antes
-  className={`flex items-center gap-3 p-4 rounded-2xl border-2 transition-all cursor-pointer
-    ${!canManage ? 'opacity-50 cursor-not-allowed' : 'hover:border-blue-200'} // <--- Feedback visual
-    ${sub.done ? 'bg-green-100/50 border-green-200 text-green-700 opacity-70' : 'bg-slate-50 border-slate-100 text-slate-700'}
-  `}
->
-              <div className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all
-                ${sub.done ? 'bg-green-500 border-green-500 text-white' : 'bg-white border-slate-300 text-transparent'}
-              `}>
+              key={index} 
+              onClick={() => toggleSubtask(index)}
+              className={`flex items-center gap-3 p-4 rounded-2xl border-2 transition-all cursor-pointer
+                ${!canManage ? 'opacity-50 cursor-not-allowed' : 'hover:border-blue-200'}
+                ${sub.done ? 'bg-green-100/50 border-green-200 text-green-700 opacity-70' : 'bg-slate-50 border-slate-100 text-slate-700'}
+              `}
+            >
+              <div className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center
+                ${sub.done ? 'bg-green-500 border-green-500 text-white' : 'bg-white border-slate-300 text-transparent'}`}>
                 <Check size={14} strokeWidth={4} />
               </div>
                <span className={`text-xs font-black uppercase ${sub.done ? 'line-through' : ''}`}>{sub.title}</span>
-              </div>
+            </div>
           ))}
         </div>
       )}
 
       {/* TAGS INFERIORES */}
-      <div className="flex flex-wrap gap-2 mt-2 font-black text-[9px] uppercase tracking-widest">
-        <span className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-sm border-2 ${isDoneToday ? 'bg-green-200 border-green-300 text-green-800' : 'bg-[#0F172A] text-white border-slate-800'}`}><User size={10}/> {profiles.find((p: any) => p.id === task.assigned_to)?.full_name || 'Alocado'}</span>
-        <span className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 border-2 shadow-sm ${isDoneToday ? 'bg-green-100 border-green-200 text-green-700' : 'bg-blue-600 border-blue-400 text-white'}`}><Calendar size={10}/> {getNextOccurrence(task)}</span>
-      </div>
+<div className="flex flex-wrap gap-2 mt-2 font-black text-[9px] uppercase tracking-widest">
+  {/* Tag do Responsável */}
+  <span className="px-3 py-1.5 rounded-lg flex items-center gap-1.5 bg-[#0F172A] text-white border-2 border-slate-800 shadow-sm">
+    <User size={10}/> {profiles.find((p: any) => p.id === task.assigned_to)?.full_name || 'Alocado'}
+  </span>
+
+  {/* NOVA TAG: Classificação / Categoria */}
+  <span className="px-3 py-1.5 rounded-lg flex items-center gap-1.5 border-2 border-blue-100 bg-blue-50 text-blue-600 shadow-sm">
+    <Activity size={10}/> {task.category}
+  </span>
+
+  {/* Substitua a parte das Tags de Data no TaskItem por esta: */}
+{task.isDoneToday ? (
+  <span className="px-3 py-1.5 rounded-lg flex items-center gap-1.5 border-2 border-green-200 bg-green-100 text-green-700 shadow-sm">
+    <Check size={10}/> CONCLUÍDO
+  </span>
+) : (task.lastOcc !== '1970-01-01' && task.lastOcc < getTodayStr()) ? (
+  <span className="px-3 py-1.5 rounded-lg flex items-center gap-1.5 border-2 border-red-600 bg-red-600 text-white animate-pulse shadow-sm">
+    <AlertCircle size={10}/> ATRASADO: {formatToBR(task.lastOcc)}
+  </span>
+) : (
+  <span className="px-3 py-1.5 rounded-lg flex items-center gap-1.5 border-2 border-slate-200 bg-white text-slate-600 shadow-sm">
+    <Calendar size={10}/> PRÓXIMA: {task.nextOcc}
+  </span>
+)}
+</div>
     </div>
   );
-}
+});
+
+TaskItem.displayName = 'TaskItem';
 
 function DashboardCard({ label, val, color }: any) {
   return (<div className={`p-8 rounded-[40px] border-4 shadow-[10px_10px_0px_0px_rgba(15,23,42,1)] text-center transition-transform hover:scale-105 ${color}`}><span className="text-[10px] font-black uppercase tracking-[0.2em] block mb-2 opacity-40">{label}</span><span className="text-6xl font-black tracking-tighter">{val}</span></div>)
