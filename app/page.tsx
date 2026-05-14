@@ -493,15 +493,19 @@ const deleteTask = useCallback(async (taskId: string) => {
   return (
     <div className="min-h-screen bg-[#F8FAFC] text-slate-900 pb-20 font-sans overflow-x-hidden w-full">
       <nav className="bg-[#0F172A] text-white sticky top-0 z-30 shadow-2xl border-b border-white/10 px-6 h-20 flex justify-between items-center">
-  {/* LOGO */}
-  <div className="flex items-center gap-3">
-    <div className="bg-blue-600 p-2 rounded-xl">
-      <LayoutDashboard size={24} />
-    </div>
-    <h1 className="text-xl font-black italic tracking-tighter uppercase">
-      WALLY<span className="text-blue-500 text-sm block not-italic font-medium">Task Manager</span>
-    </h1>
-  </div>
+ {/* NAVBAR LOGO */}
+<div className="flex items-center gap-3">
+  {/* SUBSTITUA O BLOCO DO ÍCONE POR ESTE: */}
+  <img 
+    src="/icon.png" 
+    alt="Logo" 
+    className="w-10 h-10 rounded-xl shadow-lg object-contain bg-blue-600 p-1" 
+  />
+  
+  <h1 className="text-xl font-black italic tracking-tighter uppercase">
+    WALLY<span className="text-blue-500 text-sm block not-italic font-medium">Task Manager</span>
+  </h1>
+</div>
 
   {/* BOTÕES DA DIREITA */}
   <div className="flex items-center gap-4">
@@ -1288,8 +1292,18 @@ function Login() {
   return (
     <div className="min-h-screen bg-[#0F172A] flex items-center justify-center p-4 text-center font-sans">
       <div className="bg-white p-12 rounded-[60px] w-full max-w-sm border-b-[24px] border-blue-600 shadow-2xl">
-        <div className="bg-blue-600 w-16 h-16 rounded-[20px] flex items-center justify-center mx-auto mb-8 shadow-[0_0_30px_rgba(37,99,235,0.5)] rotate-12"><Activity className="text-white" size={32}/></div>
-        <h1 className="text-6xl font-black italic uppercase tracking-tighter text-slate-900 leading-none">WALLY<br/><span className="text-blue-600 text-3xl not-italic tracking-[0.2em] font-medium opacity-80 uppercase">TASK MANAGER</span></h1>
+        {/* SUBSTITUA O BLOCO DO ÍCONE POR ESTE: */}
+        <div className="mb-8 flex justify-center">
+          <img 
+            src="/icon.png" 
+            alt="Wally Logo" 
+            className="w-20 h-20 rounded-[24px] shadow-[0_0_30px_rgba(37,99,235,0.3)] rotate-3 hover:rotate-0 transition-transform duration-500" 
+          />
+        </div>
+        <h1 className="text-6xl font-black italic uppercase tracking-tighter text-slate-900 leading-none">
+          WALLY<br/>
+          <span className="text-blue-600 text-3xl not-italic tracking-[0.2em] font-medium opacity-80 uppercase">Task Builder</span>
+        </h1>
         <div className="space-y-4 mt-12">
           <input className="w-full p-6 bg-slate-50 border-4 border-slate-100 rounded-[28px] font-black text-slate-900 outline-none focus:border-blue-500 transition-all placeholder-slate-300" placeholder="E-MAIL" onChange={e => setEmail(e.target.value)} />
           <input className="w-full p-6 bg-slate-50 border-4 border-slate-100 rounded-[28px] font-black text-slate-900 outline-none focus:border-blue-500 transition-all" type="password" placeholder="SENHA" onChange={e => setPassword(e.target.value)} />
