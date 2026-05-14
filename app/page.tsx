@@ -535,13 +535,13 @@ const deleteTask = useCallback(async (taskId: string) => {
 
       {/* ÁREA DE CONTROLE: ABAS + FILTROS + PESQUISA */}
 <div className="bg-white/80 backdrop-blur-md border-b border-slate-200 sticky top-20 z-30 py-4 px-4 shadow-sm">
-  <div className="max-w-7xl mx-auto space-y-4">
+  <div className="max-w-[95%] mx-auto space-y-4">
     
-    {/* LINHA 1: CONTAINER RELATIVO PARA ABAS E PESQUISA */}
+    {/* LINHA 1: CONTAINER DAS ABAS E PESQUISA */}
     <div className="relative flex items-center justify-center">
       
-      {/* ABAS PRINCIPAIS (Ficam no centro) */}
-      <div className="inline-flex bg-slate-100 p-1 rounded-full border border-slate-200 overflow-x-auto no-scrollbar max-w-[80%]">
+      {/* ABAS (CENTRALIZADAS) */}
+      <div className="inline-flex bg-slate-100 p-1 rounded-full border border-slate-200 overflow-x-auto no-scrollbar max-w-[70%]">
         {['HOJE', 'ATRASADOS', 'Minhas', 'Todas', 'Trade', 'Reunião', 'HISTÓRICO', 'DASHBOARD', 'COMUNICADOS'].map(tab => (
           <button 
             key={tab} 
@@ -553,21 +553,40 @@ const deleteTask = useCallback(async (taskId: string) => {
         ))}
       </div>
 
-      {/* BARRA DE PESQUISA (Alinhada à Direita) */}
-      {/* O valor -right-16 move ela cerca de 64px para a direita do limite original */}
-<div className="absolute -right-8 xl:-right-16 hidden lg:block group w-30 xl:w-55">
-        <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors" />
-        <input 
-          type="text"
-          placeholder="BUSCAR MISSÃO..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="w-full pl-10 pr-4 py-2 bg-slate-50 border-2 border-slate-100 rounded-full font-bold text-[10px] outline-none focus:border-blue-500 focus:bg-white focus:shadow-md transition-all uppercase placeholder:text-slate-300"
-        />
-      </div>
-    </div>
+      {/* BARRA DE PESQUISA ESTILO BRUTALISTA PRETO */}
+<div className="absolute -right-8 xl:-right-16 hidden lg:block w-64 xl:w-60">
+  <div className="relative flex items-center h-10">
+    
+    {/* Lupa em preto */}
+    <Search 
+      size={16} 
+      className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-900 z-10 pointer-events-none" 
+    />
+    
+    <input 
+      type="text"
+      placeholder="BUSCAR MISSÃO..."
+      value={searchTerm}
+      onChange={(e) => setSearchTerm(e.target.value)}
+      /* Fundo branco, borda preta grossa e sombra sólida preta */
+      className="w-full h-full pl-11 pr-10 bg-white border-2 border-slate-900 rounded-full font-black text-[10px] text-slate-900 outline-none shadow-[3px_3px_0px_0px_rgba(15,23,42,1)] transition-all uppercase placeholder:text-slate-300 focus:translate-x-[1px] focus:translate-y-[1px] focus:shadow-none"
+    />
 
-    {/* LINHA 2: FILTROS DE USUÁRIO (Centralizados ou à esquerda) */}
+    {/* Botão de limpar (X) */}
+    {searchTerm && (
+      <button 
+        onClick={() => setSearchTerm('')}
+        className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-red-600 transition-colors"
+      >
+        <X size={14} />
+      </button>
+    )}
+
+  </div>
+</div>
+    </div> {/* AQUI FECHA A DIV relative flex */}
+
+    {/* LINHA 2: FILTROS DE USUÁRIO */}
     <div className="flex justify-center">
       <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
         <button 
@@ -591,8 +610,8 @@ const deleteTask = useCallback(async (taskId: string) => {
       </div>
     </div>
 
-  </div>
-</div>
+  </div> {/* FECHA O max-w-[95%] */}
+</div> {/* FECHA A ÁREA DE CONTROLE STICKY */}
 
       <main className="max-w-4xl mx-auto p-4">
   {activeTab === 'DASHBOARD' ? (
