@@ -554,7 +554,7 @@ const deleteTask = useCallback(async (taskId: string) => {
       </div>
 
       {/* BARRA DE PESQUISA ESTILO BRUTALISTA PRETO */}
-<div className="absolute -right-8 xl:-right-16 hidden lg:block w-64 xl:w-60">
+<div className="absolute -right-8 xl:-right-16 hidden lg:block w-64 xl:w-80">
   <div className="relative flex items-center h-10">
     
     {/* Lupa em preto */}
