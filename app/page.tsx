@@ -4,7 +4,7 @@ import { supabase } from '@/lib/supabase'
 import { 
   Plus, Trash2, CheckCircle2, LayoutDashboard, 
   LogOut, Calendar, User, X, Check, AlertCircle, TrendingUp,
-  Edit3, ChevronRight, Activity, ListChecks, ChevronDown, ChevronUp, FileText, Megaphone, Settings, Search
+  Edit3, ChevronRight, Activity, ListChecks, ChevronDown, ChevronUp, FileText, Megaphone, Settings, Search, Users, History, Filter, ChevronsDown
 } from 'lucide-react'
 
 // 1. Defina exatamente o que é cada dado no seu sistema
@@ -142,8 +142,17 @@ export default function App() {
   const [dashFilter, setDashFilter] = useState<'HOJE' | 'SEMANAL'>('HOJE')
   const [filterUser, setFilterUser] = useState('Todos')
   const [showCreateBox, setShowCreateBox] = useState(false)
-  const categories = ['HOJE', 'ATRASADOS', 'Minhas', 'Todas', 'Trade', 'Reunião', 'HISTÓRICO', 'DASHBOARD', 'COMUNICADOS']
-
+  const navCategories = [
+  { id: 'HOJE', label: 'Hoje', icon: Calendar },
+  { id: 'ATRASADOS', label: 'Atrasados', icon: AlertCircle },
+  { id: 'Minhas', label: 'Minhas', icon: User },
+  { id: 'Todas', label: 'Todas', icon: ListChecks },
+  { id: 'Trade', label: 'Trade', icon: TrendingUp },
+  { id: 'Reunião', label: 'Reunião', icon: Users },
+  { id: 'HISTÓRICO', label: 'Histórico', icon: History },
+  { id: 'DASHBOARD', label: 'Dashboard', icon: LayoutDashboard },
+  { id: 'COMUNICADOS', label: 'Alertas', icon: Megaphone },
+];
   const [showProfileModal, setShowProfileModal] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
   const [newName, setNewName] = useState('')
@@ -167,6 +176,7 @@ export default function App() {
   const editDateInputRef = useRef<HTMLInputElement>(null);
   const [editMode, setEditMode] = useState('semanal');
   const [searchTerm, setSearchTerm] = useState('');
+  const [showUserMenu, setShowUserMenu] = useState(false);
 
   // Este bloco pega as tasks brutas do Supabase e calcula a recorrência apenas quando necessário
   const processedTasks = useMemo(() => {
@@ -491,8 +501,8 @@ const deleteTask = useCallback(async (taskId: string) => {
   if (!user) return <Login />
 
   return (
-    <div className="min-h-screen bg-[#F8FAFC] text-slate-900 pb-20 font-sans overflow-x-hidden w-full">
-      <nav className="bg-[#0F172A] text-white sticky top-0 z-30 shadow-2xl border-b border-white/10 px-6 h-20 flex justify-between items-center">
+    <div className="min-h-screen bg-[#E8EEF7] text-slate-900 pb-20 font-sans overflow-x-hidden w-full">
+      <nav className="bg-[#232D4A] text-white sticky top-0 z-30 shadow-white-100xl border-b border-white/10 px-6 h-20 flex justify-between items-center">
  {/* NAVBAR LOGO */}
 <div className="flex items-center gap-3">
   {/* SUBSTITUA O BLOCO DO ÍCONE POR ESTE: */}
@@ -533,85 +543,154 @@ const deleteTask = useCallback(async (taskId: string) => {
   </div>
 </nav>
 
-      {/* ÁREA DE CONTROLE: ABAS + FILTROS + PESQUISA */}
-<div className="bg-white/80 backdrop-blur-md border-b border-slate-200 sticky top-20 z-30 py-4 px-4 shadow-sm">
-  <div className="max-w-[95%] mx-auto space-y-4">
-    
-    {/* LINHA 1: CONTAINER DAS ABAS E PESQUISA */}
-    <div className="relative flex items-center justify-center">
-      
-      {/* ABAS (CENTRALIZADAS) */}
-      <div className="inline-flex bg-slate-100 p-1 rounded-full border border-slate-200 overflow-x-auto no-scrollbar max-w-[70%]">
-        {['HOJE', 'ATRASADOS', 'Minhas', 'Todas', 'Trade', 'Reunião', 'HISTÓRICO', 'DASHBOARD', 'COMUNICADOS'].map(tab => (
+      {/* --- ÁREA DE CONTROLE (ABAS EM CARDS + FUSÃO TOTAL) --- */}
+<div className="sticky top-20 z-30 w-full">
+  
+  {/* LINHA 1: ABAS NO FUNDO CINZA CLARO */}
+  <div className="bg-[#DCE7F5] border-b border-slate-200 pt-6 px-4">
+    <div className="max-w-[99%] mx-auto flex items-end justify-center gap-2 overflow-x-auto no-scrollbar">
+      {navCategories.map(tab => {
+        const Icon = tab.icon;
+        const isActive = activeTab === tab.id;
+        
+        return (
           <button 
-            key={tab} 
-            onClick={() => { setActiveTab(tab); setShowCreateBox(false); }} 
-            className={`px-6 py-2 rounded-full font-black text-[10px] uppercase transition-all whitespace-nowrap ${activeTab === tab ? 'bg-white text-blue-600 shadow-md ring-1 ring-slate-200' : 'text-slate-400 hover:text-slate-600'}`}
+            key={tab.id} 
+            onClick={() => { setActiveTab(tab.id); setShowCreateBox(false); }} 
+            className={`
+              flex flex-col items-center justify-center min-w-[109px] h-[80px] gap-1 px-4 transition-all duration-2 relative
+              rounded-t-2xl border-x-2 border-t-0 border-transparent
+              ${isActive
+                ? 'bg-[#F6F7F9] border-blue-500 border-t-2 z-40 -mb-[-3px] h-[85px] shadow-[0_-4px_10px_rgba(0,0,0,0.02)]' 
+                : 'bg-gradient-to-b from-white to-slate-200 border-slate-300 text-slate-500 hover:to-white'}
+            `}
           >
-            {tab}
+            <Icon size={isActive ? 24 : 20} className={isActive ? 'text-blue-500' : ''} strokeWidth={isActive ? 3 : 2} />
+            <span className={`text-[10px] font-black uppercase tracking-tight ${isActive ? 'text-blue-500' : ''}`}>
+              {tab.label}
+            </span>
+
+            {/* A "BORRACHA" QUE APAGA A LINHA: Esta div fica por cima da borda cinza */}
+            {isActive && (
+              <div className="absolute -bottom-[3px] left-[-1px] right-[-1px] h-[5px] bg-[#F6F7F9] z-[50]"></div>
+            )}
           </button>
-        ))}
-      </div>
-
-      {/* BARRA DE PESQUISA ESTILO BRUTALISTA PRETO */}
-<div className="absolute -right-8 xl:-right-16 hidden lg:block w-64 xl:w-80">
-  <div className="relative flex items-center h-10">
-    
-    {/* Lupa em preto */}
-    <Search 
-      size={16} 
-      className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-900 z-10 pointer-events-none" 
-    />
-    
-    <input 
-      type="text"
-      placeholder="BUSCAR MISSÃO..."
-      value={searchTerm}
-      onChange={(e) => setSearchTerm(e.target.value)}
-      /* Fundo branco, borda preta grossa e sombra sólida preta */
-      className="w-full h-full pl-11 pr-10 bg-white border-2 border-slate-900 rounded-full font-black text-[10px] text-slate-900 outline-none shadow-[3px_3px_0px_0px_rgba(15,23,42,1)] transition-all uppercase placeholder:text-slate-300 focus:translate-x-[1px] focus:translate-y-[1px] focus:shadow-none"
-    />
-
-    {/* Botão de limpar (X) */}
-    {searchTerm && (
-      <button 
-        onClick={() => setSearchTerm('')}
-        className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-red-600 transition-colors"
-      >
-        <X size={14} />
-      </button>
-    )}
-
+        );
+      })}
+    </div>
   </div>
-</div>
-    </div> {/* AQUI FECHA A DIV relative flex */}
 
-    {/* LINHA 2: FILTROS DE USUÁRIO */}
-    <div className="flex justify-center">
-      <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
+  {/* LINHA 2: BARRA DE COMANDO COMPACTA (SÓ FILTRO E PESQUISA) */}
+  <div className="bg-[#F6F7F9] border-b-2 border-slate-200 pt-10 pb-8 px-10 relative z-10 -mt-[2px]">
+   <div className="max-w-[98%] mx-auto flex items-center justify-between gap-8">
+      
+      {/* SELETOR DE EQUIPE DROPDOWN (SUBSTITUI OS NOMES ESPALHADOS) */}
+      <div className="relative">
+       <button 
+  type="button"
+  onClick={() => setShowUserMenu(!showUserMenu)}
+  className={`
+    h-12 px-6 rounded-2xl border-2 font-black text-[10px] uppercase flex items-center gap-3 whitespace-nowrap relative
+    
+    /* EFEITO FÍSICO REAL (SEM DELAY) */
+    transition-transform duration-75 active:duration-0
+    active:translate-x-[4px] active:translate-y-[4px] active:shadow-none
+    
+    ${filterUser === 'Todos' 
+      ? 'border-slate-100 bg-white text-slate-900 shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] hover:bg-slate-50' 
+      : 'border-blue-600 bg-blue-50 text-blue-600 shadow-[4px_4px_0px_0px_rgba(37,99,235,1)] hover:bg-blue-100'}
+  `}
+>
+  <Filter size={16} />
+  <span>{filterUser === 'Todos' ? 'Filtrar Equipe' : profiles.find(p => p.id === filterUser)?.full_name}</span>
+  
+  {/* A setinha continua rodando conforme o menu abre/fecha */}
+  <ChevronDown 
+    size={16} 
+    className={`transition-transform duration-300 ${showUserMenu ? 'rotate-180' : ''}`} 
+  />
+</button>
+
+        {showUserMenu && (
+  <>
+    {/* Backdrop para fechar ao clicar fora */}
+    <div className="fixed inset-0 z-10" onClick={() => setShowUserMenu(false)}></div>
+    
+    {/* CONTAINER DO MENU DROPDOWN */}
+    <div className="absolute left-0 mt-3 w-72 bg-white border-2 border-slate-100 rounded-[32px] shadow-[7px_7px_0px_0px_rgba(15,23,42,1)] z-20 p-5 animate-in zoom-in-95 duration-200">
+      <p className="text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4 ml-2 italic">Selecionar Responsável:</p>
+
+      <div className="flex flex-col gap-3">
+        {/* BOTÃO: EQUIPE TOTAL */}
         <button 
-          onClick={() => setFilterUser('Todos')} 
-          className={`px-4 py-1.5 rounded-full font-black text-[9px] uppercase border-2 transition-all ${filterUser === 'Todos' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-400 border-slate-100'}`}
+          type="button"
+          onClick={() => { setFilterUser('Todos'); setShowUserMenu(false); }}
+          className={`
+            p-3.5 text-left font-black text-[10px] uppercase rounded-xl transition-all border-2 flex items-center gap-3
+            active:translate-x-[2px] active:translate-y-[2px] active:shadow-none
+            
+            ${filterUser === 'Todos' 
+              ? 'bg-slate-900 border-slate-900 text-white shadow-[4px_4px_0px_0px_rgba(15,23,42,1)]' 
+              : 'bg-white border-slate-100 text-slate-600 hover:bg-slate-50 hover:border-slate-900 hover:shadow-[4px_4px_0px_0px_rgba(15,23,42,1)]'}
+          `}
         >
-          Todos
+          <span className="text-sm">🌍</span> Equipe Total
         </button>
+
+        <div className="h-[2px] bg-slate-100 my-1 mx-2"></div>
+
+        {/* LISTA DE PERFIS */}
         {profiles.map(p => (
           <button 
             key={p.id} 
-            onClick={() => setFilterUser(p.id)} 
-            className={`px-4 py-1.5 rounded-full font-black text-[9px] uppercase border-2 flex items-center gap-2 transition-all ${filterUser === p.id ? 'bg-blue-600 text-white border-blue-600 shadow-md' : 'bg-white text-slate-400 border-slate-100'}`}
+            type="button"
+            onClick={() => { setFilterUser(p.id); setShowUserMenu(false); }}
+            className={`
+              p-3 text-left font-black text-[10px] uppercase flex items-center gap-3 rounded-xl transition-all border-2
+              active:translate-x-[2px] active:translate-y-[2px] active:shadow-none
+              
+              ${filterUser === p.id 
+                ? 'bg-blue-600 border-blue-600 text-white shadow-[4px_4px_0px_0px_rgba(37,99,235,1)]' 
+                : 'bg-white border-slate-100 text-slate-600 hover:bg-blue-50 hover:border-blue-600 hover:shadow-[4px_4px_0px_0px_rgba(37,99,235,1)]'}
+            `}
           >
-            <div className={`w-3 h-3 rounded-full flex items-center justify-center text-[6px] ${filterUser === p.id ? 'bg-white text-blue-600' : 'bg-blue-100 text-blue-600'}`}>
+            <div className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center text-[8px] font-black transition-all
+              ${filterUser === p.id ? 'bg-white/20 border-white/30' : 'bg-blue-100 border-blue-200 text-blue-600'}`}>
               {p.full_name?.charAt(0)}
             </div>
-            {p.full_name?.split(' ')[0]}
+            {p.full_name}
           </button>
         ))}
       </div>
     </div>
+  </>
+)}
+      </div>
 
-  </div> {/* FECHA O max-w-[95%] */}
-</div> {/* FECHA A ÁREA DE CONTROLE STICKY */}
+      {/* ÁREA DE PESQUISA (Ocupando o resto da linha) */}
+      <div className="w-full md:w-96 group">
+        <div className="relative flex items-center h-12">
+          <Search size={18} className={`absolute left-5 top-1/2 -translate-y-1/2 transition-colors duration-300 z-10 ${searchTerm ? 'text-blue-600' : 'text-slate-400'}`} />
+          <input 
+            type="text"
+            placeholder="DIGITE PARA BUSCAR TAREFAS..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className={`w-full h-full pl-14 pr-12 bg-white border-2 border-transparent rounded-2xl font-black text-[11px] text-slate-900 outline-none transition-all placeholder:text-slate-300 shadow-[5px_5px_0px_0px_rgba(15,23,42,1)]
+              ${searchTerm 
+                ? 'border-blue-600 bg-white shadow-[0_0_20px_rgba(37,99,235,0.1)]' 
+                : 'border-transparent shadow-[0px_0px_0px_1px_rgba(15,23,42,1)] focus:border-slate-200 focus:shadow-none focus:translate-x-[1px] focus:translate-y-[1px]'}`}
+          />
+          {searchTerm && (
+            <button type="button" onClick={() => setSearchTerm('')} className="absolute right-4 bg-slate-100 hover:bg-red-100 text-slate-400 p-1.5 rounded-lg transition-all">
+              <X size={14} strokeWidth={3} />
+            </button>
+          )}
+        </div>
+      </div> 
+    </div>
+  </div>
+</div> {/* Este fecha o sticky top-20 w-full */}
 
       <main className="max-w-4xl mx-auto p-4">
   {activeTab === 'DASHBOARD' ? (
@@ -724,123 +803,117 @@ const deleteTask = useCallback(async (taskId: string) => {
   ) : (
     /* ABA PADRÃO DE TAREFAS */
     <>
-      <div className="max-w-4xl mx-auto mt-8 mb-6 px-4">
-        <button onClick={() => setShowCreateBox(!showCreateBox)} className={`w-full py-5 rounded-[32px] font-black uppercase tracking-[0.2em] text-[11px] transition-all duration-500 flex items-center justify-center gap-3 border-4 ${showCreateBox ? 'bg-slate-100 border-slate-200 text-slate-400' : 'bg-white border-slate-900 text-slate-900 shadow-[10px_10px_0px_0px_rgba(15,23,42,1)] hover:translate-x-1 hover:translate-y-1'}`}>
-          {showCreateBox ? <><X size={20} /> Cancelar Operação</> : <><Plus size={20} strokeWidth={3} className="text-blue-600" /> Lançar Nova Missão</>}
+      <div className="max-w-4xl mx-auto mt-5 mb-6 px-60">
+        <button onClick={() => setShowCreateBox(!showCreateBox)} className={`w-full py-5 rounded-[32px] font-black uppercase tracking-[0.2em] text-[11px] transition-all duration-500 flex items-center justify-center gap-3 border-2 ${showCreateBox ? 'bg-slate-100 border-slate-200 text-slate-400' : 'bg-white border-slate-100 text-slate-900 shadow-[10px_10px_0px_0px_rgba(15,23,42,1)] hover:translate-x-1 hover:translate-y-1'}`}>
+          {showCreateBox ? <><X size={20} /> Cancelar Operação</> : <><Plus size={20} strokeWidth={3} className="text-blue-600" /> Lançar Nova Tarefa</>}
         </button>
       </div>
 
       {showCreateBox && (
-        <div className="max-w-4xl mx-auto bg-white p-8 rounded-[32px] border border-slate-200 shadow-[0_20px_50px_rgba(0,0,0,0.05)] mb-12 mt-4 relative overflow-hidden animate-in slide-in-from-top-4 duration-500">
-          <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-blue-500 to-indigo-600 opacity-60"></div>
-          <div className="flex flex-col gap-6">
-            <input className="w-full text-3xl font-black outline-none placeholder-slate-300 text-slate-900 bg-transparent border-b-2 border-slate-100 focus:border-blue-500 transition-all pb-3 uppercase" placeholder="O QUE VAMOS CONSTRUIR?" value={taskTitle} onChange={e => setTaskTitle(e.target.value)} />
-            <textarea className="w-full p-4 bg-slate-50 rounded-2xl font-medium text-slate-700 border border-slate-100 outline-none focus:border-blue-300 focus:bg-white transition-all min-h-[80px] resize-none" placeholder="Coordenadas da tarefa..." value={notes} onChange={e => setNotes(e.target.value)} />
-            <div className="space-y-3 bg-slate-50/50 p-4 rounded-2xl border border-slate-100">
-              <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest flex items-center gap-2"><ListChecks size={14} className="text-blue-500"/> Checklist de Passos</label>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                {tempSubtasks.map((sub, index) => (
-                  <div key={index} className="flex items-center gap-2 bg-white p-2 rounded-xl border border-slate-200 shadow-sm">
-                    <input className="flex-1 text-xs font-bold text-slate-600 outline-none" value={sub.title} onChange={(e) => { const newSubs = [...tempSubtasks]; newSubs[index].title = e.target.value; setTempSubtasks(newSubs); }} placeholder="Nome do passo..." />
-                    <button onClick={() => setTempSubtasks(tempSubtasks.filter((_, i) => i !== index))} className="text-red-400 p-1"><X size={14}/></button>
-                  </div>
-                ))}
-                <button onClick={() => setTempSubtasks([...tempSubtasks, { title: '', done: false }])} className="flex items-center justify-center gap-2 p-2 border-2 border-dashed border-slate-200 rounded-xl text-slate-400 font-black text-[10px] hover:border-blue-400 transition-all uppercase"><Plus size={14}/> Adicionar Passo</button>
-              </div>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-stretch">
-              <div className="md:col-span-4 space-y-4">
-  {/* SELETOR DE MODO: SEMANAL OU MENSAL */}
-  <div className="flex bg-slate-100 p-1 rounded-2xl border border-slate-200">
-    <button 
-      type="button"
-      onClick={() => setSelectedDays([])}
-      className={`flex-1 py-2 rounded-xl font-black text-[10px] uppercase transition-all ${selectedDays.length === 0 || isNaN(parseInt(selectedDays[0])) ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}
-    >
-      Semanal
-    </button>
-    <button 
-      type="button"
-      onClick={() => setSelectedDays(['1'])}
-      className={`flex-1 py-2 rounded-xl font-black text-[10px] uppercase transition-all ${!isNaN(parseInt(selectedDays[0])) ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}
-    >
-      Mensal
-    </button>
-  </div>
-
-  {/* LÓGICA DINÂMICA: MENSAL OU SEMANAL */}
-  {!isNaN(parseInt(selectedDays[0])) ? (
-  // --- BLOCO MENSAL COM ACIONAMENTO FORÇADO ---
-  <div className="space-y-2">
-    <label className="text-[9px] font-black uppercase text-slate-400 ml-2 italic">Data de Início da Recorrência</label>
+  <div className="max-w-4xl mx-auto bg-white p-8 rounded-[32px] border border-slate-200 shadow-[0_20px_50px_rgba(0,0,0,0.05)] mb-12 mt-4 relative overflow-hidden animate-in slide-in-from-top-4 duration-500">
+    <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-blue-500 to-indigo-600 opacity-60"></div>
     
-    <div 
-      className="relative h-[60px] group cursor-pointer"
-      // Quando clicar em qualquer lugar da div, força o calendário a abrir
-      onClick={() => dateInputRef.current?.showPicker()}
-    >
-      {/* Camada Visual (O que você vê) */}
-      <div className="absolute inset-0 flex items-center justify-center bg-slate-50 rounded-xl border-2 border-slate-200 font-black text-slate-700 text-xl pointer-events-none group-hover:border-blue-500 transition-all uppercase">
-        {displayDate}
-        <Calendar size={20} className="absolute right-4 text-blue-500" />
+    <div className="flex flex-col gap-6">
+      {/* TÍTULO E NOTAS */}
+      <input className="w-full text-3xl font-black outline-none placeholder-slate-300 text-slate-900 bg-transparent border-b-2 border-slate-100 focus:border-blue-500 transition-all pb-3 uppercase" placeholder="O QUE VAMOS CONSTRUIR?" value={taskTitle} onChange={e => setTaskTitle(e.target.value)} />
+      <textarea className="w-full p-4 bg-slate-50 rounded-2xl font-medium text-slate-700 border border-slate-100 outline-none focus:border-blue-300 focus:bg-white transition-all min-h-[80px] resize-none" placeholder="Coordenadas da tarefa..." value={notes} onChange={e => setNotes(e.target.value)} />
+      
+      {/* CHECKLIST */}
+      <div className="space-y-3 bg-slate-50/50 p-4 rounded-2xl border border-slate-100">
+        <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest flex items-center gap-2"><ListChecks size={14} className="text-blue-500"/> Checklist de Passos</label>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+          {tempSubtasks.map((sub, index) => (
+            <div key={index} className="flex items-center gap-2 bg-white p-2 rounded-xl border border-slate-200 shadow-sm">
+              <input className="flex-1 text-xs font-bold text-slate-600 outline-none" value={sub.title} onChange={(e) => { const newSubs = [...tempSubtasks]; newSubs[index].title = e.target.value; setTempSubtasks(newSubs); }} placeholder="Nome do passo..." />
+              <button onClick={() => setTempSubtasks(tempSubtasks.filter((_, i) => i !== index))} className="text-red-400 p-1"><X size={14}/></button>
+            </div>
+          ))}
+          <button onClick={() => setTempSubtasks([...tempSubtasks, { title: '', done: false }])} className="flex items-center justify-center gap-2 p-2 border-2 border-dashed border-slate-200 rounded-xl text-slate-400 font-black text-[10px] hover:border-blue-400 transition-all uppercase"><Plus size={14}/> Adicionar Passo</button>
+        </div>
       </div>
 
-      {/* Input Real (Escondido mas funcional) */}
-      <input 
-        ref={dateInputRef} // Conecta com a nossa referência
-        type="date" 
-        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-        onChange={e => {
-          const dateVal = e.target.value;
-          if(dateVal) {
-            const [y, m, d] = dateVal.split('-');
-            const formatted = `${d}/${m}/${y}`;
-            setDisplayDate(formatted);
-            setSelectedDays([d]);
-          }
-        }}
-      />
-    </div>
-    
-    <p className="text-[8px] font-bold text-blue-500 text-center mt-1 uppercase tracking-tighter">
-      {displayDate !== 'DD/MM/YYYY' ? `TODO DIA ${selectedDays[0]} DE CADA MÊS` : 'CLIQUE NA CAIXA PARA ABRIR O CALENDÁRIO'}
-    </p>
-  </div>
-) : (
-    // --- BLOCO MODO SEMANAL ---
-    <div className="flex gap-1.5 bg-slate-50 p-1.5 rounded-xl border border-slate-100">
-      {weekDays.map(day => (
-        <button 
-          key={day.id} 
-          type="button" 
-          onClick={() => toggleDay(day.id)} 
-          className={`flex-1 h-9 rounded-lg font-black text-xs transition-all ${selectedDays.includes(day.id) ? 'bg-blue-600 text-white shadow-lg scale-105' : 'text-slate-400 hover:bg-slate-200/50'}`}
-        >
-          {day.label}
-        </button>
-      ))}
-    </div>
-  )}
+      {/* RODAPÉ DE CONFIGURAÇÕES EM 3 COLUNAS */}
+      <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-stretch">
+        
+        {/* COLUNA 1: RECORRÊNCIA */}
+        <div className="md:col-span-4 space-y-4">
+          <div className="flex bg-slate-100 p-1 rounded-2xl border border-slate-200">
+            <button type="button" onClick={() => setSelectedDays([])} className={`flex-1 py-2 rounded-xl font-black text-[10px] uppercase transition-all ${selectedDays.length === 0 || isNaN(parseInt(selectedDays[0])) ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}>Semanal</button>
+            <button type="button" onClick={() => setSelectedDays(['1'])} className={`flex-1 py-2 rounded-xl font-black text-[10px] uppercase transition-all ${!isNaN(parseInt(selectedDays[0])) ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}>Mensal</button>
+          </div>
 
-  {/* CAMPO DE INTERVALO */}
-  <div className="space-y-2">
-    <label className="text-[9px] font-black uppercase text-slate-400 ml-2">
-      Repetir a cada quanto(s) {!isNaN(parseInt(selectedDays[0])) ? 'mês/meses' : 'semana(s)'}?
-    </label>
-    <input 
-      type="number" 
-      min="1" 
-      className="w-full p-3.5 bg-slate-50 rounded-xl font-black border border-slate-200 text-slate-700 outline-none focus:border-blue-500 text-center" 
-      value={repeatInterval} 
-      onChange={e => setRepeatInterval(parseInt(e.target.value) || 1)} 
-    />
-  </div>
-</div>
-              <div className="md:col-span-4 flex"><button onClick={addTask} className="w-full py-6 md:py-10 bg-blue-600 hover:bg-[#0F172A] text-white rounded-[32px] font-black uppercase tracking-widest transition-all duration-500 flex flex-row md:flex-col items-center justify-center gap-3 shadow-[0_10px_30px_rgba(37,99,235,0.3)] active:scale-95 group"><Plus size={32} strokeWidth={3} /><span className="text-sm">Lançar Missão</span></button></div>
+          {!isNaN(parseInt(selectedDays[0])) ? (
+            <div className="space-y-2">
+              <label className="text-[9px] font-black uppercase text-slate-400 ml-2 italic">Início Recorrência</label>
+              <div className="relative h-[60px] group cursor-pointer" onClick={() => dateInputRef.current?.showPicker()}>
+                <div className="absolute inset-0 flex items-center justify-center bg-slate-50 rounded-xl border-2 border-slate-200 font-black text-slate-700 text-xl pointer-events-none uppercase">
+                  {displayDate}
+                  <Calendar size={20} className="absolute right-4 text-blue-500" />
+                </div>
+                <input ref={dateInputRef} type="date" className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" onChange={e => { const dateVal = e.target.value; if(dateVal) { const [y, m, d] = dateVal.split('-'); setDisplayDate(`${d}/${m}/${y}`); setSelectedDays([d]); }}} />
+              </div>
             </div>
+          ) : (
+            <div className="flex gap-1.5 bg-slate-50 p-1.5 rounded-xl border border-slate-100">
+              {weekDays.map(day => (
+                <button key={day.id} type="button" onClick={() => toggleDay(day.id)} className={`flex-1 h-9 rounded-lg font-black text-xs transition-all ${selectedDays.includes(day.id) ? 'bg-blue-600 text-white shadow-lg scale-105' : 'text-slate-400 hover:bg-slate-200/50'}`}>{day.label}</button>
+              ))}
+            </div>
+          )}
+
+          <div className="space-y-1">
+            <label className="text-[8px] font-black uppercase text-slate-400 ml-2 italic">Repetir a cada quanto(s)?</label>
+            <input type="number" min="1" className="w-full p-3 bg-slate-50 rounded-xl font-black border border-slate-200 text-slate-700 text-center" value={repeatInterval} onChange={e => setRepeatInterval(parseInt(e.target.value) || 1)} />
           </div>
         </div>
-      )}
+
+        {/* COLUNA 2: RESPONSÁVEL E CLASSIFICAÇÃO */}
+        <div className="md:col-span-4 space-y-4">
+          <div className="space-y-2">
+            <label className="text-[9px] font-black uppercase text-slate-400 ml-2 italic">Responsável</label>
+            <select 
+              className="w-full p-4 bg-slate-50 rounded-xl font-bold text-sm border-2 border-slate-100 text-slate-700 outline-none focus:border-blue-500 transition-all" 
+              value={assignedTo} 
+              onChange={e => setAssignedTo(e.target.value)}
+              disabled={userRole === 'membro'}
+            >
+              {userRole === 'membro' ? (
+                <option value={user.id}>Atribuído a mim</option>
+              ) : (
+                profiles.map(p => <option key={p.id} value={p.id}>{p.full_name || p.id.slice(0,5)}</option>)
+              )}
+            </select>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-[9px] font-black uppercase text-slate-400 ml-2 italic">Classificação</label>
+            <select 
+              className="w-full p-4 bg-slate-50 rounded-xl font-bold text-sm border-2 border-slate-100 text-slate-700 outline-none focus:border-blue-500 transition-all" 
+              value={category} 
+              onChange={e => setCategory(e.target.value)}
+            >
+              <option>Trade</option>
+              <option>Reunião</option>
+              <option>Geral</option>
+            </select>
+          </div>
+        </div>
+
+        {/* COLUNA 3: BOTÃO LANÇAR */}
+        <div className="md:col-span-4 flex">
+          <button 
+            onClick={addTask} 
+            className="w-full bg-blue-600 hover:bg-[#0F172A] text-white rounded-[32px] font-black uppercase tracking-widest transition-all duration-500 flex flex-col items-center justify-center gap-3 shadow-[0_10px_30px_rgba(37,99,235,0.3)] active:scale-95 group"
+          >
+            <Plus size={40} strokeWidth={3} className="group-hover:rotate-90 transition-transform duration-500" />
+            <span className="text-sm">Lançar Missão</span>
+          </button>
+        </div>
+
+      </div>
+    </div>
+  </div>
+)}
 
       <div className="space-y-6">
         <h2 className="font-black uppercase text-slate-400 text-[10px] tracking-[0.3em] px-2 flex items-center gap-2"><ChevronRight size={14} className="text-blue-600" /> {activeTab} • {filteredTasks.length} TAREFAS</h2>
@@ -1028,42 +1101,71 @@ const deleteTask = useCallback(async (taskId: string) => {
         </div>
       )}
 
-      {/* 3. BARRA LATERAL (SIDEBAR) */}
-      <div className={`fixed top-0 right-0 h-full bg-white w-full md:w-[450px] border-l-4 border-slate-900 z-50 shadow-[-20px_0px_60px_rgba(0,0,0,0.1)] transition-transform duration-500 transform ${viewingTask ? 'translate-x-0' : 'translate-x-full'}`}>
-        {viewingTask && (
-          <div className="flex flex-col h-full">
-            <div className={`p-8 border-b-4 border-slate-900 ${viewingTask.last_done_date ? 'bg-green-500' : 'bg-blue-600'} text-white`}>
-              <div className="flex justify-between items-start mb-6">
-                <span className="bg-black/20 px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest">{viewingTask.category}</span>
-                <button onClick={() => setViewingTask(null)} className="hover:scale-110 transition-transform"><X size={32} strokeWidth={3}/></button>
-              </div>
-              <h2 className="text-3xl font-black uppercase italic tracking-tighter leading-none">{viewingTask.title}</h2>
-            </div>
-            <div className="flex-1 overflow-y-auto p-8 space-y-8">
-              <div>
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-3">Coordenadas da Missão</label>
-                <div className="bg-slate-50 p-6 rounded-3xl border-2 border-slate-100 text-slate-700 font-bold leading-relaxed whitespace-pre-wrap text-sm">{viewingTask.notes || "Sem observações detalhadas."}</div>
-              </div>
-              <div>
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-4 text-center">Status do Checklist</label>
-                <div className="space-y-2">
-                  {(viewingTask.subtasks || []).map((sub: any, i: number) => (
-                    <div key={i} className={`flex items-center gap-3 p-4 rounded-2xl border-2 ${sub.done ? 'bg-green-50 border-green-200 text-green-700' : 'bg-slate-50 border-slate-100 text-slate-500'}`}>
-                      {sub.done ? <CheckCircle2 size={18} /> : <div className="w-4 h-4 rounded-full border-2 border-slate-300" />}
-                      <span className="text-xs font-black uppercase">{sub.title}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-            <div className="p-8 border-t-4 border-slate-900 bg-slate-50">
-              {(userRole === 'admin' || userRole === 'gerente' || viewingTask.assigned_to === user.id) ? (
-                <button onClick={() => { setEditingTask(viewingTask); setShowEditModal(true); setViewingTask(null); }} className="w-full bg-slate-900 text-white p-5 rounded-2xl font-black uppercase tracking-widest hover:bg-blue-600 transition-all flex items-center justify-center gap-3"><Edit3 size={20} /> Editar Missão</button>
-              ) : ( <p className="text-center text-[10px] font-black text-slate-400 uppercase">Visualização restrita</p> )}
-            </div>
+      {/* 3. BARRA LATERAL (SIDEBAR) - CORRIGIDA */}
+<div className={`fixed top-0 right-0 h-full bg-white w-full md:w-[450px] border-l-4 border-slate-900 z-50 shadow-[-20px_0px_60px_rgba(0,0,0,0.1)] transition-transform duration-500 transform ${viewingTask ? 'translate-x-0' : 'translate-x-full'}`}>
+  {viewingTask && (
+    <div className="flex flex-col h-full">
+      {/* CABEÇALHO - Corrigido para o título não vazar */}
+      <div className={`p-8 border-b-4 border-slate-900 ${viewingTask.isDoneToday ? 'bg-green-500' : 'bg-blue-600'} text-white`}>
+        <div className="flex justify-between items-start mb-6">
+          <span className="bg-black/20 px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest flex-shrink-0">
+            {viewingTask.category}
+          </span>
+          <button onClick={() => setViewingTask(null)} className="hover:scale-110 transition-transform ml-4">
+            <X size={32} strokeWidth={3}/>
+          </button>
+        </div>
+        {/* break-words garante que o título quebre se for muito longo */}
+        <h2 className="text-3xl font-black uppercase italic tracking-tighter leading-tight break-words">
+          {viewingTask.title}
+        </h2>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-8 space-y-8">
+        {/* DESCRIÇÃO / COORDENADAS */}
+        <div>
+          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-3">
+            Coordenadas da Missão
+          </label>
+          {/* break-all é essencial aqui para quebrar sequências como "111111..." */}
+          <div className="bg-slate-50 p-6 rounded-3xl border-2 border-slate-100 text-slate-700 font-bold leading-relaxed whitespace-pre-wrap text-sm break-all overflow-hidden">
+            {viewingTask.notes || "Sem observações detalhadas."}
           </div>
+        </div>
+
+        {/* STATUS DO CHECKLIST */}
+        <div>
+          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-4 text-center">
+            Status do Checklist
+          </label>
+          <div className="space-y-2">
+            {(viewingTask.subtasks || []).map((sub: any, i: number) => (
+              <div key={i} className={`flex items-center gap-3 p-4 rounded-2xl border-2 ${sub.done ? 'bg-green-50 border-green-200 text-green-700' : 'bg-slate-50 border-slate-100 text-slate-500'}`}>
+                {sub.done ? <CheckCircle2 size={18} /> : <div className="w-4 h-4 rounded-full border-2 border-slate-300 flex-shrink-0" />}
+                {/* break-words também nas subtarefas por segurança */}
+                <span className="text-xs font-black uppercase break-words">{sub.title}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* RODAPÉ COM BOTÃO */}
+      <div className="p-8 border-t-4 border-slate-900 bg-slate-50">
+        {(userRole === 'admin' || userRole === 'gerente' || viewingTask.assigned_to === user.id) ? (
+          <button 
+            onClick={() => { setEditingTask(viewingTask); setShowEditModal(true); setViewingTask(null); }} 
+            className="w-full bg-slate-900 text-white p-5 rounded-2xl font-black uppercase tracking-widest hover:bg-blue-600 transition-all flex items-center justify-center gap-3 shadow-lg"
+          >
+            <Edit3 size={20} /> Editar Missão
+          </button>
+        ) : ( 
+          <p className="text-center text-[10px] font-black text-slate-400 uppercase">Visualização restrita ao responsável</p> 
         )}
       </div>
+    </div>
+  )}
+</div>
 
       {/* 4. MODAL DE CONFIGURAÇÕES (FORA DA SIDEBAR) */}
       {showSettingsModal && (
@@ -1113,185 +1215,142 @@ const deleteTask = useCallback(async (taskId: string) => {
   );
 } // Fim do export default
 
-// 1. Substitua todo o bloco da TaskBox por este:
 const TaskItem = memo(({ task, profiles, onUpdate, onEdit, userRole, currentUser, onView, onToggle, onDelete }: any) => {
   const [expanded, setExpanded] = useState(false);
-  
-  // Usamos as permissões pré-calculadas
   const isOwner = task.assigned_to === currentUser?.id;
   const canManage = userRole === 'admin' || userRole === 'gerente' || isOwner;
-
   const subtasks = task.subtasks || [];
   const subDone = subtasks.filter((s: any) => s.done).length;
   const subTotal = subtasks.length;
+  const isLate = task.lastOcc < getTodayStr() && !task.isDoneToday && task.lastOcc !== '1970-01-01';
 
-  // Função interna de subtarefas preservada e otimizada
+  // Função interna de subtarefas
   const toggleSubtask = async (index: number) => {
     if (!canManage) return alert("Acesso negado.");
-    if (!currentUser?.id) {
-      console.error("Usuário não identificado");
-      return;
-    }
-
     const newSubtasks = [...subtasks];
     newSubtasks[index].done = !newSubtasks[index].done;
-
     const allDone = newSubtasks.length > 0 && newSubtasks.every((s: any) => s.done);
     const todayStr = getTodayStr();
 
     if (allDone && !task.isDoneToday) {
-      const profile = profiles.find((p: any) => p.id === currentUser.id);
+      const profile = profiles.find((p: any) => p.id === currentUser?.id);
       await supabase.from('task_history').insert([{
-        task_id: task.id,
-        task_title: task.title,
-        user_name: profile?.full_name || currentUser.email || 'Usuário',
-        user_id: currentUser.id,
-        category: task.category
+        task_id: task.id, task_title: task.title,
+        user_name: profile?.full_name || currentUser?.email || 'Usuário',
+        user_id: currentUser?.id, category: task.category
       }]);
     }
-
     await supabase.from('tasks').update({
       subtasks: newSubtasks,
       last_done_date: allDone ? todayStr : null,
       status: allDone ? 'concluido' : 'pendente'
     }).eq('id', task.id);
-    
-    onUpdate(); // Atualiza a lista geral
+    onUpdate();
   };
 
   return (
-    // Dentro do return do TaskItem, verifique se a primeira linha está assim:
-<div className={`p-6 rounded-[32px] border-[4px] transition-all duration-300 flex flex-col gap-4 relative group 
-  ${task.isDoneToday ? 'bg-green-50 border-green-600 shadow-[8px_8px_0px_0px_rgba(22,101,52,1)] opacity-90' : 
-    (task.lastOcc < getTodayStr() && !task.isDoneToday && task.lastOcc !== '1970-01-01') ? 'bg-red-50 border-red-600 shadow-[8px_8px_0px_0px_rgba(153,27,27,1)]' : 
-    'bg-white border-slate-900 shadow-[8px_8px_0px_0px_rgba(15,23,42,1)] hover:translate-x-2'
-  }`}
->
-      <div className="flex items-center gap-5">
-        <button 
-          onClick={() => canManage ? onToggle(task) : alert("Acesso negado.")}  
-          className={`w-16 h-16 rounded-[22px] border-4 flex items-center justify-center transition-all flex-shrink-0 shadow-sm
-            ${!canManage ? 'opacity-30 grayscale cursor-not-allowed' : ''}
-            ${task.isDoneToday ? 'bg-green-600 border-green-700 text-white' : 'bg-white border-slate-200 text-transparent hover:border-blue-500'}`}
-        >
-          <CheckCircle2 size={40} strokeWidth={3} />
-</button>
+    <div className={`relative flex flex-col transition-all duration-200 border-[3px] rounded-[22px] mb-2 group
+      ${task.isDoneToday ? 'bg-green-50 border-green-600 opacity-90' : 
+        isLate ? 'bg-red-50 border-red-600 shadow-[6px_6px_0px_0px_rgba(185,28,28,1)]' : 
+        'bg-white border-slate-900 shadow-[6px_6px_0px_0px_rgba(15,23,42,1)] hover:-translate-y-1'
+      }`}
+    >
+      {/* --- LINHA PRINCIPAL (BASEADA NO SEU DESENHO) --- */}
+      <div className="flex items-center gap-6 p-4 md:px-8">
+        
+        {/* [VERDE] CHECKBOX PRINCIPAL */}
+        <div className="flex-shrink-0">
+          <button 
+            onClick={() => canManage ? onToggle(task) : alert("Acesso negado.")}  
+            className={`w-12 h-12 rounded-full border-4 flex items-center justify-center transition-all
+              ${task.isDoneToday ? 'bg-green-600 border-green-700 text-white' : 'bg-white border-slate-200 text-transparent hover:border-blue-500'}`}
+          >
+            <Check size={26} strokeWidth={4} />
+          </button>
+        </div>
 
-        {/* CONTEÚDO CENTRAL */}
-<div className="flex-1 min-w-0">
-  {/* ÁREA INTERATIVA DO TÍTULO E NOTAS */}
-  <div 
-    className="inline-block cursor-pointer group/title select-none"
-    onClick={() => onView(task)}
-  >
-    {/* Título com mudança de cor no hover */}
-    <h3 className={`text-2xl font-black leading-tight truncate transition-all duration-200 
-      ${task.isDoneToday 
-        ? 'line-through text-green-900/40' 
-        : 'text-slate-900 group-hover/title:text-blue-600 group-hover/title:translate-x-1'}
-    `}>
-      {task.title}
-    </h3>
-    
-    {/* Notas com mudança de opacidade no hover */}
-    {task.notes && (
-      <p className={`text-[11px] font-bold mt-0.5 line-clamp-1 italic transition-colors
-        ${task.isDoneToday 
-          ? 'text-green-700/30' 
-          : 'text-slate-400 group-hover/title:text-slate-600'}
-      `}>
-        {task.notes}
-      </p>
-    )}
-  </div>
-
-  {/* BOTÃO DE PASSOS (Fora da área de clique do título) */}
-  {subTotal > 0 && (
-    <div className="flex items-center gap-3 mt-3">
-      <div className="flex-1 bg-slate-100 h-2 rounded-full overflow-hidden border border-slate-200">
-        <div className="bg-blue-500 h-full transition-all duration-500" style={{ width: `${(subDone / subTotal) * 100}%` }} />
-      </div>
-      <button 
-        onClick={(e) => {
-          e.stopPropagation(); // Garante que não abra a sidebar ao expandir passos
-          setExpanded(!expanded);
-        }}
-        className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border-2 transition-all font-black text-[10px] uppercase
-          ${expanded ? 'bg-slate-900 border-slate-900 text-white shadow-md' : 'bg-white border-slate-200 text-slate-500 hover:border-blue-500'}`}
-      >
-        {subDone}/{subTotal} PASSOS
-        {expanded ? <ChevronUp size={14}/> : <ChevronDown size={14}/>}
-      </button>
-    </div>
+        {/* BLOCO CENTRAL (TÍTULO + NOTAS + BADGES) */}
+        <div className="flex-1 min-w-0 flex flex-col gap-2">
+          
+          {/* [CINZA] TÍTULO E DESCRIÇÃO */}
+          {/* IDENTIFICAÇÃO (Título e Notas) */}
+<div className="flex-1 min-w-0 cursor-pointer select-none" onClick={() => onView(task)}>
+  <h3 className={`text-lg font-black uppercase tracking-tight truncate transition-colors
+    ${task.isDoneToday ? 'line-through text-green-900/40' : 'text-slate-900 group-hover:text-blue-600'}`}>
+    {task.title}
+  </h3>
+  
+  {task.notes && (
+    /* ADICIONADO: max-w-[300px] ou max-w-md para limitar o tamanho */
+    <p className={`text-[10px] font-bold text-slate-400 italic line-clamp-1 mt-1 max-w-[350px]
+      ${task.isDoneToday ? 'text-green-700/30' : ''}`}>
+      {task.notes}
+    </p>
   )}
 </div>
 
-        <div className="flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-          {canManage && (
-            <>
-              <button onClick={() => onEdit(task)} className="text-slate-300 hover:text-blue-600 p-2"><Edit3 size={24}/></button>
-<button 
-  onClick={(e) => { 
-    e.stopPropagation(); 
-    onDelete(task.id);
-  }} 
-  className="text-slate-200 hover:text-red-600 p-2 transition-all"
->
-  <Trash2 size={24}/>
-</button>
-            </>
+          {/* [AZUL] INFORMAÇÕES (USER, CATEGORIA, DATA) */}
+          <div className="flex items-center gap-2 flex-wrap">
+             <span className="px-3 py-1 rounded-lg bg-[#0F172A] text-white text-[9px] font-black uppercase flex items-center gap-1.5 shadow-sm">
+               <User size={10}/> {profiles.find((p: any) => p.id === task.assigned_to)?.full_name || 'ALOCADO'}
+             </span>
+             <span className="px-3 py-1 rounded-lg bg-blue-50 text-blue-600 border-2 border-blue-100 text-[9px] font-black uppercase">
+               {task.category}
+             </span>
+             <span className={`px-3 py-1 rounded-lg text-[9px] font-black uppercase border-2 shadow-sm
+               ${task.isDoneToday ? 'bg-green-100 border-green-200 text-green-700' : 
+                 isLate ? 'bg-red-600 border-red-600 text-white' : 'bg-white border-slate-200 text-slate-500'}`}>
+               {isLate ? `ATRASADO: ${formatToBR(task.lastOcc)}` : task.nextOcc}
+             </span>
+          </div>
+        </div>
+
+        {/* [AMARELO] SUBTASKS RESUMIDAS + BOTÃO EXPANDIR */}
+        <div className="flex items-center gap-4 flex-shrink-0">
+          {subTotal > 0 && (
+            <div className="flex items-center gap-3 bg-slate-50 px-4 py-2 rounded-2xl border-2 border-slate-100">
+               <div className="w-20 bg-slate-200 h-2 rounded-full overflow-hidden">
+                  <div className="bg-blue-600 h-full transition-all duration-500" style={{ width: `${(subDone / subTotal) * 100}%` }} />
+               </div>
+               <span className="text-[10px] font-black text-slate-500 whitespace-nowrap uppercase">{subDone}/{subTotal}</span>
+               
+               <button onClick={() => setExpanded(!expanded)} className={`p-1 rounded-lg transition-all ${expanded ? 'bg-slate-900 text-white' : 'text-slate-400 hover:bg-slate-200'}`}>
+                  <ChevronDown size={18} className={`transition-transform duration-300 ${expanded ? 'rotate-180' : ''}`} />
+               </button>
+            </div>
           )}
+
+          {/* [FINAL] BOTÕES DE EDIÇÃO E LIXEIRA */}
+          <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity gap-1 border-l-2 pl-4 border-slate-100">
+            {canManage && (
+              <>
+                <button onClick={() => onEdit(task)} className="p-2 text-slate-300 hover:text-blue-600 transition-all"><Edit3 size={22}/></button>
+                <button onClick={() => onDelete(task.id)} className="p-2 text-slate-200 hover:text-red-600 transition-all"><Trash2 size={22}/></button>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
+      {/* ÁREA DO CHECKLIST EXPANSÍVEL (DENTRO DO CARD) */}
       {expanded && subTotal > 0 && (
-        <div className="mt-2 space-y-2 border-t-4 border-slate-100 pt-4 animate-in slide-in-from-top-2">
-          {subtasks.map((sub: any, index: number) => (
-            <div 
-              key={index} 
-              onClick={() => toggleSubtask(index)}
-              className={`flex items-center gap-3 p-4 rounded-2xl border-2 transition-all cursor-pointer
-                ${!canManage ? 'opacity-50 cursor-not-allowed' : 'hover:border-blue-200'}
-                ${sub.done ? 'bg-green-100/50 border-green-200 text-green-700 opacity-70' : 'bg-slate-50 border-slate-100 text-slate-700'}
-              `}
-            >
-              <div className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center
-                ${sub.done ? 'bg-green-500 border-green-500 text-white' : 'bg-white border-slate-300 text-transparent'}`}>
-                <Check size={14} strokeWidth={4} />
+        <div className="px-10 pb-6 space-y-2 animate-in slide-in-from-top-3">
+          <div className="h-[2px] bg-slate-100 mb-4 w-full" />
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {subtasks.map((sub: any, index: number) => (
+              <div key={index} onClick={() => toggleSubtask(index)}
+                className={`flex items-center gap-3 p-3 rounded-2xl border-2 transition-all cursor-pointer
+                  ${sub.done ? 'bg-green-50 border-green-200 text-green-700 opacity-60' : 'bg-slate-50 border-slate-100 text-slate-700 hover:border-blue-300'}`}
+              >
+                <div className={`w-5 h-5 rounded-lg border-2 flex items-center justify-center ${sub.done ? 'bg-green-500 border-green-500 text-white' : 'bg-white border-slate-300'}`}>
+                  {sub.done && <Check size={12} strokeWidth={4} />}
+                </div>
+                <span className={`text-[10px] font-black uppercase ${sub.done ? 'line-through' : ''}`}>{sub.title}</span>
               </div>
-               <span className={`text-xs font-black uppercase ${sub.done ? 'line-through' : ''}`}>{sub.title}</span>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
       )}
-
-      {/* TAGS INFERIORES */}
-<div className="flex flex-wrap gap-2 mt-2 font-black text-[9px] uppercase tracking-widest">
-  {/* Tag do Responsável */}
-  <span className="px-3 py-1.5 rounded-lg flex items-center gap-1.5 bg-[#0F172A] text-white border-2 border-slate-800 shadow-sm">
-    <User size={10}/> {profiles.find((p: any) => p.id === task.assigned_to)?.full_name || 'Alocado'}
-  </span>
-
-  {/* NOVA TAG: Classificação / Categoria */}
-  <span className="px-3 py-1.5 rounded-lg flex items-center gap-1.5 border-2 border-blue-100 bg-blue-50 text-blue-600 shadow-sm">
-    <Activity size={10}/> {task.category}
-  </span>
-
-  {/* Substitua a parte das Tags de Data no TaskItem por esta: */}
-{task.isDoneToday ? (
-  <span className="px-3 py-1.5 rounded-lg flex items-center gap-1.5 border-2 border-green-200 bg-green-100 text-green-700 shadow-sm">
-    <Check size={10}/> CONCLUÍDO
-  </span>
-) : (task.lastOcc !== '1970-01-01' && task.lastOcc < getTodayStr()) ? (
-  <span className="px-3 py-1.5 rounded-lg flex items-center gap-1.5 border-2 border-red-600 bg-red-600 text-white animate-pulse shadow-sm">
-    <AlertCircle size={10}/> ATRASADO: {formatToBR(task.lastOcc)}
-  </span>
-) : (
-  <span className="px-3 py-1.5 rounded-lg flex items-center gap-1.5 border-2 border-slate-200 bg-white text-slate-600 shadow-sm">
-    <Calendar size={10}/> PRÓXIMA: {task.nextOcc}
-  </span>
-)}
-</div>
     </div>
   );
 });
