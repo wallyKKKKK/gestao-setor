@@ -691,51 +691,33 @@ const deleteTask = useCallback(async (taskId: string) => {
   />
 </button>
 
-        {showUserMenu && (
+        {/* MENU SUSPENSO DOS USUÁRIOS (COM FILTRO DE SETOR) */}
+{showUserMenu && (
   <>
-    {/* Backdrop para fechar ao clicar fora */}
     <div className="fixed inset-0 z-10" onClick={() => setShowUserMenu(false)}></div>
-    
-    {/* CONTAINER DO MENU DROPDOWN */}
-    <div className="absolute left-0 mt-3 w-72 bg-white border-2 border-slate-100 rounded-[32px] shadow-[7px_7px_0px_0px_rgba(15,23,42,1)] z-20 p-5 animate-in zoom-in-95 duration-200">
-      <p className="text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4 ml-2 italic">Selecionar Responsável:</p>
-
-      <div className="flex flex-col gap-3">
-        {/* BOTÃO: EQUIPE TOTAL */}
+    <div className="absolute left-0 mt-3 w-64 bg-white border-4 border-slate-900 rounded-[32px] shadow-[15px_15px_0px_0px_rgba(15,23,42,1)] z-20 p-4">
+      <div className="flex flex-col gap-2">
         <button 
           type="button"
           onClick={() => { setFilterUser('Todos'); setShowUserMenu(false); }}
-          className={`
-            p-3.5 text-left font-black text-[10px] uppercase rounded-xl transition-all border-2 flex items-center gap-3
-            active:translate-x-[2px] active:translate-y-[2px] active:shadow-none
-            
-            ${filterUser === 'Todos' 
-              ? 'bg-slate-900 border-slate-900 text-white shadow-[4px_4px_0px_0px_rgba(15,23,42,1)]' 
-              : 'bg-white border-slate-100 text-slate-600 hover:bg-slate-50 hover:border-slate-900 hover:shadow-[4px_4px_0px_0px_rgba(15,23,42,1)]'}
-          `}
+          className={`p-3 text-left font-black text-[10px] uppercase rounded-xl transition-all ${filterUser === 'Todos' ? 'bg-slate-900 text-white' : 'hover:bg-slate-100 text-slate-600'}`}
         >
-          <span className="text-sm">🌍</span> Equipe Total
+          🌍 Equipe Total {userRole === 'admin' ? '' : `(${userSector})`}
         </button>
+        
+        <div className="h-[1px] bg-slate-100 my-1"></div>
 
-        <div className="h-[2px] bg-slate-100 my-1 mx-2"></div>
-
-        {/* LISTA DE PERFIS */}
-        {profiles.map(p => (
+        {/* --- FILTRAGEM AQUI --- */}
+        {profiles
+          .filter(p => userRole === 'admin' || p.sector === userSector) // Regra: Admin vê tudo, outros só o próprio setor
+          .map(p => (
           <button 
             key={p.id} 
             type="button"
             onClick={() => { setFilterUser(p.id); setShowUserMenu(false); }}
-            className={`
-              p-3 text-left font-black text-[10px] uppercase flex items-center gap-3 rounded-xl transition-all border-2
-              active:translate-x-[2px] active:translate-y-[2px] active:shadow-none
-              
-              ${filterUser === p.id 
-                ? 'bg-blue-600 border-blue-600 text-white shadow-[4px_4px_0px_0px_rgba(37,99,235,1)]' 
-                : 'bg-white border-slate-100 text-slate-600 hover:bg-blue-50 hover:border-blue-600 hover:shadow-[4px_4px_0px_0px_rgba(37,99,235,1)]'}
-            `}
+            className={`p-3 text-left font-black text-[10px] uppercase flex items-center gap-3 rounded-xl transition-all ${filterUser === p.id ? 'bg-blue-600 text-white' : 'hover:bg-blue-50 text-slate-600'}`}
           >
-            <div className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center text-[8px] font-black transition-all
-              ${filterUser === p.id ? 'bg-white/20 border-white/30' : 'bg-blue-100 border-blue-200 text-blue-600'}`}>
+            <div className={`w-5 h-5 rounded bg-blue-100 text-blue-600 flex items-center justify-center text-[8px] font-bold ${filterUser === p.id ? 'bg-white/20' : ''}`}>
               {p.full_name?.charAt(0)}
             </div>
             {p.full_name}
