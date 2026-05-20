@@ -775,21 +775,57 @@ const deleteTask = useCallback(async (taskId: string) => {
         </div>
     </div>
   ) : activeTab === 'HISTÓRICO' ? (
-    <div className="mt-8 space-y-6 animate-in slide-in-from-bottom-4 duration-500">
-        <h2 className="text-3xl font-black uppercase italic tracking-tighter">Linha do Tempo</h2>
-        <div className="relative border-l-4 border-slate-200 ml-4 pl-8 space-y-8 py-4">
-        {history.map((log) => (
-          <div key={log.id} className="relative">
-            <div className="absolute -left-[42px] top-0 w-5 h-5 bg-blue-600 rounded-full border-4 border-white shadow-md"></div>
-            <div className="bg-white p-6 rounded-[32px] border border-slate-200 shadow-sm">
-              <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-2">{new Date(log.created_at).toLocaleString('pt-BR')}</p>
-              <h4 className="text-xl font-black text-slate-900 mb-2">{log.task_title}</h4>
-              <p className="text-[10px] font-black text-blue-600 uppercase">Concluído por {log.user_name}</p>
-            </div>
-          </div>
-        ))}
+  <div className="mt-8 space-y-6 animate-in slide-in-from-bottom-4 duration-500 pb-20">
+    <div className="flex justify-between items-center px-4">
+      <h2 className="text-3xl font-black uppercase italic tracking-tighter">Linha do Tempo</h2>
+      <div className="bg-blue-600 text-white px-4 py-1.5 rounded-full font-black text-[10px] uppercase shadow-md">
+        Setor: {userRole === 'admin' ? 'Global' : userSector}
       </div>
     </div>
+
+    <div className="relative border-l-4 border-slate-200 ml-6 pl-8 space-y-8 py-4">
+      {history
+        /* FILTRO DE SETOR NO FRONT-END */
+        .filter(log => userRole === 'admin' || log.sector === userSector || log.sector === 'Geral')
+        .map((log) => (
+          <div key={log.id} className="relative">
+            {/* Círculo da Timeline */}
+            <div className="absolute -left-[42px] top-1 w-5 h-5 bg-blue-600 rounded-full border-4 border-white shadow-md"></div>
+            
+            <div className="bg-white p-6 rounded-[32px] border-2 border-slate-100 shadow-sm hover:border-blue-300 transition-colors">
+              <div className="flex justify-between items-start mb-2">
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">
+                  {new Date(log.created_at).toLocaleString('pt-BR')}
+                </p>
+                <span className="text-[8px] font-black bg-slate-100 text-slate-500 px-2 py-0.5 rounded uppercase">
+                  {log.sector}
+                </span>
+              </div>
+              
+              <h4 className="text-xl font-black text-slate-900 mb-2 uppercase">
+                {log.task_title}
+              </h4>
+              
+              <div className="flex items-center gap-2">
+                <div className="w-5 h-5 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center text-[8px] font-bold">
+                  {log.user_name?.charAt(0)}
+                </div>
+                <p className="text-[10px] font-black text-blue-600 uppercase">
+                  Concluído por {log.user_name}
+                </p>
+              </div>
+            </div>
+          </div>
+      ))}
+
+      {/* Mensagem caso o histórico esteja vazio para o setor */}
+      {history.filter(log => userRole === 'admin' || log.sector === userSector).length === 0 && (
+        <div className="text-center py-20 opacity-30">
+          <p className="font-black uppercase tracking-widest text-slate-400">Nenhum registro neste setor...</p>
+        </div>
+      )}
+    </div>
+  </div>
   ) : activeTab === 'COMUNICADOS' ? (
   <div className="mt-8 space-y-8 animate-in fade-in duration-500 pb-20">
     <div className="flex justify-between items-center px-4">
@@ -1283,6 +1319,116 @@ const deleteTask = useCallback(async (taskId: string) => {
     </div>
   </div>
 )}
+{/* 3. PAINEL LATERAL INTEGRADO (DRAWER STYLE) */}
+<div 
+  className={`fixed inset-0 z-[100] transition-all duration-500 ${viewingTask ? 'visible' : 'invisible pointer-events-none'}`}
+>
+  {/* Camada de fundo quase transparente para manter o contexto total da lista */}
+  <div 
+    className={`absolute inset-0 bg-slate-900/10 transition-opacity duration-500 ${viewingTask ? 'opacity-100' : 'opacity-0'}`} 
+    onClick={() => setViewingTask(null)}
+  />
+
+  {/* GAVETA (SIDEBAR) - Encostada na borda com sombra suave lateral */}
+  <div 
+    className={`absolute top-0 right-0 h-full bg-white w-full md:w-[420px] border-l-2 border-slate-200 shadow-[-10px_0_30px_rgba(0,0,0,0.05)] flex flex-col transition-transform duration-500 ease-in-out transform z-[110]
+      ${viewingTask ? 'translate-x-0' : 'translate-x-full'}`}
+  >
+    {viewingTask && (
+      <div className="flex flex-col h-full overflow-hidden bg-[#F8FAFC]">
+        
+        {/* CABEÇALHO: Mesma cor da Navbar para dar continuidade */}
+        <div className={`p-8 border-b-2 border-white/10 ${viewingTask.isDoneToday ? 'bg-green-600' : 'bg-[#232D4A]'} text-white relative`}>
+          <div className="flex justify-between items-center mb-6">
+            <span className="bg-white/10 px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest border border-white/10">
+              {viewingTask.category}
+            </span>
+            <button 
+              onClick={(e) => { e.stopPropagation(); setViewingTask(null); }} 
+              className="w-10 h-10 flex items-center justify-center rounded-xl bg-white/5 hover:bg-white/20 text-white transition-all"
+            >
+              <X size={24} strokeWidth={3}/>
+            </button>
+          </div>
+          <h2 className="text-2xl font-black uppercase italic tracking-tighter leading-tight break-words">
+            {viewingTask.title}
+          </h2>
+        </div>
+
+        {/* ÁREA DE CONTEÚDO: fundo levemente diferente para destacar os cards internos */}
+        <div className="flex-1 overflow-y-auto p-6 space-y-6 no-scrollbar">
+          
+          {/* CARDS DE INFO RÁPIDA */}
+          <div className="grid grid-cols-2 gap-3">
+             <div className="p-4 bg-white border border-slate-200 rounded-2xl shadow-sm">
+                <p className="text-[8px] font-black text-slate-400 uppercase mb-1">Responsável</p>
+                <div className="flex items-center gap-2">
+                   <div className="w-6 h-6 bg-slate-900 text-white rounded-md flex items-center justify-center text-[10px] font-black uppercase">
+                     {profiles.find(p => p.id === viewingTask.assigned_to)?.full_name?.charAt(0)}
+                   </div>
+                   <span className="font-bold text-[11px] text-slate-900 uppercase truncate">
+                     {profiles.find(p => p.id === viewingTask.assigned_to)?.full_name}
+                   </span>
+                </div>
+             </div>
+             <div className="p-4 bg-white border border-slate-200 rounded-2xl shadow-sm">
+                <p className="text-[8px] font-black text-slate-400 uppercase mb-1">Setor</p>
+                <div className="flex items-center gap-2">
+                   <div className="w-2 h-2 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.5)]" />
+                   <span className="font-bold text-[11px] text-slate-900 uppercase">
+                     {viewingTask.sector}
+                   </span>
+                </div>
+             </div>
+          </div>
+
+          {/* DESCRIÇÃO - Agora com visual de Bloco de Notas */}
+          <div className="space-y-2">
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2 flex items-center gap-2">
+              <FileText size={12}/> Instruções da Missão
+            </label>
+            <div className="bg-white p-6 rounded-2xl border border-slate-200 text-slate-700 font-medium leading-relaxed whitespace-pre-wrap text-sm break-all shadow-sm">
+              {viewingTask.notes || "Sem notas adicionais."}
+            </div>
+          </div>
+
+          {/* CHECKLIST: Visual limpo e conectado */}
+          {viewingTask.subtasks?.length > 0 && (
+            <div className="space-y-3">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2 text-center block">Checklist de Execução</label>
+              <div className="bg-white rounded-2xl border border-slate-200 divide-y divide-slate-100 overflow-hidden shadow-sm">
+                {viewingTask.subtasks.map((sub: any, i: number) => (
+                  <div key={i} className="flex items-center gap-4 p-4 transition-all">
+                    {sub.done ? <CheckCircle2 size={18} className="text-green-500" /> : <div className="w-4 h-4 rounded-full border-2 border-slate-200" />}
+                    <span className={`text-[10px] font-black uppercase ${sub.done ? 'line-through text-slate-300' : 'text-slate-600'}`}>{sub.title}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* RODAPÉ: Integrado e fixo */}
+        <div className="p-6 bg-white border-t border-slate-200 flex gap-3">
+           {(userRole === 'admin' || userRole === 'gerente' || viewingTask.assigned_to === user.id) && (
+              <button 
+                onClick={() => { setEditingTask(viewingTask); setShowEditModal(true); setViewingTask(null); }} 
+                className="flex-[2] bg-[#232D4A] text-white p-4 rounded-xl font-black uppercase tracking-widest hover:bg-blue-600 transition-all flex items-center justify-center gap-2 text-[11px] shadow-md"
+              >
+                <Edit3 size={16} /> Editar
+              </button>
+           )}
+           <button 
+             onClick={() => setViewingTask(null)}
+             className="flex-1 py-4 rounded-xl border border-slate-200 font-black uppercase text-[10px] text-slate-400 hover:bg-slate-50 transition-all"
+           >
+             Sair
+           </button>
+        </div>
+      </div>
+    )}
+  </div>
+</div>
 
       {/* 4. MODAL DE CONFIGURAÇÕES (FORA DA SIDEBAR) */}
       {showSettingsModal && (
@@ -1357,7 +1503,6 @@ const TaskItem = memo(({ task, profiles, onUpdate, onEdit, userRole, currentUser
   const subTotal = subtasks.length;
   const isLate = task.lastOcc < getTodayStr() && !task.isDoneToday && task.lastOcc !== '1970-01-01';
 
-  // Função interna de subtarefas
   const toggleSubtask = async (index: number) => {
     if (!canManage) return alert("Acesso negado.");
     const newSubtasks = [...subtasks];
@@ -1370,9 +1515,10 @@ const TaskItem = memo(({ task, profiles, onUpdate, onEdit, userRole, currentUser
       await supabase.from('task_history').insert([{
         task_id: task.id, task_title: task.title,
         user_name: profile?.full_name || currentUser?.email || 'Usuário',
-        user_id: currentUser?.id, category: task.category
+        user_id: currentUser?.id, category: task.category, sector: task.sector
       }]);
     }
+
     await supabase.from('tasks').update({
       subtasks: newSubtasks,
       last_done_date: allDone ? todayStr : null,
@@ -1382,16 +1528,15 @@ const TaskItem = memo(({ task, profiles, onUpdate, onEdit, userRole, currentUser
   };
 
   return (
-    <div className={`relative flex flex-col transition-all duration-200 border-[3px] rounded-[22px] mb-2 group
-      ${task.isDoneToday ? 'bg-green-50 border-green-600 opacity-90' : 
-        isLate ? 'bg-red-50 border-red-600 shadow-[6px_6px_0px_0px_rgba(185,28,28,1)]' : 
-        'bg-white border-slate-900 shadow-[6px_6px_0px_0px_rgba(15,23,42,1)] hover:-translate-y-1'
+    <div className={`relative flex flex-col transition-all duration-200 border-[3px] rounded-[24px] mb-2 group
+      ${task.isDoneToday ? 'bg-green-400 border-green-200 opacity-80' : 
+        isLate ? 'bg-red-400 border-red-200 shadow-[4px_4px_0px_0px_rgba(220,38,38,1)]' : 
+        'bg-white border-slate-100 hover:border-slate-900 hover:shadow-[6px_6px_0px_0px_rgba(15,23,42,1)]'
       }`}
     >
-      {/* --- LINHA PRINCIPAL (BASEADA NO SEU DESENHO) --- */}
       <div className="flex items-center gap-6 p-4 md:px-8">
         
-        {/* [VERDE] CHECKBOX PRINCIPAL */}
+        {/* CHECKBOX (VERDE) */}
         <div className="flex-shrink-0">
           <button 
             onClick={() => canManage ? onToggle(task) : alert("Acesso negado.")}  
@@ -1402,83 +1547,86 @@ const TaskItem = memo(({ task, profiles, onUpdate, onEdit, userRole, currentUser
           </button>
         </div>
 
-        {/* BLOCO CENTRAL (TÍTULO + NOTAS + BADGES) */}
-        <div className="flex-1 min-w-0 flex flex-col gap-2">
-          
-          {/* [CINZA] TÍTULO E DESCRIÇÃO */}
-          {/* IDENTIFICAÇÃO (Título e Notas) */}
-<div className="flex-1 min-w-0 cursor-pointer select-none" onClick={() => onView(task)}>
-  <h3 className={`text-lg font-black uppercase tracking-tight truncate transition-colors
-    ${task.isDoneToday ? 'line-through text-green-900/40' : 'text-slate-900 group-hover:text-blue-600'}`}>
-    {task.title}
-  </h3>
-  
-  {task.notes && (
-    /* ADICIONADO: max-w-[300px] ou max-w-md para limitar o tamanho */
-    <p className={`text-[10px] font-bold text-slate-400 italic line-clamp-1 mt-1 max-w-[350px]
-      ${task.isDoneToday ? 'text-green-700/30' : ''}`}>
-      {task.notes}
-    </p>
-  )}
-</div>
+        {/* INFO CENTRAL (TÍTULO + DESC + BADGES) */}
+        <div className="flex-1 min-w-0 flex flex-col justify-center">
+          <div className="cursor-pointer select-none group/title" onClick={() => onView(task)}>
+            <h3 className={`text-lg font-black uppercase tracking-tight leading-none transition-colors
+              ${task.isDoneToday ? 'line-through text-green-900/40' : 'text-slate-900 group-hover:text-blue-600'}`}>
+              {task.title}
+            </h3>
+            {task.notes && (
+              <p className={`text-[10px] font-bold text-slate-400 italic line-clamp-1 mt-1 max-w-[400px]
+                ${task.isDoneToday ? 'text-green-700/30' : ''}`}>
+                {task.notes}
+              </p>
+            )}
+          </div>
 
-          {/* [AZUL] INFORMAÇÕES (USER, CATEGORIA, DATA) */}
-          <div className="flex items-center gap-2 flex-wrap">
-             <span className="px-3 py-1 rounded-lg bg-[#0F172A] text-white text-[9px] font-black uppercase flex items-center gap-1.5 shadow-sm">
-               <User size={10}/> {profiles.find((p: any) => p.id === task.assigned_to)?.full_name || 'ALOCADO'}
+          <div className="flex items-center gap-2 mt-2">
+             <span className="px-2.5 py-1 rounded-lg bg-[#232D4A] text-white text-[8px] font-black uppercase flex items-center gap-1.5 shadow-sm">
+               <User size={10}/> {profiles.find((p: any) => p.id === task.assigned_to)?.full_name?.split(' ')[0]}
              </span>
-             <span className="px-3 py-1 rounded-lg bg-blue-50 text-blue-600 border-2 border-blue-100 text-[9px] font-black uppercase">
+             <span className="px-2.5 py-1 rounded-lg bg-blue-50 text-blue-600 border border-blue-100 text-[8px] font-black uppercase shadow-sm">
                {task.category}
              </span>
-             <span className={`px-3 py-1 rounded-lg text-[9px] font-black uppercase border-2 shadow-sm
+             <span className={`px-2.5 py-1 rounded-lg text-[8px] font-black uppercase border shadow-sm
                ${task.isDoneToday ? 'bg-green-100 border-green-200 text-green-700' : 
-                 isLate ? 'bg-red-600 border-red-600 text-white' : 'bg-white border-slate-200 text-slate-500'}`}>
-               {isLate ? `ATRASADO: ${formatToBR(task.lastOcc)}` : task.nextOcc}
+                 isLate ? 'bg-red-600 border-red-700 text-white animate-pulse' : 'bg-slate-50 border-slate-200 text-slate-500'}`}>
+               {isLate ? `DESDE ${formatToBR(task.lastOcc)}` : `PRÓXIMA: ${task.nextOcc}`}
              </span>
           </div>
         </div>
 
-        {/* [AMARELO] SUBTASKS RESUMIDAS + BOTÃO EXPANDIR */}
-        <div className="flex items-center gap-4 flex-shrink-0">
+        {/* PROGRESSO DE SUBTAREFAS */}
+        <div className="flex-shrink-0 flex items-center gap-3">
           {subTotal > 0 && (
-            <div className="flex items-center gap-3 bg-slate-50 px-4 py-2 rounded-2xl border-2 border-slate-100">
-               <div className="w-20 bg-slate-200 h-2 rounded-full overflow-hidden">
-                  <div className="bg-blue-600 h-full transition-all duration-500" style={{ width: `${(subDone / subTotal) * 100}%` }} />
-               </div>
-               <span className="text-[10px] font-black text-slate-500 whitespace-nowrap uppercase">{subDone}/{subTotal}</span>
-               
-               <button onClick={() => setExpanded(!expanded)} className={`p-1 rounded-lg transition-all ${expanded ? 'bg-slate-900 text-white' : 'text-slate-400 hover:bg-slate-200'}`}>
-                  <ChevronDown size={18} className={`transition-transform duration-300 ${expanded ? 'rotate-180' : ''}`} />
-               </button>
+            <div 
+              className={`flex items-center gap-3 px-4 py-2 rounded-2xl border-2 transition-all cursor-pointer
+                ${expanded ? 'bg-[#232D4A] border-slate-900 text-white shadow-md' : 'bg-slate-50 border-slate-100 text-slate-500 hover:border-blue-400 hover:text-blue-600'}`}
+              onClick={() => setExpanded(!expanded)}
+            >
+              <div className="flex items-center gap-2">
+                <div className={`w-16 h-1.5 rounded-full overflow-hidden ${expanded ? 'bg-white/20' : 'bg-slate-200'}`}>
+                   <div className={`${expanded ? 'bg-blue-400' : 'bg-blue-600'} h-full transition-all duration-500`} style={{ width: `${(subDone / subTotal) * 100}%` }} />
+                </div>
+                <span className="text-[10px] font-black whitespace-nowrap">{subDone}/{subTotal}</span>
+              </div>
+              <ChevronDown size={18} className={`transition-transform duration-300 ${expanded ? 'rotate-180' : ''}`} />
             </div>
           )}
+        </div>
 
-          {/* [FINAL] BOTÕES DE EDIÇÃO E LIXEIRA */}
-          <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity gap-1 border-l-2 pl-4 border-slate-100">
-            {canManage && (
-              <>
-                <button onClick={() => onEdit(task)} className="p-2 text-slate-300 hover:text-blue-600 transition-all"><Edit3 size={22}/></button>
-                <button onClick={() => onDelete(task.id)} className="p-2 text-slate-200 hover:text-red-600 transition-all"><Trash2 size={22}/></button>
-              </>
-            )}
-          </div>
+        {/* BOTÕES DE AÇÃO (FINAL) */}
+        <div className="flex items-center gap-1 border-l-2 pl-4 border-slate-100 opacity-0 group-hover:opacity-100 transition-opacity">
+          {canManage && (
+            <>
+              <button onClick={(e) => { e.stopPropagation(); onEdit(task); }} className="p-2 text-slate-300 hover:text-blue-600 transition-all">
+                <Edit3 size={20}/>
+              </button>
+              <button onClick={(e) => { e.stopPropagation(); onDelete(task.id); }} className="p-2 text-slate-200 hover:text-red-600 transition-all">
+                <Trash2 size={20}/>
+              </button>
+            </>
+          )}
         </div>
       </div>
 
-      {/* ÁREA DO CHECKLIST EXPANSÍVEL (DENTRO DO CARD) */}
+      {/* ÁREA EXPANSÍVEL (DENTRO DO CARD) */}
       {expanded && subTotal > 0 && (
-        <div className="px-10 pb-6 space-y-2 animate-in slide-in-from-top-3">
+        <div className="px-10 pb-6 space-y-2 animate-in slide-in-from-top-3 duration-300">
           <div className="h-[2px] bg-slate-100 mb-4 w-full" />
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             {subtasks.map((sub: any, index: number) => (
               <div key={index} onClick={() => toggleSubtask(index)}
                 className={`flex items-center gap-3 p-3 rounded-2xl border-2 transition-all cursor-pointer
-                  ${sub.done ? 'bg-green-50 border-green-200 text-green-700 opacity-60' : 'bg-slate-50 border-slate-100 text-slate-700 hover:border-blue-300'}`}
+                  ${sub.done ? 'bg-green-50/50 border-green-200 text-green-700 opacity-60' : 'bg-slate-50 border-slate-100 text-slate-700 hover:border-blue-400'}
+                `}
               >
-                <div className={`w-5 h-5 rounded-lg border-2 flex items-center justify-center ${sub.done ? 'bg-green-500 border-green-500 text-white' : 'bg-white border-slate-300'}`}>
+                <div className={`w-5 h-5 rounded-lg border-2 flex items-center justify-center transition-all
+                  ${sub.done ? 'bg-green-500 border-green-500 text-white' : 'bg-white border-slate-300'}`}>
                   {sub.done && <Check size={12} strokeWidth={4} />}
                 </div>
-                <span className={`text-[10px] font-black uppercase ${sub.done ? 'line-through' : ''}`}>{sub.title}</span>
+                <span className={`text-[10px] font-black uppercase ${sub.done ? 'line-through opacity-50' : ''}`}>{sub.title}</span>
               </div>
             ))}
           </div>
@@ -1495,33 +1643,73 @@ function DashboardCard({ label, val, color }: any) {
 }
 
 function Login() {
-  const [email, setEmail] = useState(''); const [password, setPassword] = useState(''); const [isSignUp, setIsSignUp] = useState(false)
+  const [identifier, setIdentifier] = useState(''); // Mudamos de 'email' para 'identifier'
+  const [password, setPassword] = useState('');
+  const [isSignUp, setIsSignUp] = useState(false);
+
   const processAuth = async () => {
-    const { error } = isSignUp ? await supabase.auth.signUp({ email, password, options: { data: { full_name: email.split('@')[0] } } }) : await supabase.auth.signInWithPassword({ email, password })
-    if (error) alert(error.message); else window.location.reload()
-  }
+    let finalEmail = identifier;
+
+    // --- LÓGICA DO USUÁRIO MESTRE ---
+    // Se o usuário digitar 'ADMIN' (ou qualquer nome que você definir), 
+    // o sistema converte para o e-mail secreto por baixo dos panos.
+    if (identifier.toUpperCase() === 'ADMIN') {
+      finalEmail = 'admin@wally.system'; // O e-mail que você criou no passo 1
+    }
+
+    const { error } = isSignUp 
+      ? await supabase.auth.signUp({ email: finalEmail, password, options: { data: { full_name: identifier } } }) 
+      : await supabase.auth.signInWithPassword({ email: finalEmail, password });
+    
+    if (error) alert("Acesso Negado: Credenciais Inválidas"); 
+    else window.location.reload();
+  };
+
   return (
     <div className="min-h-screen bg-[#0F172A] flex items-center justify-center p-4 text-center font-sans">
       <div className="bg-white p-12 rounded-[60px] w-full max-w-sm border-b-[24px] border-blue-600 shadow-2xl">
-        {/* SUBSTITUA O BLOCO DO ÍCONE POR ESTE: */}
+        
         <div className="mb-8 flex justify-center">
-          <img 
-            src="/icon.png" 
-            alt="Wally Logo" 
-            className="w-20 h-20 rounded-[24px] shadow-[0_0_30px_rgba(37,99,235,0.3)] rotate-3 hover:rotate-0 transition-transform duration-500" 
-          />
+          <img src="/icon.png" alt="Logo" className="w-20 h-20 rounded-[24px] shadow-lg bg-blue-600 p-1" />
         </div>
-        <h1 className="text-6xl font-black italic uppercase tracking-tighter text-slate-900 leading-none">
+
+        <h1 className="text-5xl font-black italic uppercase tracking-tighter text-slate-900 leading-none">
           WALLY<br/>
-          <span className="text-blue-600 text-3xl not-italic tracking-[0.2em] font-medium opacity-80 uppercase">Task Builder</span>
+          <span className="text-blue-600 text-2xl tracking-[0.2em] font-medium opacity-80 uppercase not-italic">Acesso Restrito</span>
         </h1>
+
         <div className="space-y-4 mt-12">
-          <input className="w-full p-6 bg-slate-50 border-4 border-slate-100 rounded-[28px] font-black text-slate-900 outline-none focus:border-blue-500 transition-all placeholder-slate-300" placeholder="E-MAIL" onChange={e => setEmail(e.target.value)} />
-          <input className="w-full p-6 bg-slate-50 border-4 border-slate-100 rounded-[28px] font-black text-slate-900 outline-none focus:border-blue-500 transition-all" type="password" placeholder="SENHA" onChange={e => setPassword(e.target.value)} />
-          <button onClick={processAuth} className="w-full bg-[#0F172A] text-white p-6 rounded-[28px] font-black uppercase text-xl hover:bg-blue-600 transition-all shadow-xl mt-4">Acessar Centro</button>
-          <button onClick={() => setIsSignUp(!isSignUp)} className="w-full text-[10px] font-black text-slate-400 uppercase tracking-widest text-center mt-6">{isSignUp ? 'Já sou da equipe' : 'Solicitar conta'}</button>
+          {/* O campo agora aceita NOME ou EMAIL */}
+          <input 
+            className="w-full p-6 bg-slate-50 border-4 border-slate-100 rounded-[28px] font-black text-slate-900 outline-none focus:border-blue-500 transition-all placeholder:text-slate-300 uppercase" 
+            placeholder="USUÁRIO OU E-MAIL" 
+            value={identifier}
+            onChange={e => setIdentifier(e.target.value)} 
+          />
+          <input 
+            className="w-full p-6 bg-slate-50 border-4 border-slate-100 rounded-[28px] font-black text-slate-900 outline-none focus:border-blue-500 transition-all placeholder:text-slate-300" 
+            type="password" 
+            placeholder="SENHA" 
+            value={password}
+            onChange={e => setPassword(e.target.value)} 
+          />
+          
+          <button 
+            onClick={processAuth} 
+            className="w-full bg-[#0F172A] text-white p-6 rounded-[28px] font-black uppercase text-xl hover:bg-blue-600 transition-all shadow-xl mt-4"
+          >
+            Entrar no Sistema
+          </button>
+
+          {/* Escondemos o botão de "Criar conta" para o Admin Master não ser descoberto facilmente */}
+          <button 
+            onClick={() => setIsSignUp(!isSignUp)} 
+            className="w-full text-[8px] font-black text-slate-200 uppercase tracking-widest text-center mt-6 hover:text-slate-400 transition-colors"
+          >
+            {isSignUp ? 'Voltar para Login' : 'Solicitar novo acesso à TI'}
+          </button>
         </div>
       </div>
     </div>
-  )
+  );
 }
