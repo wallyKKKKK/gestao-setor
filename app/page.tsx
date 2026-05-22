@@ -1,3 +1,4 @@
+
 'use client'
 import { useEffect, useState, useMemo, memo, useCallback, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
@@ -150,7 +151,6 @@ export default function App() {
   { id: 'Minhas', label: 'Minhas', icon: User },
   { id: 'Todas', label: 'Todas', icon: ListChecks },
   { id: 'Trade', label: 'Trade', icon: TrendingUp },
-  { id: 'Reunião', label: 'Reunião', icon: Users },
   { id: 'HISTÓRICO', label: 'Histórico', icon: History },
   { id: 'DASHBOARD', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'COMUNICADOS', label: 'Alertas', icon: Megaphone },
@@ -184,6 +184,19 @@ export default function App() {
   const [showCategoryMenu, setShowCategoryMenu] = useState(false);
   const [annImage, setAnnImage] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [currentView, setCurrentView] = useState('TAREFAS');
+  const [showMeetingModal, setShowMeetingModal] = useState(false);
+  const [meetings, setMeetings] = useState<any[]>([]);
+  const [mtTitle, setMtTitle] = useState('');
+  const [mtDescription, setMtContent] = useState('');
+  const [mtDate, setMtDate] = useState('');
+  const [mtTime, setMtTime] = useState('09:00');
+  const [mtFile, setMtFile] = useState<File | null>(null);
+  const [mtUploading, setMtUploading] = useState(false);
+  const [viewingMeeting, setViewingMeeting] = useState<any>(null);
+  const now = new Date();
+  const [calendarMonth, setCalendarMonth] = useState(now.getMonth()); // 0 a 11
+  const [calendarYear, setCalendarYear] = useState(now.getFullYear());
 
   // TRAVA DE SCROLL: Impede a rolagem do fundo quando modais estão abertos
 useEffect(() => {
@@ -223,6 +236,28 @@ useEffect(() => {
     };
   });
 }, [tasks]);
+const nextMonth = () => {
+  if (calendarMonth === 11) {
+    setCalendarMonth(0);
+    setCalendarYear(calendarYear + 1);
+  } else {
+    setCalendarMonth(calendarMonth + 1);
+  }
+};
+
+const prevMonth = () => {
+  if (calendarMonth === 0) {
+    setCalendarMonth(11);
+    setCalendarYear(calendarYear - 1);
+  } else {
+    setCalendarMonth(calendarMonth - 1);
+  }
+};
+
+const goToToday = () => {
+  setCalendarMonth(now.getMonth());
+  setCalendarYear(now.getFullYear());
+};
 
 // Função de Logout Centralizada
 const handleLogout = async () => {
@@ -249,15 +284,11 @@ supabase.from('profiles').select('role, full_name, sector').eq('id', session.use
       setUserSector(data.sector || 'Geral'); // <--- ADICIONE ESTA LINHA
     }
   });
-      
       fetchProfiles(); 
       fetchTasks(); 
       fetchHistory();
+      fetchMeetings(); 
       if (typeof fetchAnnouncements === 'function') fetchAnnouncements();
-
-      // --- CONFIGURAÇÃO CORRETA DO REALTIME ---
-      // 1. Criamos o canal
-      // 2. Adicionamos o evento .on ANTES do .subscribe
       channel = supabase
         .channel('db-realtime-tasks') // Nome único para o canal
         .on(
@@ -268,6 +299,7 @@ supabase.from('profiles').select('role, full_name, sector').eq('id', session.use
             fetchTasks(); 
           }
         )
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'meetings' }, fetchMeetings)
         .subscribe((status) => {
           console.log("Status da conexão realtime:", status);
         });
@@ -287,6 +319,19 @@ supabase.from('profiles').select('role, full_name, sector').eq('id', session.use
   const fetchHistory = async () => { const { data } = await supabase.from('task_history').select('*').order('created_at', { ascending: false }).limit(50); if (data) setHistory(data); }
   const fetchAnnouncements = async () => { const { data } = await supabase.from('announcements').select('*, profiles(full_name)').order('created_at', { ascending: false }); if (data) setAnnouncements(data); }
 
+  // 1. Definição da função (Cole logo após os outros fetches)
+const fetchMeetings = useCallback(async () => {
+  const { data, error } = await supabase
+    .from('meetings')
+    .select('*, profiles(full_name)')
+    .order('meeting_time', { ascending: true });
+    
+  if (!error && data) {
+    setMeetings(data);
+  } else if (error) {
+    console.error("Erro ao carregar reuniões:", error.message);
+  }
+}, []);
   async function changeRole(profileId: string, newRole: string) {
   // 1. Faz a atualização no Supabase
   const { error } = await supabase
@@ -514,6 +559,20 @@ const deleteTask = useCallback(async (taskId: string) => {
     alert("Tarefa atualizada com sucesso!");
   }
 }
+const addMeeting = async () => {
+  if (!mtTitle || !mtDate || !mtTime) return alert("Preencha Título, Data e Hora!");
+  setMtUploading(true);
+  try {
+    // ... seu código de upload e insert ...
+    alert("Reunião agendada!");
+    setShowMeetingModal(false);
+    fetchMeetings();
+  } catch (err) {
+    alert("Erro!");
+  } finally {
+    setMtUploading(false);
+  }
+}; // <--- Certifique-se de que tem esse ;
 
   const filteredTasks = useMemo(() => {
   return processedTasks.filter(task => {
@@ -581,618 +640,328 @@ const deleteTask = useCallback(async (taskId: string) => {
   if (!user) return <Login />
 
   return (
-    <div className="min-h-screen bg-[#E8EEF7] text-slate-900 pb-20 font-sans overflow-x-hidden w-full">
-      <nav className="bg-[#232D4A] text-white sticky top-0 z-30 shadow-white-100xl border-b border-white/10 px-6 h-20 flex justify-between items-center">
- {/* NAVBAR LOGO */}
-<div className="flex items-center gap-3">
-  {/* SUBSTITUA O BLOCO DO ÍCONE POR ESTE: */}
-  <img 
-    src="/icon.png" 
-    alt="Logo" 
-    className="w-10 h-10 rounded-xl shadow-lg object-contain bg-blue-600 p-1" 
-  />
-  
-  <h1 className="text-xl font-black italic tracking-tighter uppercase">
-    WALLY<span className="text-blue-500 text-sm block not-italic font-medium">Task Manager</span>
-  </h1>
-</div>
-
-  {/* BOTÕES DA DIREITA */}
-  <div className="flex items-center gap-4">
-    {/* BOTÃO DE PERFIL */}
-    <button 
-      onClick={() => setShowProfileModal(true)} 
-      className="flex items-center gap-3 bg-white/5 pl-2 pr-4 py-1.5 rounded-full border border-white/10 hover:bg-white/10 transition-all shadow-sm"
-    >
-      <div className="w-8 h-8 bg-gradient-to-tr from-blue-600 to-indigo-600 rounded-full flex items-center justify-center text-[10px] font-black shadow-lg">
-        {profiles.find(p => p.id === user.id)?.full_name?.charAt(0) || 'U'}
+  <div className="flex h-screen bg-[#E8EEF7] text-slate-900 font-sans w-full overflow-hidden" style={{ scrollbarGutter: 'stable' }}>
+    
+    {/* --- 1. SIDEBAR ESQUERDA (FIXA) --- */}
+    <aside className="w-20 md:w-64 bg-[#232D4A] text-white flex flex-col flex-shrink-0 h-full border-r-4 border-slate-900 z-50 shadow-2xl">
+      <div className="p-8 mb-4 flex justify-center md:justify-start items-center gap-3">
+        <img src="/icon.png" className="w-10 h-10 rounded-xl object-contain bg-blue-600 p-1 shadow-lg" alt="Logo" />
+        <span className="hidden md:block font-black italic text-2xl tracking-tighter uppercase">WALLY</span>
       </div>
-      <span className="text-[11px] font-bold uppercase text-slate-300 hidden md:block">
-        {profiles.find(p => p.id === user.id)?.full_name || 'Meu Perfil'} 
-        {userRole === 'admin' ? ' 👑' : userRole === 'gerente' ? ' ⚡' : ''}
-      </span>
-    </button>
-    
-    {/* NOVO BOTÃO DE CONFIGURAÇÕES (SUBSTITUI O LOGOUT DIRETO) */}
-    <button 
-      onClick={() => setShowSettingsModal(true)} 
-      className="w-10 h-10 flex items-center justify-center bg-white/5 rounded-xl border border-white/10 text-slate-400 hover:text-white hover:bg-white/10 transition-all"
-    >
-      <Settings size={20} />
-    </button>
-  </div>
-</nav>
 
-      {/* --- ÁREA DE CONTROLE (ABAS EM CARDS + FUSÃO TOTAL) --- */}
-<div className="sticky top-20 z-30 w-full">
-  
-  {/* LINHA 1: ABAS NO FUNDO CINZA CLARO */}
-  <div className="bg-[#DCE7F5] border-b border-slate-200 pt-6 px-4">
-    <div className="max-w-[99%] mx-auto flex items-end justify-center gap-2 overflow-x-auto no-scrollbar">
-      {navCategories.map(tab => {
-        const Icon = tab.icon;
-        const isActive = activeTab === tab.id;
-        
-        return (
-          <button 
-            key={tab.id} 
-            onClick={() => { setActiveTab(tab.id); setShowCreateBox(false); }} 
-            className={`
-              flex flex-col items-center justify-center min-w-[109px] h-[80px] gap-1 px-4 transition-all duration-2 relative
-              rounded-t-2xl border-x-2 border-t-0 border-transparent
-              ${isActive
-                ? 'bg-[#F6F7F9] border-blue-500 border-t-2 z-40 -mb-[-3px] h-[85px] shadow-[0_-4px_10px_rgba(0,0,0,0.02)]' 
-                : 'bg-gradient-to-b from-white to-slate-200 border-slate-300 text-slate-500 hover:to-white'}
-            `}
-          >
-            <Icon size={isActive ? 24 : 20} className={isActive ? 'text-blue-500' : ''} strokeWidth={isActive ? 3 : 2} />
-            <span className={`text-[10px] font-black uppercase tracking-tight ${isActive ? 'text-blue-500' : ''}`}>
-              {tab.label}
-            </span>
-
-            {/* A "BORRACHA" QUE APAGA A LINHA: Esta div fica por cima da borda cinza */}
-            {isActive && (
-              <div className="absolute -bottom-[3px] left-[-1px] right-[-1px] h-[5px] bg-[#F6F7F9] z-[50]"></div>
-            )}
-          </button>
-        );
-      })}
-    </div>
-  </div>
-
-  {/* LINHA 2: BARRA DE COMANDO COMPACTA (SÓ FILTRO E PESQUISA) */}
-  <div className="bg-[#F6F7F9] border-b-2 border-slate-200 pt-10 pb-8 px-10 relative z-10 -mt-[2px]">
-   <div className="max-w-[98%] mx-auto flex items-center justify-between gap-8">
-      
-      {/* SELETOR DE EQUIPE DROPDOWN (SUBSTITUI OS NOMES ESPALHADOS) */}
-      <div className="relative">
-       <button 
-  type="button"
-  onClick={() => setShowUserMenu(!showUserMenu)}
-  className={`
-    h-12 px-6 rounded-2xl border-2 font-black text-[10px] uppercase flex items-center gap-3 whitespace-nowrap relative
-    
-    /* EFEITO FÍSICO REAL (SEM DELAY) */
-    transition-transform duration-75 active:duration-0
-    active:translate-x-[4px] active:translate-y-[4px] active:shadow-none
-    
-    ${filterUser === 'Todos' 
-      ? 'border-slate-100 bg-white text-slate-900 shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] hover:bg-slate-50' 
-      : 'border-blue-600 bg-blue-50 text-blue-600 shadow-[4px_4px_0px_0px_rgba(37,99,235,1)] hover:bg-blue-100'}
-  `}
->
-  <Filter size={16} />
-  <span>{filterUser === 'Todos' ? 'Filtrar Equipe' : profiles.find(p => p.id === filterUser)?.full_name}</span>
-  
-  {/* A setinha continua rodando conforme o menu abre/fecha */}
-  <ChevronDown 
-    size={16} 
-    className={`transition-transform duration-300 ${showUserMenu ? 'rotate-180' : ''}`} 
-  />
-</button>
-
-        {/* MENU SUSPENSO DOS USUÁRIOS (COM FILTRO DE SETOR) */}
-{showUserMenu && (
-  <>
-    <div className="fixed inset-0 z-10" onClick={() => setShowUserMenu(false)}></div>
-    <div className="absolute left-0 mt-3 w-64 bg-white border-4 border-slate-900 rounded-[32px] shadow-[15px_15px_0px_0px_rgba(15,23,42,1)] z-20 p-4">
-      <div className="flex flex-col gap-2">
+      <nav className="flex-1 px-4 space-y-4 pt-10">
         <button 
-          type="button"
-          onClick={() => { setFilterUser('Todos'); setShowUserMenu(false); }}
-          className={`p-3 text-left font-black text-[10px] uppercase rounded-xl transition-all ${filterUser === 'Todos' ? 'bg-slate-900 text-white' : 'hover:bg-slate-100 text-slate-600'}`}
+          onClick={() => { setCurrentView('TAREFAS'); setActiveTab('HOJE'); }}
+          className={`w-full flex items-center gap-4 p-4 rounded-[24px] transition-all duration-300 ${currentView === 'TAREFAS' ? 'bg-blue-600 text-white shadow-[6px_6px_0px_0px_rgba(15,23,42,1)] -translate-y-1 border-2 border-slate-900' : 'text-slate-400 hover:bg-white/5'}`}
         >
-          🌍 Equipe Total {userRole === 'admin' ? '' : `(${userSector})`}
+          <ListChecks size={26} strokeWidth={3} />
+          <span className="hidden md:block font-black uppercase text-xs tracking-widest">Tarefas</span>
         </button>
-        
-        <div className="h-[1px] bg-slate-100 my-1"></div>
 
-        {/* --- FILTRAGEM AQUI --- */}
-        {profiles
-          .filter(p => userRole === 'admin' || p.sector === userSector) // Regra: Admin vê tudo, outros só o próprio setor
-          .map(p => (
-          <button 
-            key={p.id} 
-            type="button"
-            onClick={() => { setFilterUser(p.id); setShowUserMenu(false); }}
-            className={`p-3 text-left font-black text-[10px] uppercase flex items-center gap-3 rounded-xl transition-all ${filterUser === p.id ? 'bg-blue-600 text-white' : 'hover:bg-blue-50 text-slate-600'}`}
-          >
-            <div className={`w-5 h-5 rounded bg-blue-100 text-blue-600 flex items-center justify-center text-[8px] font-bold ${filterUser === p.id ? 'bg-white/20' : ''}`}>
-              {p.full_name?.charAt(0)}
-            </div>
-            {p.full_name}
-          </button>
-        ))}
+        <button 
+          onClick={() => setCurrentView('REUNIAO')}
+          className={`w-full flex items-center gap-4 p-4 rounded-[24px] transition-all duration-300 ${currentView === 'REUNIAO' ? 'bg-blue-600 text-white shadow-[6px_6px_0px_0px_rgba(15,23,42,1)] -translate-y-1 border-2 border-slate-900' : 'text-slate-400 hover:bg-white/5'}`}
+        >
+          <Users size={26} strokeWidth={3} />
+          <span className="hidden md:block font-black uppercase text-xs tracking-widest">Reuniões</span>
+        </button>
+      </nav>
+
+      <div className="p-4 mt-auto mb-6">
+        <button onClick={() => setShowSettingsModal(true)} className="w-full flex items-center gap-4 p-4 text-slate-400 hover:text-white transition-all"><Settings size={24} /><span className="hidden md:block font-black uppercase text-[10px]">Ajustes</span></button>
       </div>
-    </div>
-  </>
-)}
-      </div>
+    </aside>
 
-      {/* ÁREA DE PESQUISA (Ocupando o resto da linha) */}
-      <div className="w-full md:w-96 group">
-        <div className="relative flex items-center h-12">
-          <Search size={18} className={`absolute left-5 top-1/2 -translate-y-1/2 transition-colors duration-300 z-10 ${searchTerm ? 'text-blue-600' : 'text-slate-400'}`} />
-          <input 
-            type="text"
-            placeholder="DIGITE PARA BUSCAR TAREFAS..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className={`w-full h-full pl-14 pr-12 bg-white border-2 border-transparent rounded-2xl font-black text-[11px] text-slate-900 outline-none transition-all placeholder:text-slate-300 shadow-[5px_5px_0px_0px_rgba(15,23,42,1)]
-              ${searchTerm 
-                ? 'border-blue-600 bg-white shadow-[0_0_20px_rgba(37,99,235,0.1)]' 
-                : 'border-transparent shadow-[0px_0px_0px_1px_rgba(15,23,42,1)] focus:border-slate-200 focus:shadow-none focus:translate-x-[1px] focus:translate-y-[1px]'}`}
-          />
-          {searchTerm && (
-            <button type="button" onClick={() => setSearchTerm('')} className="absolute right-4 bg-slate-100 hover:bg-red-100 text-slate-400 p-1.5 rounded-lg transition-all">
-              <X size={14} strokeWidth={3} />
-            </button>
-          )}
-        </div>
-      </div> 
-    </div>
-  </div>
-</div> {/* Este fecha o sticky top-20 w-full */}
-
-      <main className="max-w-4xl mx-auto p-4">
-  {activeTab === 'DASHBOARD' ? (
-    <div className="mt-6 space-y-6 animate-in fade-in duration-500">
-        <div className="flex flex-col md:flex-row justify-between items-center gap-4 px-2">
-          <h2 className="text-3xl font-black uppercase italic tracking-tighter flex items-center gap-2"><TrendingUp className="text-blue-600"/> Performance</h2>
-          <div className="flex bg-slate-200 p-1 rounded-2xl border-2 border-slate-900 shadow-sm w-full md:w-auto">
-            <button onClick={() => setDashFilter('HOJE')} className={`flex-1 px-6 py-2 rounded-xl font-black text-xs uppercase transition-all ${dashFilter === 'HOJE' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-500'}`}>Hoje</button>
-            <button onClick={() => setDashFilter('SEMANAL')} className={`flex-1 px-6 py-2 rounded-xl font-black text-xs uppercase transition-all ${dashFilter === 'SEMANAL' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-500'}`}>Semanal</button>
-          </div>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <DashboardCard label={`Total ${dashFilter}`} val={stats.total} color="border-slate-900 bg-white" />
-          <DashboardCard label="Concluídas" val={stats.concluidas} color="border-green-600 bg-green-50 text-green-700" />
-          <DashboardCard label="Pendentes" val={stats.pendentes} color="border-blue-600 bg-blue-50 text-blue-700" />
-        </div>
-        <div className="bg-white p-12 rounded-[48px] border-4 border-slate-900 shadow-[15px_15px_0px_0px_rgba(15,23,42,1)] text-center">
-          <h3 className="text-9xl font-black mb-8 tracking-tighter">{stats.porcentagem}%</h3>
-          <div className="w-full bg-slate-100 h-16 rounded-3xl border-4 border-slate-900 overflow-hidden shadow-inner p-1"><div className="bg-green-500 h-full rounded-2xl transition-all duration-1000" style={{ width: `${stats.porcentagem}%` }} /></div>
-        </div>
-    </div>
-  ) : activeTab === 'HISTÓRICO' ? (
-  <div className="mt-8 space-y-6 animate-in slide-in-from-bottom-4 duration-500 pb-20">
-    <div className="flex justify-between items-center px-4">
-      <h2 className="text-3xl font-black uppercase italic tracking-tighter">Linha do Tempo</h2>
-      <div className="bg-blue-600 text-white px-4 py-1.5 rounded-full font-black text-[10px] uppercase shadow-md">
-        Setor: {userRole === 'admin' ? 'Global' : userSector}
-      </div>
-    </div>
-
-    <div className="relative border-l-4 border-slate-200 ml-6 pl-8 space-y-8 py-4">
-      {history
-        /* FILTRO DE SETOR NO FRONT-END */
-        .filter(log => userRole === 'admin' || log.sector === userSector || log.sector === 'Geral')
-        .map((log) => (
-          <div key={log.id} className="relative">
-            {/* Círculo da Timeline */}
-            <div className="absolute -left-[42px] top-1 w-5 h-5 bg-blue-600 rounded-full border-4 border-white shadow-md"></div>
-            
-            <div className="bg-white p-6 rounded-[32px] border-2 border-slate-100 shadow-sm hover:border-blue-300 transition-colors">
-              <div className="flex justify-between items-start mb-2">
-                <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">
-                  {new Date(log.created_at).toLocaleString('pt-BR')}
-                </p>
-                <span className="text-[8px] font-black bg-slate-100 text-slate-500 px-2 py-0.5 rounded uppercase">
-                  {log.sector}
-                </span>
-              </div>
-              
-              <h4 className="text-xl font-black text-slate-900 mb-2 uppercase">
-                {log.task_title}
-              </h4>
-              
-              <div className="flex items-center gap-2">
-                <div className="w-5 h-5 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center text-[8px] font-bold">
-                  {log.user_name?.charAt(0)}
-                </div>
-                <p className="text-[10px] font-black text-blue-600 uppercase">
-                  Concluído por {log.user_name}
-                </p>
-              </div>
-            </div>
-          </div>
-      ))}
-
-      {/* Mensagem caso o histórico esteja vazio para o setor */}
-      {history.filter(log => userRole === 'admin' || log.sector === userSector).length === 0 && (
-        <div className="text-center py-20 opacity-30">
-          <p className="font-black uppercase tracking-widest text-slate-400">Nenhum registro neste setor...</p>
-        </div>
-      )}
-    </div>
-  </div>
-  ) : activeTab === 'COMUNICADOS' ? (
-  <div className="mt-8 space-y-8 animate-in fade-in duration-500 pb-20">
-    <div className="flex justify-between items-center px-4">
-      <h2 className="text-3xl font-black uppercase italic tracking-tighter flex items-center gap-3">
-        <Megaphone className="text-red-600 animate-bounce" size={32} /> Mural de Avisos
-      </h2>
-      <div className="bg-slate-900 text-white px-4 py-1.5 rounded-full font-black text-[10px] uppercase">
-        Setor: {userSector}
-      </div>
-    </div>
-
-    {/* CAIXA DE CRIAÇÃO COM UPLOAD */}
-    <div className="bg-white p-8 rounded-[40px] border-4 border-slate-900 shadow-[12px_12px_0px_0px_rgba(15,23,42,1)] space-y-4 mx-4">
-      <input 
-        className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-black text-slate-900 outline-none focus:border-red-500 uppercase"
-        placeholder="TÍTULO DO ALERTA..."
-        value={annTitle}
-        onChange={e => setAnnTitle(e.target.value)}
-      />
-      <textarea 
-        className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold text-slate-700 outline-none focus:border-red-500 min-h-[100px] resize-none"
-        placeholder="MENSAGEM PARA A EQUIPE..."
-        value={annContent}
-        onChange={e => setAnnContent(e.target.value)}
-      />
+    {/* --- 2. CONTEÚDO DIREITA --- */}
+    <div className="flex-1 flex flex-col h-full overflow-hidden relative">
       
-      {/* Input de Imagem Estilizado */}
-      <div className="flex items-center gap-4">
-        <label className="flex-1 flex items-center justify-center gap-3 p-4 border-2 border-dashed border-slate-300 rounded-2xl cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition-all group">
-          <input type="file" accept="image/*" className="hidden" onChange={e => setAnnImage(e.target.files?.[0] || null)} />
-          <div className="bg-blue-100 text-blue-600 p-2 rounded-xl group-hover:bg-blue-600 group-hover:text-white transition-colors">
-            <Plus size={20} strokeWidth={3} />
+      {currentView === 'TAREFAS' ? (
+        <>
+          {/* CABEÇALHO UNIFICADO (NAV + ABAS + FILTROS) */}
+          <header className="flex-shrink-0 z-40 border-b-2 border-slate-200 shadow-xl">
+            {/* Nav Superior */}
+            <nav className="bg-[#232D4A] text-white px-8 h-20 flex justify-between items-center">
+              <h1 className="text-xl font-black italic tracking-tighter uppercase">WALLY <span className="text-blue-500 text-sm block not-italic font-medium lowercase">task control center</span></h1>
+              <button onClick={() => setShowProfileModal(true)} className="flex items-center gap-3 bg-white/5 pl-2 pr-4 py-1.5 rounded-full border border-white/10 hover:bg-white/10 transition-all">
+                <div className="w-8 h-8 bg-gradient-to-tr from-blue-600 to-indigo-600 rounded-full flex items-center justify-center text-[10px] font-black shadow-lg">{newName.charAt(0) || 'U'}</div>
+                <span className="text-[11px] font-bold uppercase text-slate-300 hidden md:block">{newName || 'Perfil'} {userRole === 'admin' ? '👑' : '⚡'}</span>
+              </button>
+            </nav>
+
+            {/* Linha das Abas */}
+            <div className="bg-[#DCE7F5] border-b border-slate-200 pt-6 px-4">
+              <div className="max-w-[99%] mx-auto flex items-end justify-center gap-2 overflow-x-auto no-scrollbar">
+                {navCategories.map(tab => {
+                  const Icon = tab.icon;
+                  const isActive = activeTab === tab.id;
+                  return (
+                    <button key={tab.id} onClick={() => { setActiveTab(tab.id); setShowCreateBox(false); }} className={`flex flex-col items-center justify-center min-w-[109px] h-[75px] gap-1 px-4 transition-all duration-2 relative rounded-t-2xl border-x-2 border-t-2 ${isActive ? 'bg-[#F6F7F9] border-blue-500 z-40 -mb-[1px] h-[80px]' : 'bg-gradient-to-b from-white to-slate-200 border-slate-300 text-slate-500 hover:to-white'}`}>
+                      <Icon size={isActive ? 24 : 20} className={isActive ? 'text-blue-500' : ''} />
+                      <span className={`text-[10px] font-black uppercase ${isActive ? 'text-blue-500' : ''}`}>{tab.label}</span>
+                      {isActive && <div className="absolute -bottom-[1px] left-0 right-0 h-[2px] bg-[#F6F7F9] z-30"></div>}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Linha de Comando (Filtros e Busca) */}
+            <div className="bg-[#F6F7F9] py-8 px-10">
+              <div className="max-w-[98%] mx-auto flex items-center justify-between gap-8">
+                <div className="relative">
+                  <button onClick={() => setShowUserMenu(!showUserMenu)} className={`h-12 px-6 rounded-2xl border-2 font-black text-[10px] uppercase flex items-center gap-3 transition-transform duration-75 active:translate-x-[4px] active:translate-y-[4px] active:shadow-none ${filterUser === 'Todos' ? 'border-slate-900 bg-white shadow-[4px_4px_0px_0px_rgba(15,23,42,1)]' : 'border-blue-600 bg-blue-50 text-blue-600 shadow-[4px_4px_0px_0px_rgba(37,99,235,1)]'}`}>
+                    <Filter size={16} /><span>{filterUser === 'Todos' ? 'Filtrar Equipe' : profiles.find(p => p.id === filterUser)?.full_name}</span><ChevronDown size={16} className={showUserMenu ? 'rotate-180' : ''} />
+                  </button>
+                  {showUserMenu && (
+                    <>
+                      <div className="fixed inset-0 z-10" onClick={() => setShowUserMenu(false)}></div>
+                      <div className="absolute left-0 mt-3 w-64 bg-white border-4 border-slate-900 rounded-[32px] shadow-[15px_15px_0px_0px_rgba(15,23,42,1)] z-20 p-4">
+                        <div className="flex flex-col gap-2">
+                          <button onClick={() => { setFilterUser('Todos'); setShowUserMenu(false); }} className="p-3 text-left font-black text-[10px] uppercase rounded-xl hover:bg-slate-100 transition-all">🌍 Equipe Total {userRole === 'admin' ? '' : `(${userSector})`}</button>
+                          {profiles.filter(p => userRole === 'admin' || p.sector === userSector).map(p => (
+                            <button key={p.id} onClick={() => { setFilterUser(p.id); setShowUserMenu(false); }} className="p-3 text-left font-black text-[10px] uppercase flex items-center gap-3 rounded-xl hover:bg-blue-50 transition-all">
+                              <div className={`w-5 h-5 rounded bg-blue-100 text-blue-600 flex items-center justify-center text-[8px] font-bold`}>{p.full_name?.charAt(0)}</div>{p.full_name}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+                <button onClick={() => setShowCreateBox(!showCreateBox)} className="h-12 px-10 rounded-full border-2 border-slate-900 bg-white text-slate-900 font-black uppercase tracking-widest text-[11px] flex items-center justify-center gap-3 transition-all shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] active:translate-x-[4px] active:translate-y-[4px] active:shadow-none hover:bg-slate-50">
+                  {showCreateBox ? <><X size={18} className="text-red-600" strokeWidth={4} /> Cancelar</> : <><Plus size={18} className="text-blue-600" strokeWidth={4} /> Lançar Nova Tarefa</>}
+                </button>
+                <div className="w-96 group">
+                  <div className="relative h-12">
+                    <Search size={18} className={`absolute left-5 top-1/2 -translate-y-1/2 transition-colors duration-300 z-10 ${searchTerm ? 'text-blue-600' : 'text-slate-400'}`} />
+                    <input type="text" placeholder="BUSCAR MISSÕES..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className={`w-full h-full pl-14 pr-12 bg-white border-2 rounded-full font-black text-[11px] text-slate-900 outline-none transition-all uppercase placeholder:text-slate-300 shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] focus:shadow-none focus:translate-x-[1px] focus:translate-y-[1px] ${searchTerm ? 'border-blue-600' : 'border-slate-900'}`} />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </header>
+
+          {/* ÁREA DE SCROLL INDEPENDENTE PARA A LISTA */}
+          <div className="flex-1 overflow-y-auto no-scrollbar pb-20">
+            <main className="max-w-5xl mx-auto p-8 w-full">
+              {activeTab === 'DASHBOARD' ? (
+                <div className="space-y-10 animate-in fade-in">
+                   <div className="flex justify-between items-center"><h2 className="text-3xl font-black uppercase italic tracking-tighter flex items-center gap-2"><TrendingUp className="text-blue-600"/> Performance</h2><div className="flex bg-slate-200 p-1 rounded-2xl border-2 border-slate-900"><button onClick={() => setDashFilter('HOJE')} className={`px-6 py-2 rounded-xl font-black text-xs uppercase ${dashFilter === 'HOJE' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-500'}`}>Hoje</button><button onClick={() => setDashFilter('SEMANAL')} className={`px-6 py-2 rounded-xl font-black text-xs uppercase ${dashFilter === 'SEMANAL' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-500'}`}>Semanal</button></div></div>
+                   <div className="grid grid-cols-1 md:grid-cols-3 gap-6"><DashboardCard label={`Total ${dashFilter}`} val={stats.total} color="border-slate-900 bg-white" /><DashboardCard label="Concluídas" val={stats.concluidas} color="border-green-600 bg-green-50 text-green-700" /><DashboardCard label="Pendentes" val={stats.pendentes} color="border-blue-600 bg-blue-50 text-blue-700" /></div>
+                   <div className="bg-white p-12 rounded-[48px] border-4 border-slate-900 shadow-[15px_15px_0px_0px_rgba(15,23,42,1)] text-center"><h3 className="text-9xl font-black mb-8 tracking-tighter">{stats.porcentagem}%</h3><div className="w-full bg-slate-100 h-16 rounded-3xl border-4 border-slate-900 overflow-hidden p-1"><div className="bg-green-500 h-full rounded-2xl transition-all duration-1000" style={{ width: `${stats.porcentagem}%` }} /></div></div>
+                </div>
+              ) : activeTab === 'HISTÓRICO' ? (
+                <div className="space-y-8 animate-in slide-in-from-bottom-4">
+                  <h2 className="text-3xl font-black uppercase italic tracking-tighter">Linha do Tempo Operacional</h2>
+                  <div className="relative border-l-4 border-slate-200 ml-8 pl-8 space-y-8 py-4">
+                    {history.filter(log => userRole === 'admin' || log.sector === userSector || log.sector === 'Geral').map((log) => (
+                      <div key={log.id} className="relative"><div className="absolute -left-[42px] top-1 w-5 h-5 bg-blue-600 rounded-full border-4 border-white shadow-md"></div><div className="bg-white p-6 rounded-[32px] border-2 border-slate-100 shadow-sm"><p className="text-[10px] font-black text-slate-400 mb-2 uppercase">{new Date(log.created_at).toLocaleString('pt-BR')} | {log.sector}</p><h4 className="text-xl font-black text-slate-900 mb-2 uppercase">{log.task_title}</h4><p className="text-[10px] font-black text-blue-600 uppercase">Concluído por {log.user_name}</p></div></div>
+                    ))}
+                  </div>
+                </div>
+              ) : activeTab === 'COMUNICADOS' ? (
+                <div className="space-y-10 pb-20">
+                  <h2 className="text-3xl font-black uppercase italic tracking-tighter flex items-center gap-3"><Megaphone className="text-red-600 animate-bounce" /> Mural de Avisos</h2>
+                  <div className="bg-white p-8 rounded-[40px] border-4 border-slate-900 shadow-[12px_12px_0px_0px_rgba(15,23,42,1)] space-y-4"><input className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-black outline-none focus:border-red-500 uppercase" placeholder="TÍTULO..." value={annTitle} onChange={e => setAnnTitle(e.target.value)} /><textarea className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold outline-none focus:border-red-500 min-h-[100px]" placeholder="MENSAGEM..." value={annContent} onChange={e => setAnnContent(e.target.value)} /><input type="file" accept="image/*" onChange={e => setAnnImage(e.target.files?.[0] || null)} className="text-[10px] font-black" /><button onClick={addAnnouncement} disabled={uploading} className="w-full bg-red-600 text-white p-5 rounded-3xl font-black uppercase hover:bg-slate-900 transition-all shadow-lg">{uploading ? 'ENVIANDO...' : 'TRANSMITIR ALERTA'}</button></div>
+                  <div className="space-y-8">{announcements.filter(ann => userRole === 'admin' || ann.sector === userSector || ann.sector === 'Geral').map((ann) => (<div key={ann.id} className="bg-white border-4 border-slate-900 rounded-[40px] shadow-[12px_12px_0px_0px_rgba(248,113,113,1)] overflow-hidden">{ann.image_url && <img src={ann.image_url} className="w-full h-64 object-cover border-b-4 border-slate-900" />}<div className="p-8"><div className="flex justify-between items-start mb-6"><div><span className="bg-red-600 text-white text-[8px] font-black px-2 py-0.5 rounded uppercase tracking-widest mr-2">ALERTA OFICIAL</span><span className="bg-slate-100 text-slate-600 text-[8px] font-black px-2 py-0.5 rounded uppercase">{ann.sector}</span><h4 className="text-3xl font-black uppercase italic mt-3">{ann.title}</h4></div><div className="text-right"><p className="text-[10px] font-black text-slate-900">{new Date(ann.created_at).toLocaleDateString('pt-BR')}</p><p className="text-blue-600 font-black">{new Date(ann.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</p></div></div><div className="bg-slate-50 p-6 rounded-3xl border-2 border-slate-100 text-slate-700 whitespace-pre-wrap mb-4">{ann.content}</div><p className="text-[10px] font-black text-slate-400 uppercase">Por: {ann.profiles?.full_name}</p></div></div>))}</div>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <h2 className="font-black uppercase text-slate-400 text-[10px] tracking-[0.3em] px-2 flex items-center gap-2"><ChevronRight size={14} className="text-blue-600" /> {activeTab} • {filteredTasks.length} TAREFAS NO RADAR</h2>
+                  {filteredTasks.map(task => (
+                    <TaskItem key={task.id} task={task} profiles={profiles} userRole={userRole} currentUser={user} onToggle={toggleComplete} onView={setViewingTask} onEdit={(t: any) => { setEditingTask(t); setEditMode(t.repeat_days && !t.repeat_days.includes(',') && !isNaN(parseInt(t.repeat_days)) ? 'mensal' : 'semanal'); setEditDisplayDate(t.repeat_days && !t.repeat_days.includes(',') && !isNaN(parseInt(t.repeat_days)) ? `DIA ${t.repeat_days} (MANTIDO)` : 'DD/MM/YYYY'); setShowEditModal(true); }} onUpdate={fetchTasks} onDelete={deleteTask} />
+                  ))}
+                </div>
+              )}
+            </main>
           </div>
-          <span className="text-[10px] font-black uppercase text-slate-500">
-            {annImage ? `IMAGEM: ${annImage.name.slice(0,15)}...` : 'ADICIONAR FOTO AO ALERTA'}
-          </span>
-        </label>
+        </>
+      ) : (
+        /* ================================================= */
+        /* INTERFACE: MÓDULO REUNIÃO (CALENDÁRIO CORRIGIDO)  */
+        /* ================================================= */
+        <div className="flex-1 flex flex-col h-full bg-white overflow-hidden animate-in fade-in duration-700">
+          
+          {/* HEADER DO CALENDÁRIO */}
+          <header className="flex-shrink-0 p-10 flex justify-between items-end border-b-4 border-slate-100">
+            <div>
+              <h2 className="text-6xl font-black uppercase italic tracking-tighter text-slate-900 leading-none">
+                Mural de <span className="text-blue-600">Reuniões</span>
+              </h2>
+              <p className="text-slate-400 font-bold uppercase text-[10px] mt-4 tracking-[0.3em]">
+                Gestão de Atas e Compromissos • Setor {userSector}
+              </p>
+            </div>
+
+            <div className="flex items-center gap-6">
+              {/* CONTROLES DE NAVEGAÇÃO */}
+              <div className="flex items-center bg-slate-100 border-4 border-slate-900 rounded-[32px] overflow-hidden shadow-[8px_8px_0px_0px_rgba(15,23,42,1)]">
+                <button 
+                  onClick={prevMonth} 
+                  className="p-4 hover:bg-blue-600 hover:text-white transition-all border-r-2 border-slate-900 active:translate-y-1"
+                >
+                  <ChevronDown className="rotate-90" size={24} strokeWidth={4} />
+                </button>
+                
+                <button 
+                  onClick={goToToday}
+                  className="px-8 py-4 font-black uppercase text-sm text-slate-900 hover:text-blue-600 transition-all border-none bg-transparent"
+                >
+                  {new Date(calendarYear, calendarMonth).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}
+                </button>
+
+                <button 
+                  onClick={nextMonth} 
+                  className="p-4 hover:bg-blue-600 hover:text-white transition-all border-l-2 border-slate-900 active:translate-y-1"
+                >
+                  <ChevronDown className="-rotate-90" size={24} strokeWidth={4} />
+                </button>
+              </div>
+
+              {/* BOTÃO AGENDAR */}
+              <button 
+                onClick={() => setShowMeetingModal(true)} 
+                className="h-20 px-10 bg-blue-600 text-white rounded-[32px] border-4 border-slate-900 shadow-[8px_8px_0px_0px_rgba(15,23,42,1)] font-black uppercase italic tracking-tighter hover:translate-x-1 hover:translate-y-1 transition-all flex items-center gap-3 active:shadow-none"
+              >
+                <Plus size={28} strokeWidth={4} /> Agendar
+              </button>
+            </div>
+          </header>
+
+          {/* GRID DO CALENDÁRIO GIGANTE */}
+          <div className="flex-1 overflow-y-auto p-10 no-scrollbar">
+            <div className="bg-white border-4 border-slate-900 rounded-[48px] shadow-[20px_20px_0px_0px_rgba(15,23,42,1)] overflow-hidden">
+              
+              {/* DIAS DA SEMANA */}
+              <div className="grid grid-cols-7 bg-slate-900 text-white font-black text-[10px] uppercase py-6 text-center tracking-[0.2em]">
+                <div>Segunda</div><div>Terça</div><div>Quarta</div><div>Quinta</div><div>Sexta</div><div>Sábado</div><div>Domingo</div>
+              </div>
+
+              {/* CÉLULAS DOS DIAS */}
+              <div className="grid grid-cols-7 auto-rows-[160px]">
+                {(() => {
+                  const firstDay = new Date(calendarYear, calendarMonth, 1).getDay();
+                  const daysInMonth = new Date(calendarYear, calendarMonth + 1, 0).getDate();
+                  const padding = firstDay === 0 ? 6 : firstDay - 1; // Ajuste para começar na Segunda
+
+                  return (
+                    <>
+                      {/* Espaços vazios */}
+                      {Array.from({ length: padding }).map((_, i) => (
+                        <div key={`pad-${i}`} className="bg-slate-50 border-r border-b border-slate-100 opacity-50"></div>
+                      ))}
+
+                      {/* Dias Reais */}
+                      {Array.from({ length: daysInMonth }).map((_, i) => {
+                        const day = i + 1;
+                        const dateStr = `${calendarYear}-${String(calendarMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                        const isToday = dateStr === getTodayStr();
+
+                        return (
+                          <div 
+                            key={day} 
+                            className={`border-r border-b border-slate-200 p-4 hover:bg-blue-50/30 transition-colors group flex flex-col gap-2 relative
+                              ${isToday ? 'bg-blue-50/20' : ''}`}
+                          >
+                            <span className={`font-black text-2xl leading-none ${isToday ? 'text-blue-600 underline decoration-4 underline-offset-8' : 'text-slate-300'}`}>
+                              {day.toString().padStart(2, '0')}
+                            </span>
+
+                            {/* REUNIÕES DO DIA */}
+                            <div className="flex-1 overflow-y-auto no-scrollbar space-y-1 mt-2">
+                              {meetings
+  .filter(m => m.meeting_date === dateStr)
+  .map(m => (
+    <button 
+      key={m.id}
+      onClick={() => setViewingMeeting(m)}
+      className="w-full p-2.5 bg-[#232D4A] text-white rounded-xl text-[9px] font-black uppercase text-left hover:bg-blue-600 transition-all border border-slate-900 shadow-sm flex flex-col relative group/mt"
+    >
+      <div className="flex justify-between items-start w-full">
+        <span className="text-blue-400 text-[7px] mb-0.5">{m.meeting_time.slice(0,5)}h</span>
         
-        {annImage && (
-          <button onClick={() => setAnnImage(null)} className="p-4 bg-red-50 text-red-500 rounded-2xl hover:bg-red-500 hover:text-white transition-all">
-            <X size={20} strokeWidth={3} />
-          </button>
+        {/* ÍCONE DE ARQUIVO: Aparece se houver anexo */}
+        {m.file_url && (
+          <FileText size={10} className="text-blue-300 animate-pulse" />
         )}
       </div>
-
-      <button 
-        onClick={addAnnouncement}
-        disabled={uploading}
-        className="w-full bg-red-600 text-white p-5 rounded-3xl font-black uppercase tracking-widest hover:bg-slate-900 transition-all flex items-center justify-center gap-3 shadow-lg active:scale-[0.98]"
-      >
-        {uploading ? 'ENVIANDO...' : <><Megaphone size={20}/> TRANSMITIR ALERTA</>}
-      </button>
-    </div>
-
-    {/* LISTA DE ALERTAS */}
-    <div className="space-y-8 px-4">
-      {announcements
-        .filter(ann => userRole === 'admin' || ann.sector === userSector || ann.sector === 'Geral')
-        .map((ann) => (
-        <div key={ann.id} className="bg-white border-4 border-slate-900 rounded-[40px] shadow-[12px_12px_0px_0px_rgba(248,113,113,1)] overflow-hidden">
-          
-          {/* Imagem do Alerta (se houver) */}
-          {ann.image_url && (
-            <div className="w-full h-64 overflow-hidden border-b-4 border-slate-900 bg-slate-100">
-               <img src={ann.image_url} alt="Alert" className="w-full h-full object-cover hover:scale-105 transition-transform duration-700" />
-            </div>
-          )}
-
-          <div className="p-8">
-            <div className="flex justify-between items-start mb-6">
-              <div>
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="bg-red-600 text-white text-[8px] font-black px-2 py-0.5 rounded uppercase tracking-widest">ALERTA OFICIAL</span>
-                  <span className="bg-slate-100 text-slate-600 text-[8px] font-black px-2 py-0.5 rounded uppercase">{ann.sector}</span>
-                </div>
-                <h4 className="text-3xl font-black text-slate-900 leading-none uppercase italic">{ann.title}</h4>
+      <span className="truncate">{m.title}</span>
+    </button>
+  ))}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </>
+                  );
+                })()}
               </div>
-              
-              {/* DATA E HORA COMPLETA */}
-              <div className="text-right flex flex-col items-end">
-                <p className="text-[10px] font-black text-slate-900 uppercase">
-                  {new Date(ann.created_at).toLocaleDateString('pt-BR')}
-                </p>
-                <p className="text-[14px] font-black text-blue-600 leading-none mt-1">
-                  {new Date(ann.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
-                </p>
-              </div>
-            </div>
-
-            <div className="bg-slate-50 p-6 rounded-3xl border-2 border-slate-100 text-slate-700 font-bold leading-relaxed whitespace-pre-wrap mb-6">
-              {ann.content}
-            </div>
-
-            <div className="flex justify-between items-center">
-               <div className="flex items-center gap-2">
-                 <div className="w-6 h-6 bg-slate-900 text-white rounded-full flex items-center justify-center text-[8px] font-black uppercase">
-                    {ann.profiles?.full_name?.charAt(0)}
-                 </div>
-                 <p className="text-[9px] font-black text-slate-400 uppercase">Transmitido por: <span className="text-slate-900">{ann.profiles?.full_name}</span></p>
-               </div>
-               
-               {(userRole === 'admin' || ann.created_by === user?.id) && (
-                 <button onClick={async () => { if(confirm('Excluir alerta?')) { await supabase.from('announcements').delete().eq('id', ann.id); fetchAnnouncements(); }}} className="text-red-400 hover:text-red-600 p-2 hover:bg-red-50 rounded-xl transition-all">
-                   <Trash2 size={20}/>
-                 </button>
-               )}
             </div>
           </div>
         </div>
-      ))}
-    </div>
-  </div>
-) : (
-    /* ABA PADRÃO DE TAREFAS */
-    <>
-      <div className="max-w-4xl mx-auto mt-5 mb-6 px-60">
-        <button onClick={() => setShowCreateBox(!showCreateBox)} className={`w-full py-5 rounded-[32px] font-black uppercase tracking-[0.2em] text-[11px] transition-all duration-500 flex items-center justify-center gap-3 border-2 ${showCreateBox ? 'bg-slate-100 border-slate-200 text-slate-400' : 'bg-white border-slate-100 text-slate-900 shadow-[10px_10px_0px_0px_rgba(15,23,42,1)] hover:translate-x-1 hover:translate-y-1'}`}>
-          {showCreateBox ? <><X size={20} /> Cancelar Operação</> : <><Plus size={20} strokeWidth={3} className="text-blue-600" /> Lançar Nova Tarefa</>}
-        </button>
-      </div>
+      )}
 
-     {/* ----------------------------------------------------------- */}
-{/* MODAL FLUTUANTE: LANÇAR NOVA TAREFA (VERSÃO FINAL CORRIGIDA) */}
-{/* ----------------------------------------------------------- */}
-{showCreateBox && (
-  <div className="fixed inset-0 bg-slate-900/90 z-[70] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
-    
-    {/* CONTAINER DO CARD (Largura travada em max-w-2xl) */}
+      {/* --- 3. MODALS (SHARED) --- */}
+      {showCreateBox && (
+  <div className="fixed inset-0 bg-slate-900/90 z-[100] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
+    {/* CONTAINER DO CARD */}
     <div className="bg-white w-full max-w-2xl rounded-[40px] border-4 border-slate-900 shadow-[20px_20px_0px_0px_rgba(15,23,42,1)] flex flex-col max-h-[95vh] overflow-hidden relative">
+      
       {/* Detalhe superior: Industrial Pattern */}
-<div className="absolute top-0 left-0 w-full h-2 bg-blue-600 rounded-t-[40px] overflow-hidden">
-  {/* O gradiente principal */}
-  <div className="absolute inset-0 bg-gradient-to-r from-blue-600 to-indigo-600 opacity-90"></div>
-  
-  {/* A textura de listras sutis */}
-  <div 
-    className="absolute inset-0 opacity-20" 
-    style={{ 
-      backgroundImage: `linear-gradient(45deg, #white 25%, transparent 25%, transparent 50%, #white 50%, #white 75%, transparent 75%, transparent)`,
-      backgroundSize: '10px 10px' 
-    }}
-  ></div>
-  
-  {/* Sombrinha interna para dar profundidade */}
-  <div className="absolute inset-0 shadow-[inset_0_-2px_4px_rgba(0,0,0,0.1)]"></div>
-</div>
+      <div className="absolute top-0 left-0 w-full h-2 bg-blue-600 rounded-t-[40px] overflow-hidden">
+        <div className="absolute inset-0 bg-gradient-to-r from-blue-600 to-indigo-600 opacity-90"></div>
+        <div className="absolute inset-0 opacity-20" style={{ backgroundImage: `linear-gradient(45deg, white 25%, transparent 25%, transparent 50%, white 50%, white 75%, transparent 75%, transparent)`, backgroundSize: '10px 10px' }}></div>
+      </div>
 
       {/* Cabeçalho */}
       <div className="p-6 border-b-4 border-slate-100 flex justify-between items-center bg-slate-50/50">
         <div>
-          <h2 className="text-2xl font-black uppercase italic tracking-tighter text-slate-900 leading-none text-left">Nova Tarefa</h2>
-          <p className="text-[9px] font-black text-blue-600 uppercase tracking-widest mt-1 text-left">Setor Operacional: {userSector}</p>
+          <h2 className="text-2xl font-black uppercase italic tracking-tighter text-slate-900 leading-none">Nova Missão</h2>
+          <p className="text-[9px] font-black text-blue-600 uppercase tracking-widest mt-1">Setor Operacional: {userSector}</p>
         </div>
         <button onClick={() => setShowCreateBox(false)} className="w-10 h-10 flex items-center justify-center rounded-xl bg-white border-2 border-slate-200 text-slate-400 hover:text-red-600 transition-all">
           <X size={20} strokeWidth={3} />
         </button>
       </div>
 
-      {/* Formulário com Scroll Interno */}
-      <div className="flex-1 overflow-y-auto p-8 space-y-8 no-scrollbar">
-        
-        {/* Título e Notas */}
-        <div className="space-y-4">
-          <input className="w-full text-2xl font-black outline-none placeholder:text-slate-200 text-slate-900 bg-transparent border-b-4 border-slate-100 focus:border-blue-500 transition-all pb-2 uppercase" placeholder="O QUE VAMOS FAZER?" value={taskTitle} onChange={e => setTaskTitle(e.target.value)} />
-          <textarea className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-slate-700 border-2 border-slate-100 outline-none focus:border-blue-300 focus:bg-white transition-all min-h-[80px] text-sm resize-none" placeholder="Coordenadas e detalhes da tarefa..." value={notes} onChange={e => setNotes(e.target.value)} />
-        </div>
-
-        {/* Checklist */}
-        <div className="space-y-3 bg-slate-50/50 p-5 rounded-[24px] border-2 border-dashed border-slate-200">
-          <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest flex items-center gap-2"><ListChecks size={14} className="text-blue-500"/> Passos de Execução</label>
-          <div className="grid grid-cols-1 gap-2">
-            {tempSubtasks.map((sub, index) => (
-              <div key={index} className="flex items-center gap-2 bg-white p-2.5 rounded-xl border-2 border-slate-100 shadow-sm">
-                <input className="flex-1 text-xs font-black text-slate-600 outline-none uppercase" value={sub.title} onChange={(e) => { const newSubs = [...tempSubtasks]; newSubs[index].title = e.target.value; setTempSubtasks(newSubs); }} placeholder="Nome do passo..." />
-                <button onClick={() => setTempSubtasks(tempSubtasks.filter((_, i) => i !== index))} className="text-red-400 p-1 hover:bg-red-50 rounded-lg"><X size={14}/></button>
-              </div>
-            ))}
-            <button onClick={() => setTempSubtasks([...tempSubtasks, { title: '', done: false }])} className="flex items-center justify-center gap-2 p-2 border-2 border-dashed border-slate-300 rounded-xl text-slate-400 font-black text-[9px] hover:border-blue-400 transition-all uppercase"><Plus size={14} strokeWidth={3}/> Adicionar Passo</button>
-          </div>
-        </div>
-
-        {/* Configurações (Aqui estão os Dropups) */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-end">
-          
-          {/* Coluna Datas */}
-          <div className="space-y-3 bg-white p-4 rounded-[24px] border-2 border-slate-100 shadow-sm">
-            <div className="flex bg-slate-100 p-1 rounded-xl border-2 border-slate-200">
-              <button type="button" onClick={() => setSelectedDays([])} className={`flex-1 py-1.5 rounded-lg font-black text-[9px] uppercase transition-all ${isNaN(parseInt(selectedDays[0])) ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}>Semanal</button>
-              <button type="button" onClick={() => setSelectedDays(['1'])} className={`flex-1 py-1.5 rounded-lg font-black text-[9px] uppercase transition-all ${!isNaN(parseInt(selectedDays[0])) ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}>Mensal</button>
-            </div>
-            {!isNaN(parseInt(selectedDays[0])) ? (
-              <div className="relative h-[50px] group cursor-pointer" onClick={() => dateInputRef.current?.showPicker()}>
-                <div className="absolute inset-0 flex items-center justify-center bg-slate-50 rounded-xl border-2 border-slate-100 font-black text-slate-700 text-base pointer-events-none uppercase">{displayDate}<Calendar size={16} className="absolute right-4 text-blue-500" /></div>
-                <input ref={dateInputRef} type="date" className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" onChange={e => { const dVal = e.target.value; if(dVal){ const [y,m,d] = dVal.split('-'); setDisplayDate(`${d}/${m}/${y}`); setSelectedDays([d]); }}} />
-              </div>
-            ) : (
-              <div className="flex gap-1.5 justify-center p-1.5 bg-slate-50 rounded-xl border-2 border-slate-100">
-                {weekDays.map(day => (<button key={day.id} type="button" onClick={() => toggleDay(day.id)} className={`w-8 h-8 rounded-lg font-black text-[10px] transition-all ${selectedDays.includes(day.id) ? 'bg-blue-600 text-white shadow-lg scale-110' : 'bg-white text-slate-300'}`}>{day.label}</button>))}
-              </div>
-            )}
-            <div className="flex items-center justify-between gap-4 px-2"><label className="text-[8px] font-black uppercase text-slate-400 italic">Intervalo</label><input type="number" min="1" className="w-16 p-1.5 bg-slate-50 rounded-lg font-black border-2 border-slate-100 text-slate-900 text-center text-xs" value={repeatInterval} onChange={e => setRepeatInterval(parseInt(e.target.value) || 1)} /></div>
-          </div>
-
-          {/* Coluna Responsável e Classificação */}
-          <div className="space-y-4">
-            {/* Responsável Customizado */}
-            <div className="relative">
-              <label className="text-[9px] font-black uppercase text-slate-400 ml-2 italic">Responsável</label>
-              <button type="button" onClick={() => userRole !== 'membro' && setShowAssignMenu(!showAssignMenu)} className={`w-full h-12 px-4 rounded-xl border-2 font-black text-[10px] uppercase flex items-center justify-between transition-all relative z-20 ${showAssignMenu ? 'border-blue-600 bg-white' : 'border-slate-900 bg-white shadow-[4px_4px_0px_0px_rgba(15,23,42,1)]'}`}>
-                <div className="flex items-center gap-2"><User size={14} className="text-blue-500" /><span>{profiles.find(p => p.id === assignedTo)?.full_name || 'Selecionar...'}</span></div>
-                <ChevronDown size={16} className={`transition-transform duration-300 ${showAssignMenu ? 'rotate-180' : ''}`} />
-              </button>
-              {showAssignMenu && (
-                <>
-                  <div className="fixed inset-0 z-[85]" onClick={() => setShowAssignMenu(false)}></div>
-                  <div className="absolute left-0 right-0 bottom-full mb-2 bg-white border-4 border-slate-900 rounded-[24px] shadow-[10px_10px_0px_0px_rgba(15,23,42,1)] z-[100] p-3 max-h-[360] overflow-y-auto no-scrollbar animate-in slide-in-from-bottom-2">
-                    <div className="flex flex-col gap-1">{profiles.filter(p => userRole === 'admin' || p.sector === userSector).map(p => (
-                      <button key={p.id} type="button" onClick={() => { setAssignedTo(p.id); setShowAssignMenu(false); }} className={`p-2.5 text-left font-black text-[9px] uppercase flex items-center gap-2 rounded-lg transition-all border-2 ${assignedTo === p.id ? 'bg-blue-600 border-blue-600 text-white shadow-md' : 'bg-white border-slate-50 text-slate-600 hover:border-blue-300'}`}><div className={`w-5 h-5 rounded-md border flex items-center justify-center text-[7px] font-bold ${assignedTo === p.id ? 'bg-white/20' : 'bg-blue-100 text-blue-600'}`}>{p.full_name?.charAt(0)}</div>{p.full_name}</button>
-                    ))}</div>
-                  </div>
-                </>
-              )}
-            </div>
-
-            {/* Classificação Customizada */}
-            <div className="relative">
-              <label className="text-[9px] font-black uppercase text-slate-400 ml-2 italic">Classificação</label>
-              <button type="button" onClick={() => setShowCategoryMenu(!showCategoryMenu)} className={`w-full h-12 px-4 rounded-xl border-2 font-black text-[10px] uppercase flex items-center justify-between transition-all relative z-20 ${showCategoryMenu ? 'border-blue-600 bg-white' : 'border-slate-900 bg-white shadow-[4px_4px_0px_0px_rgba(15,23,42,1)]'}`}>
-                <div className="flex items-center gap-2"><Activity size={14} className="text-blue-500" /><span>{category}</span></div>
-                <ChevronDown size={16} className={`transition-transform duration-300 ${showCategoryMenu ? 'rotate-180' : ''}`} />
-              </button>
-              {showCategoryMenu && (
-                <>
-                  <div className="fixed inset-0 z-[85]" onClick={() => setShowCategoryMenu(false)}></div>
-                  <div className="absolute left-0 right-0 bottom-full mb-2 bg-white border-4 border-slate-900 rounded-[24px] shadow-[10px_10px_0px_0px_rgba(15,23,42,1)] z-[100] p-3 animate-in slide-in-from-bottom-2">
-                    <div className="flex flex-col gap-1">{['Trade', 'Reunião', 'Geral'].map(opt => (
-                      <button key={opt} type="button" onClick={() => { setCategory(opt); setShowCategoryMenu(false); }} className={`p-3 text-left font-black text-[9px] uppercase rounded-lg transition-all border-2 ${category === opt ? 'bg-blue-600 border-blue-600 text-white shadow-md' : 'bg-white border-slate-50 text-slate-600 hover:border-blue-300'}`}>{opt}</button>
-                    ))}</div>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Rodapé fixo */}
-      <div className="p-6 bg-slate-50 border-t-4 border-slate-100 flex gap-3 mt-auto">
-        <button onClick={() => setShowCreateBox(false)} className="flex-1 py-4 rounded-2xl border-2 border-slate-200 text-slate-400 font-black uppercase text-[10px] hover:bg-slate-100 transition-all">Descartar</button>
-        <button onClick={addTask} className="flex-[2] py-4 bg-blue-600 hover:bg-slate-900 text-white rounded-2xl font-black uppercase tracking-widest text-[11px] transition-all flex items-center justify-center gap-2 shadow-lg active:scale-95"><Check size={20} strokeWidth={4} /> Lançar Tarefa Agora</button>
-      </div>
-    </div>
-  </div>
-)}
-
-      <div className="space-y-6">
-        <h2 className="font-black uppercase text-slate-400 text-[10px] tracking-[0.3em] px-2 flex items-center gap-2"><ChevronRight size={14} className="text-blue-600" /> {activeTab} • {filteredTasks.length} TAREFAS</h2>
-        {/* Localize este bloco no seu App.tsx */}
-{filteredTasks.map(task => (
-  <TaskItem 
-    key={task.id} 
-    task={task} 
-    profiles={profiles} 
-    userRole={userRole} 
-    currentUser={user} 
-    onToggle={toggleComplete} 
-    onView={setViewingTask} 
-    onEdit={(t: any) => { 
-  setEditingTask(t); 
-  const isMonthly = t.repeat_days && !t.repeat_days.includes(',') && !isNaN(parseInt(t.repeat_days));
-  setEditMode(isMonthly ? 'mensal' : 'semanal');
-  
-  // Se for mensal, mostra o dia atual na legenda, senão reseta para o padrão
-  setEditDisplayDate(isMonthly ? `DIA ${t.repeat_days} (MANTIDO)` : 'DD/MM/YYYY');
-  
-  setShowEditModal(true); 
-}}
-    onUpdate={fetchTasks} // <--- VOLTE PARA fetchTasks (para atualizar subtarefas)
-    onDelete={deleteTask} // <--- ADICIONE ESTA NOVA PROPRIEDADE
-  />
-))}
-      </div>
-    </>
-  )}
-</main>
-
-      {/* --- MODALS --- */}
-      
-      {/* 1. Modal de Perfil */}
-      {showProfileModal && (
-        <div className="fixed inset-0 bg-slate-900/90 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-white p-10 rounded-[40px] w-full max-w-sm border-4 border-slate-900 shadow-2xl text-center">
-            <h2 className="text-2xl font-black uppercase mb-6 tracking-tighter">Meu Perfil</h2>
-            <input className="w-full p-4 border-4 border-slate-100 rounded-2xl font-black mb-6 text-slate-900 outline-none focus:border-blue-500 transition-all" placeholder="Nome Completo" value={newName} onChange={e => setNewName(e.target.value)} />
-            <button onClick={updateProfile} className="w-full bg-blue-600 text-white p-5 rounded-3xl font-black uppercase text-lg shadow-lg hover:bg-slate-900 transition-all">Salvar Dados</button>
-            <button onClick={() => setShowProfileModal(false)} className="w-full mt-4 text-slate-400 font-bold uppercase text-[10px] tracking-widest">Fechar</button>
-          </div>
-        </div>
-      )}
-
-      {/* ----------------------------------------------------------- */}
-{/* MODAL FLUTUANTE: EDITAR TAREFA (VERSÃO SUPPLY PRO) */}
-{/* ----------------------------------------------------------- */}
-{showEditModal && editingTask && (
-  <div className="fixed inset-0 bg-slate-900/90 z-[70] flex items-center justify-center p-4 backdrop-blur-sm animate-in zoom-in-95 duration-300">
-    
-    {/* CONTAINER DO CARD */}
-    <div className="bg-white w-full max-w-2xl rounded-[40px] border-4 border-slate-900 shadow-[20px_20px_0px_0px_rgba(15,23,42,1)] flex flex-col max-h-[90vh] overflow-hidden relative">
-      
-      {/* Detalhe superior (Opção Industrial) */}
-      <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-blue-600 to-indigo-600"></div>
-
-      {/* Cabeçalho */}
-      <div className="p-6 border-b-4 border-slate-100 flex justify-between items-center bg-slate-50/50">
-        <div>
-          <h2 className="text-2xl font-black uppercase italic tracking-tighter text-slate-900 leading-none">Editar tarefa</h2>
-          <p className="text-[9px] font-black text-blue-600 uppercase tracking-widest mt-1">Ajuste de Coordenadas Operacionais</p>
-        </div>
-        <button 
-          onClick={() => setShowEditModal(false)} 
-          className="w-10 h-10 flex items-center justify-center rounded-xl bg-white border-2 border-slate-200 text-slate-400 hover:text-red-600 transition-all shadow-sm"
-        >
-          <X size={20} strokeWidth={3} />
-        </button>
-      </div>
-
-      {/* Formulário com Scroll Interno */}
-      <div className="flex-1 overflow-y-auto p-6 space-y-6 no-scrollbar pb-6">
+      {/* Formulário com Scroll Interno - pb-20 para dar espaço aos dropups */}
+      <div className="flex-1 overflow-y-auto p-8 space-y-8 no-scrollbar pb-20">
         
         {/* Título e Notas */}
         <div className="space-y-4">
           <input 
             className="w-full text-2xl font-black outline-none placeholder:text-slate-200 text-slate-900 bg-transparent border-b-4 border-slate-100 focus:border-blue-500 transition-all pb-2 uppercase" 
-            value={editingTask.title} 
-            onChange={e => setEditingTask({...editingTask, title: e.target.value})} 
+            placeholder="O QUE VAMOS FAZER?" 
+            value={taskTitle} 
+            onChange={e => setTaskTitle(e.target.value)} 
           />
           <textarea 
-            className="w-full p-4 bg-slate-50 rounded-3xl font-bold text-slate-700 border-2 border-slate-100 outline-none focus:border-blue-300 focus:bg-white transition-all min-h-[80px] text-sm resize-none" 
-            value={editingTask.notes || ''} 
-            onChange={e => setEditingTask({...editingTask, notes: e.target.value})} 
+            className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-slate-700 border-2 border-slate-100 outline-none focus:border-blue-300 focus:bg-white transition-all min-h-[80px] text-sm resize-none" 
+            placeholder="Coordenadas e detalhes da missão..." 
+            value={notes} 
+            onChange={e => setNotes(e.target.value)} 
           />
         </div>
 
-        {/* Checklist de Subtarefas */}
+        {/* Checklist de Passos */}
         <div className="space-y-3 bg-slate-50/50 p-5 rounded-[24px] border-2 border-dashed border-slate-200">
           <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest flex items-center gap-2">
-            <ListChecks size={14} className="text-blue-500"/> Checklist de Passos
+            <ListChecks size={14} className="text-blue-500"/> Passos de Execução
           </label>
           <div className="grid grid-cols-1 gap-2">
-            {(editingTask.subtasks || []).map((sub: any, index: number) => (
+            {tempSubtasks.map((sub, index) => (
               <div key={index} className="flex items-center gap-2 bg-white p-2.5 rounded-xl border-2 border-slate-100 shadow-sm">
-                <input 
-                  type="checkbox" 
-                  checked={sub.done} 
-                  onChange={(e) => { const newSubs = [...editingTask.subtasks]; newSubs[index].done = e.target.checked; setEditingTask({...editingTask, subtasks: newSubs}); }} 
-                  className="w-4 h-4 accent-blue-600 ml-2" 
-                />
                 <input 
                   className="flex-1 text-xs font-black text-slate-600 outline-none uppercase" 
                   value={sub.title} 
-                  onChange={(e) => { const newSubs = [...editingTask.subtasks]; newSubs[index].title = e.target.value; setEditingTask({...editingTask, subtasks: newSubs}); }} 
+                  onChange={(e) => { const newSubs = [...tempSubtasks]; newSubs[index].title = e.target.value; setTempSubtasks(newSubs); }} 
+                  placeholder="Nome do passo..." 
                 />
-                <button onClick={() => { const newSubs = editingTask.subtasks.filter((_:any, i:number) => i !== index); setEditingTask({...editingTask, subtasks: newSubs}); }} className="text-red-400 p-1 hover:bg-red-50 rounded-lg"><X size={14}/></button>
+                <button onClick={() => setTempSubtasks(tempSubtasks.filter((_, i) => i !== index))} className="text-red-400 p-1 hover:bg-red-50 rounded-lg"><X size={14}/></button>
               </div>
             ))}
             <button 
-              onClick={() => { const newSubs = [...(editingTask.subtasks || []), { title: '', done: false }]; setEditingTask({...editingTask, subtasks: newSubs}); }} 
+              onClick={() => setTempSubtasks([...tempSubtasks, { title: '', done: false }])} 
               className="flex items-center justify-center gap-2 p-2 border-2 border-dashed border-slate-300 rounded-xl text-slate-400 font-black text-[9px] hover:border-blue-400 transition-all uppercase"
             >
               <Plus size={14} strokeWidth={3}/> Adicionar Passo
@@ -1200,54 +969,51 @@ const deleteTask = useCallback(async (taskId: string) => {
           </div>
         </div>
 
-        {/* Configurações (Filtros Dropup) */}
+        {/* Configurações Técnicas em 2 Colunas */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-end">
           
           {/* Coluna 1: Recorrência */}
           <div className="space-y-3 bg-white p-4 rounded-[24px] border-2 border-slate-100 shadow-sm">
             <div className="flex bg-slate-100 p-1 rounded-xl border-2 border-slate-200">
-              <button type="button" onClick={() => { setEditMode('semanal'); setEditingTask({...editingTask, repeat_days: ''}); }} className={`flex-1 py-1.5 rounded-lg font-black text-[10px] uppercase transition-all ${editMode === 'semanal' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}>Semanal</button>
-              <button type="button" onClick={() => { setEditMode('mensal'); setEditingTask({...editingTask, repeat_days: '1'}); }} className={`flex-1 py-1.5 rounded-lg font-black text-[10px] uppercase transition-all ${editMode === 'mensal' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}>Mensal</button>
+              <button type="button" onClick={() => setSelectedDays([])} className={`flex-1 py-1.5 rounded-lg font-black text-[9px] uppercase transition-all ${isNaN(parseInt(selectedDays[0])) ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}>Semanal</button>
+              <button type="button" onClick={() => setSelectedDays(['1'])} className={`flex-1 py-1.5 rounded-lg font-black text-[9px] uppercase transition-all ${!isNaN(parseInt(selectedDays[0])) ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}>Mensal</button>
             </div>
 
-            {editMode === 'mensal' ? (
-              <div className="space-y-2">
-                <label className="text-[9px] font-black uppercase text-slate-400 ml-2 italic">Novo Dia</label>
-                <div className="relative h-[50px] group cursor-pointer" onClick={() => editDateInputRef.current?.showPicker()}>
-                  <div className="absolute inset-0 flex items-center justify-center bg-slate-50 rounded-xl border-2 border-slate-100 font-black text-slate-700 text-base pointer-events-none uppercase transition-all group-hover:border-blue-500">
-                    {editDisplayDate}
-                    <Calendar size={16} className="absolute right-4 text-blue-500" />
-                  </div>
-                  <input ref={editDateInputRef} type="date" className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" onChange={e => { const dVal = e.target.value; if(dVal){ const [y,m,d] = dVal.split('-'); setEditDisplayDate(`${d}/${m}/${y}`); setEditingTask({...editingTask, repeat_days: d}); }}} />
+            {!isNaN(parseInt(selectedDays[0])) ? (
+              <div className="relative h-[50px] group cursor-pointer" onClick={() => dateInputRef.current?.showPicker()}>
+                <div className="absolute inset-0 flex items-center justify-center bg-slate-50 rounded-xl border-2 border-slate-100 font-black text-slate-700 text-base pointer-events-none uppercase transition-all group-hover:border-blue-500">
+                  {displayDate}
+                  <Calendar size={16} className="absolute right-4 text-blue-500" />
                 </div>
+                <input ref={dateInputRef} type="date" className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" onChange={e => { const dVal = e.target.value; if(dVal){ const [y,m,d] = dVal.split('-'); setDisplayDate(`${d}/${m}/${y}`); setSelectedDays([d]); }}} />
               </div>
             ) : (
               <div className="flex gap-1.5 justify-center p-1.5 bg-slate-50 rounded-xl border-2 border-slate-100">
                 {weekDays.map(day => (
-                  <button key={day.id} type="button" onClick={() => toggleDayInEdit(day.id)} className={`w-8 h-8 rounded-lg font-black text-[10px] transition-all ${editingTask.repeat_days?.split(',').includes(day.id) ? 'bg-blue-600 text-white shadow-lg' : 'bg-white text-slate-300'}`}>{day.label}</button>
+                  <button key={day.id} type="button" onClick={() => toggleDay(day.id)} className={`w-8 h-8 rounded-lg font-black text-[10px] transition-all ${selectedDays.includes(day.id) ? 'bg-blue-600 text-white shadow-lg scale-110' : 'bg-white text-slate-300'}`}>{day.label}</button>
                 ))}
               </div>
             )}
             <div className="flex items-center justify-between gap-4 px-2">
                <label className="text-[8px] font-black uppercase text-slate-400 italic">Intervalo</label>
-               <input type="number" min="1" className="w-16 p-1.5 bg-slate-50 rounded-lg font-black border-2 border-slate-100 text-slate-900 text-center text-xs" value={editingTask.repeat_interval} onChange={e => setEditingTask({...editingTask, repeat_interval: parseInt(e.target.value) || 1})} />
+               <input type="number" min="1" className="w-16 p-1.5 bg-slate-50 rounded-lg font-black border-2 border-slate-100 text-slate-900 text-center text-xs" value={repeatInterval} onChange={e => setRepeatInterval(parseInt(e.target.value) || 1)} />
             </div>
           </div>
 
           {/* Coluna 2: Responsável e Classificação */}
           <div className="space-y-4">
-            {/* Responsável com Dropup */}
+            {/* Responsável (Dropup) */}
             <div className="relative">
               <label className="text-[9px] font-black uppercase text-slate-400 ml-2 italic">Responsável</label>
               <button 
                 type="button"
                 onClick={() => userRole !== 'membro' && setShowAssignMenu(!showAssignMenu)}
                 className={`w-full h-12 px-4 rounded-xl border-2 font-black text-[10px] uppercase flex items-center justify-between transition-all relative z-[80]
-                  ${showAssignMenu ? 'border-blue-600 bg-white' : 'border-slate-900 bg-white shadow-[3px_3px_0px_0px_rgba(15,23,42,1)]'}`}
+                  ${showAssignMenu ? 'border-blue-600 bg-white' : 'border-slate-900 bg-white shadow-[4px_4px_0px_0px_rgba(15,23,42,1)]'}`}
               >
                 <div className="flex items-center gap-2">
                   <User size={14} className="text-blue-500" />
-                  <span className="truncate">{profiles.find(p => p.id === editingTask.assigned_to)?.full_name || 'Selecionar...'}</span>
+                  <span className="truncate">{profiles.find(p => p.id === assignedTo)?.full_name || 'Selecionar...'}</span>
                 </div>
                 <ChevronDown size={16} className={`transition-transform duration-300 ${showAssignMenu ? 'rotate-180' : ''}`} />
               </button>
@@ -1258,8 +1024,8 @@ const deleteTask = useCallback(async (taskId: string) => {
                   <div className="absolute left-0 right-0 bottom-full mb-2 bg-white border-4 border-slate-900 rounded-[24px] shadow-[10px_10px_0px_0px_rgba(15,23,42,1)] z-[100] p-3 max-h-[180px] overflow-y-auto no-scrollbar animate-in slide-in-from-bottom-2">
                     <div className="flex flex-col gap-1">
                       {profiles.filter(p => userRole === 'admin' || p.sector === userSector).map(p => (
-                        <button key={p.id} type="button" onClick={() => { setEditingTask({...editingTask, assigned_to: p.id}); setShowAssignMenu(false); }} className={`p-2.5 text-left font-black text-[9px] uppercase flex items-center gap-2 rounded-lg transition-all border-2 ${editingTask.assigned_to === p.id ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-slate-50 text-slate-600 hover:border-blue-300'}`}>
-                          <div className={`w-5 h-5 rounded-md border flex items-center justify-center text-[7px] font-bold ${editingTask.assigned_to === p.id ? 'bg-white/20' : 'bg-blue-100 text-blue-600'}`}>{p.full_name?.charAt(0)}</div>
+                        <button key={p.id} type="button" onClick={() => { setAssignedTo(p.id); setShowAssignMenu(false); }} className={`p-2.5 text-left font-black text-[9px] uppercase flex items-center gap-3 rounded-lg transition-all border-2 ${assignedTo === p.id ? 'bg-blue-600 border-blue-600 text-white shadow-md' : 'bg-white border-slate-50 text-slate-600 hover:border-blue-300'}`}>
+                          <div className={`w-5 h-5 rounded-md border flex items-center justify-center text-[7px] font-bold ${assignedTo === p.id ? 'bg-white/20' : 'bg-blue-100 text-blue-600'}`}>{p.full_name?.charAt(0)}</div>
                           {p.full_name}
                         </button>
                       ))}
@@ -1269,18 +1035,18 @@ const deleteTask = useCallback(async (taskId: string) => {
               )}
             </div>
 
-            {/* Classificação com Dropup */}
+            {/* Classificação (Dropup) */}
             <div className="relative">
               <label className="text-[9px] font-black uppercase text-slate-400 ml-2 italic">Classificação</label>
               <button 
                 type="button"
                 onClick={() => setShowCategoryMenu(!showCategoryMenu)}
                 className={`w-full h-12 px-4 rounded-xl border-2 font-black text-[10px] uppercase flex items-center justify-between transition-all relative z-[80]
-                  ${showCategoryMenu ? 'border-blue-600 bg-white' : 'border-slate-900 bg-white shadow-[3px_3px_0px_0px_rgba(15,23,42,1)]'}`}
+                  ${showCategoryMenu ? 'border-blue-600 bg-white' : 'border-slate-900 bg-white shadow-[4px_4px_0px_0px_rgba(15,23,42,1)]'}`}
               >
                 <div className="flex items-center gap-2">
                   <Activity size={14} className="text-blue-500" />
-                  <span>{editingTask.category}</span>
+                  <span>{category}</span>
                 </div>
                 <ChevronDown size={16} className={`transition-transform duration-300 ${showCategoryMenu ? 'rotate-180' : ''}`} />
               </button>
@@ -1290,7 +1056,7 @@ const deleteTask = useCallback(async (taskId: string) => {
                   <div className="absolute left-0 right-0 bottom-full mb-2 bg-white border-4 border-slate-900 rounded-[24px] shadow-[10px_10px_0px_0px_rgba(15,23,42,1)] z-[100] p-3 animate-in slide-in-from-bottom-2">
                     <div className="flex flex-col gap-1">
                       {['Trade', 'Reunião', 'Geral'].map(opt => (
-                        <button key={opt} type="button" onClick={() => { setEditingTask({...editingTask, category: opt}); setShowCategoryMenu(false); }} className={`p-3 text-left font-black text-[10px] uppercase rounded-lg transition-all border-2 ${editingTask.category === opt ? 'bg-blue-600 border-blue-600 text-white shadow-md' : 'bg-white border-slate-50 text-slate-600 hover:border-blue-300'}`}>{opt}</button>
+                        <button key={opt} type="button" onClick={() => { setCategory(opt); setShowCategoryMenu(false); }} className={`p-3 text-left font-black text-[10px] uppercase rounded-lg transition-all border-2 ${category === opt ? 'bg-blue-600 border-blue-600 text-white shadow-md' : 'bg-white border-slate-50 text-slate-600 hover:border-blue-300'}`}>{opt}</button>
                       ))}
                     </div>
                   </div>
@@ -1303,197 +1069,194 @@ const deleteTask = useCallback(async (taskId: string) => {
 
       {/* Rodapé Fixo */}
       <div className="p-6 bg-slate-50 border-t-4 border-slate-100 flex gap-3 mt-auto">
-        <button 
-          onClick={() => setShowEditModal(false)}
-          className="flex-1 py-4 rounded-2xl border-2 border-slate-200 text-slate-400 font-black uppercase text-[10px] hover:bg-slate-100 transition-all"
-        >
-          Cancelar
-        </button>
-        <button 
-          onClick={updateTask} 
-          className="flex-[2] py-4 bg-blue-600 hover:bg-slate-900 text-white rounded-2xl font-black uppercase tracking-widest text-[11px] transition-all flex items-center justify-center gap-2 shadow-lg active:scale-95"
-        >
-          <Check size={20} strokeWidth={4} /> Atualizar tarefa Agora
+        <button onClick={() => setShowCreateBox(false)} className="flex-1 py-4 rounded-2xl border-2 border-slate-200 text-slate-400 font-black uppercase text-[10px] hover:bg-white transition-all active:translate-y-1">Descartar</button>
+        <button onClick={addTask} className="flex-[2] py-4 bg-blue-600 hover:bg-slate-900 text-white rounded-2xl font-black uppercase shadow-lg transition-all active:scale-95 flex items-center justify-center gap-2">
+           <Check size={20} strokeWidth={4} /> Lançar Tarefa Agora
         </button>
       </div>
     </div>
   </div>
 )}
-{/* 3. PAINEL LATERAL INTEGRADO (DRAWER STYLE) */}
-<div 
-  className={`fixed inset-0 z-[100] transition-all duration-500 ${viewingTask ? 'visible' : 'invisible pointer-events-none'}`}
->
-  {/* Camada de fundo quase transparente para manter o contexto total da lista */}
-  <div 
-    className={`absolute inset-0 bg-slate-900/10 transition-opacity duration-500 ${viewingTask ? 'opacity-100' : 'opacity-0'}`} 
-    onClick={() => setViewingTask(null)}
-  />
+{showMeetingModal && (
+  <div className="fixed inset-0 bg-slate-900/95 z-[100] flex items-center justify-center p-4 backdrop-blur-md animate-in fade-in">
+    <div className="bg-white w-full max-w-xl rounded-[48px] border-4 border-slate-900 shadow-[20px_20px_0px_0px_rgba(37,99,235,1)] flex flex-col max-h-[90vh] overflow-hidden relative">
+      <div className="absolute top-0 left-0 w-full h-2 bg-blue-600"></div>
+      
+      <div className="p-8 border-b-4 border-slate-100 flex justify-between items-center bg-slate-50">
+        <div>
+          <h2 className="text-3xl font-black uppercase italic tracking-tighter text-slate-900">Agendar Reunião</h2>
+          <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest">Módulo de Governança • {userSector}</p>
+        </div>
+        <button onClick={() => setShowMeetingModal(false)}><X size={32} strokeWidth={3}/></button>
+      </div>
 
-  {/* GAVETA (SIDEBAR) - Encostada na borda com sombra suave lateral */}
-  <div 
-    className={`absolute top-0 right-0 h-full bg-white w-full md:w-[420px] border-l-2 border-slate-200 shadow-[-10px_0_30px_rgba(0,0,0,0.05)] flex flex-col transition-transform duration-500 ease-in-out transform z-[110]
-      ${viewingTask ? 'translate-x-0' : 'translate-x-full'}`}
-  >
-    {viewingTask && (
-      <div className="flex flex-col h-full overflow-hidden bg-[#F8FAFC]">
+      <div className="flex-1 overflow-y-auto p-8 space-y-6 no-scrollbar">
+        <input className="w-full text-2xl font-black outline-none border-b-4 border-slate-100 focus:border-blue-500 uppercase placeholder:text-slate-200" placeholder="PAUTA DA REUNIÃO" value={mtTitle} onChange={e => setMtTitle(e.target.value)} />
         
-        {/* CABEÇALHO: Mesma cor da Navbar para dar continuidade */}
-        <div className={`p-8 border-b-2 border-white/10 ${viewingTask.isDoneToday ? 'bg-green-600' : 'bg-[#232D4A]'} text-white relative`}>
-          <div className="flex justify-between items-center mb-6">
-            <span className="bg-white/10 px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest border border-white/10">
-              {viewingTask.category}
-            </span>
-            <button 
-              onClick={(e) => { e.stopPropagation(); setViewingTask(null); }} 
-              className="w-10 h-10 flex items-center justify-center rounded-xl bg-white/5 hover:bg-white/20 text-white transition-all"
-            >
-              <X size={24} strokeWidth={3}/>
-            </button>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-1">
+            <label className="text-[10px] font-black text-slate-400 uppercase ml-2">Data</label>
+            <input type="date" className="w-full p-4 bg-slate-50 border-2 border-slate-900 rounded-2xl font-black" value={mtDate} onChange={e => setMtDate(e.target.value)} />
           </div>
-          <h2 className="text-2xl font-black uppercase italic tracking-tighter leading-tight break-words">
-            {viewingTask.title}
-          </h2>
+          <div className="space-y-1">
+            <label className="text-[10px] font-black text-slate-400 uppercase ml-2">Horário</label>
+            <input type="time" className="w-full p-4 bg-slate-50 border-2 border-slate-900 rounded-2xl font-black" value={mtTime} onChange={e => setMtTime(e.target.value)} />
+          </div>
         </div>
 
-        {/* ÁREA DE CONTEÚDO: fundo levemente diferente para destacar os cards internos */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-6 no-scrollbar">
-          
-          {/* CARDS DE INFO RÁPIDA */}
-          <div className="grid grid-cols-2 gap-3">
-             <div className="p-4 bg-white border border-slate-200 rounded-2xl shadow-sm">
-                <p className="text-[8px] font-black text-slate-400 uppercase mb-1">Responsável</p>
-                <div className="flex items-center gap-2">
-                   <div className="w-6 h-6 bg-slate-900 text-white rounded-md flex items-center justify-center text-[10px] font-black uppercase">
-                     {profiles.find(p => p.id === viewingTask.assigned_to)?.full_name?.charAt(0)}
-                   </div>
-                   <span className="font-bold text-[11px] text-slate-900 uppercase truncate">
-                     {profiles.find(p => p.id === viewingTask.assigned_to)?.full_name}
-                   </span>
-                </div>
-             </div>
-             <div className="p-4 bg-white border border-slate-200 rounded-2xl shadow-sm">
-                <p className="text-[8px] font-black text-slate-400 uppercase mb-1">Setor</p>
-                <div className="flex items-center gap-2">
-                   <div className="w-2 h-2 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.5)]" />
-                   <span className="font-bold text-[11px] text-slate-900 uppercase">
-                     {viewingTask.sector}
-                   </span>
-                </div>
-             </div>
-          </div>
+        <textarea className="w-full p-4 bg-slate-50 rounded-3xl font-bold border-2 border-slate-100 min-h-[100px] text-sm" placeholder="Descrição ou pontos a discutir..." value={mtDescription} onChange={e => setMtContent(e.target.value)} />
 
-          {/* DESCRIÇÃO - Agora com visual de Bloco de Notas */}
-          <div className="space-y-2">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2 flex items-center gap-2">
-              <FileText size={12}/> Instruções da Missão
-            </label>
-            <div className="bg-white p-6 rounded-2xl border border-slate-200 text-slate-700 font-medium leading-relaxed whitespace-pre-wrap text-sm break-all shadow-sm">
-              {viewingTask.notes || "Sem notas adicionais."}
-            </div>
-          </div>
-
-          {/* CHECKLIST: Visual limpo e conectado */}
-          {viewingTask.subtasks?.length > 0 && (
-            <div className="space-y-3">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2 text-center block">Checklist de Execução</label>
-              <div className="bg-white rounded-2xl border border-slate-200 divide-y divide-slate-100 overflow-hidden shadow-sm">
-                {viewingTask.subtasks.map((sub: any, i: number) => (
-                  <div key={i} className="flex items-center gap-4 p-4 transition-all">
-                    {sub.done ? <CheckCircle2 size={18} className="text-green-500" /> : <div className="w-4 h-4 rounded-full border-2 border-slate-200" />}
-                    <span className={`text-[10px] font-black uppercase ${sub.done ? 'line-through text-slate-300' : 'text-slate-600'}`}>{sub.title}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* RODAPÉ: Integrado e fixo */}
-        <div className="p-6 bg-white border-t border-slate-200 flex gap-3">
-           {(userRole === 'admin' || userRole === 'gerente' || viewingTask.assigned_to === user.id) && (
-              <button 
-                onClick={() => { setEditingTask(viewingTask); setShowEditModal(true); setViewingTask(null); }} 
-                className="flex-[2] bg-[#232D4A] text-white p-4 rounded-xl font-black uppercase tracking-widest hover:bg-blue-600 transition-all flex items-center justify-center gap-2 text-[11px] shadow-md"
-              >
-                <Edit3 size={16} /> Editar
-              </button>
-           )}
-           <button 
-             onClick={() => setViewingTask(null)}
-             className="flex-1 py-4 rounded-xl border border-slate-200 font-black uppercase text-[10px] text-slate-400 hover:bg-slate-50 transition-all"
-           >
-             Sair
-           </button>
+        {/* UPLOAD DE ARQUIVOS */}
+        <div className="space-y-2">
+          <label className="text-[10px] font-black text-slate-400 uppercase ml-2 italic">Anexar Documentos (Contratos/Atas)</label>
+          <label className="w-full flex items-center justify-center gap-3 p-6 border-4 border-dashed border-slate-200 rounded-[32px] cursor-pointer hover:bg-blue-50 hover:border-blue-500 transition-all group">
+            <input type="file" className="hidden" onChange={e => setMtFile(e.target.files?.[0] || null)} />
+            <FileText className="text-slate-300 group-hover:text-blue-600" size={32} />
+            <span className="font-black text-xs text-slate-400 uppercase">{mtFile ? mtFile.name : 'Clique para selecionar arquivo'}</span>
+          </label>
         </div>
       </div>
-    )}
-  </div>
-</div>
 
-      {/* 4. MODAL DE CONFIGURAÇÕES (FORA DA SIDEBAR) */}
+      <div className="p-8 bg-slate-50 border-t-4 border-slate-100 flex gap-3">
+        <button onClick={addMeeting} disabled={mtUploading} className="w-full py-5 bg-blue-600 text-white rounded-3xl font-black uppercase tracking-widest shadow-lg hover:bg-slate-900 transition-all flex items-center justify-center gap-3">
+          {mtUploading ? 'PROCESSANDO...' : <><Check size={24} strokeWidth={4}/> FINALIZAR AGENDAMENTO</>}
+        </button>
+      </div>
+    </div>
+  </div>
+)}
+{/* MODAL DE DETALHES DA REUNIÃO (ATA E ARQUIVOS) */}
+{viewingMeeting && (
+  <div className="fixed inset-0 bg-slate-900/95 z-[120] flex items-center justify-center p-4 backdrop-blur-md animate-in zoom-in-95">
+    <div className="bg-white w-full max-w-lg rounded-[48px] border-4 border-slate-900 shadow-[20px_20px_0px_0px_rgba(15,23,42,1)] flex flex-col relative overflow-hidden">
+      <div className="p-8 border-b-4 border-slate-900 bg-blue-600 text-white">
+        <div className="flex justify-between items-start mb-4">
+          <span className="bg-black/20 px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest">Ata de Reunião</span>
+          <button onClick={() => setViewingMeeting(null)}><X size={32} strokeWidth={3}/></button>
+        </div>
+        <h2 className="text-3xl font-black uppercase italic tracking-tighter leading-tight">{viewingMeeting.title}</h2>
+      </div>
+
+      <div className="p-8 space-y-6">
+        <div className="bg-slate-50 p-6 rounded-3xl border-2 border-slate-100 text-slate-700 font-bold whitespace-pre-wrap text-sm italic">
+          {viewingMeeting.description || "Nenhum resumo registrado."}
+        </div>
+
+        {/* BOTÃO DE DOWNLOAD DO ARQUIVO/ATA */}
+        {viewingMeeting.file_url ? (
+          <a 
+            href={viewingMeeting.file_url} 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="flex items-center justify-between p-6 bg-green-50 border-4 border-green-600 rounded-[32px] group hover:bg-green-600 transition-all"
+          >
+            <div className="flex items-center gap-4">
+              <div className="p-3 bg-white rounded-2xl text-green-600 border-2 border-green-100 shadow-sm">
+                <FileText size={24} />
+              </div>
+              <div className="text-left">
+                <p className="font-black text-green-600 group-hover:text-white uppercase text-sm leading-none">Ver Documento Anexo</p>
+                <p className="text-[9px] font-bold text-green-400 group-hover:text-white/70 uppercase mt-1">Contrato / Ata de Reunião</p>
+              </div>
+            </div>
+            <ChevronRight className="text-green-300 group-hover:text-white group-hover:translate-x-2 transition-all" />
+          </a>
+        ) : (
+          <div className="p-6 border-4 border-dashed border-slate-100 rounded-[32px] text-center">
+            <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest">Nenhum arquivo anexado a esta pauta</p>
+          </div>
+        )}
+      </div>
+      
+      <div className="p-8 bg-slate-50 border-t-4 border-slate-100 text-center">
+         <button onClick={async () => { if(confirm('Remover?')) { await supabase.from('meetings').delete().eq('id', viewingMeeting.id); setViewingMeeting(null); fetchMeetings(); }}} className="text-[10px] font-black text-red-300 hover:text-red-600 uppercase tracking-widest transition-colors">Excluir Agendamento</button>
+      </div>
+    </div>
+  </div>
+)}
+      
+      {/* MODAL CONFIGURAÇÕES */}
       {showSettingsModal && (
-        <div className="fixed inset-0 bg-slate-900/95 z-[60] flex items-center justify-center p-4 backdrop-blur-md animate-in fade-in">
+        <div className="fixed inset-0 bg-slate-900/95 z-[100] flex items-center justify-center p-4 backdrop-blur-md animate-in fade-in">
           <div className="bg-white w-full max-w-2xl rounded-[48px] border-4 border-slate-900 shadow-[20px_20px_0px_0px_rgba(37,99,235,1)] flex flex-col max-h-[90vh] overflow-hidden">
             <div className="p-8 border-b-4 border-slate-100 flex justify-between items-center bg-slate-50">
-              <div>
-                <h2 className="text-3xl font-black uppercase italic tracking-tighter text-slate-900">Configurações</h2>
-                <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest">Painel de Controle</p>
-              </div>
-              <button onClick={() => setShowSettingsModal(false)}><X size={32} strokeWidth={3} /></button>
+              <div><h2 className="text-3xl font-black uppercase italic tracking-tighter text-slate-900 leading-none">Configurações</h2><p className="text-[10px] font-black text-blue-600 uppercase tracking-widest mt-1">Painel de Controle Central</p></div>
+              <button onClick={() => setShowSettingsModal(false)} className="w-12 h-12 flex items-center justify-center rounded-2xl bg-white border-2 border-slate-200 text-slate-400 hover:text-slate-900 transition-all"><X size={32} strokeWidth={3} /></button>
             </div>
-            <div className="flex-1 overflow-y-auto p-8 space-y-10">
+            <div className="flex-1 overflow-y-auto p-8 space-y-10 no-scrollbar">
               {userRole === 'admin' ? (
                 <div className="space-y-6">
-                  <div className="flex items-center gap-2"><User size={20} className="text-blue-600"/><h3 className="font-black uppercase text-sm tracking-widest text-slate-900">Gestão de Tropa</h3></div>
-                  <div className="space-y-3">
+                  <div className="flex items-center gap-2"><User size={20} className="text-blue-600"/><h3 className="font-black uppercase text-sm tracking-widest text-slate-900 italic">Gestão da Tropa</h3></div>
+                  <div className="space-y-4">
                     {profiles.map((profile) => (
-                      <div key={profile.id} className="flex flex-col md:flex-row md:items-center justify-between p-4 bg-slate-50 rounded-3xl border-2 border-slate-100 gap-4">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 bg-slate-900 text-white rounded-2xl flex items-center justify-center font-black text-xs">{profile.full_name?.charAt(0)}</div>
-                          <div><p className="font-black text-slate-900 text-sm leading-tight">{profile.full_name || 'Sem Nome'}</p><p className="text-[9px] font-bold text-slate-400 uppercase">{profile.role || 'membro'}</p></div>
-                        </div>
-                        <div className="flex gap-1.5">
-                          {['membro', 'gerente', 'admin'].map((role) => (
-                            <button key={role} onClick={() => changeRole(profile.id, role)} className={`px-3 py-1.5 rounded-xl font-black text-[9px] uppercase border-2 transition-all ${profile.role === role ? 'bg-slate-900 border-slate-900 text-white' : 'bg-white border-slate-200 text-slate-400'}`}>{role}</button>
-                          ))}
-                          {/* Dentro do profiles.map no Modal de Configurações */}
-<select 
-  value={profile.sector || 'Geral'}
-  onChange={async (e) => {
-    const newS = e.target.value;
-    await supabase.from('profiles').update({ sector: newS }).eq('id', profile.id);
-    fetchProfiles(); // Recarrega a lista para mostrar a mudança
-  }}
-  className="text-[9px] font-black uppercase bg-white border-2 border-slate-900 rounded-lg px-2 py-1"
->
-  <option value="Geral">Geral</option>
-  <option value="Compras Perfumaria">Compras Perfumaria</option>
-  <option value="Compras Medicamentos">Compras Medicamentos</option>
-  <option value="Precificação">Precificação</option>
-  <option value="Logística">Logística</option>
-</select>
+                      <div key={profile.id} className="flex flex-col gap-4 p-6 bg-slate-50 rounded-[32px] border-2 border-slate-100 shadow-sm">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-4">
+                            <div className="w-12 h-12 bg-slate-900 text-white rounded-2xl flex items-center justify-center font-black text-lg">{profile.full_name?.charAt(0)}</div>
+                            <div>
+                              <p className="font-black text-slate-900 text-base leading-tight uppercase">{profile.full_name || 'Usuário Sem Nome'}</p>
+                              <div className="flex gap-2 mt-1">
+                                <span className="bg-blue-100 text-blue-600 text-[8px] font-black px-2 py-0.5 rounded-full uppercase">{profile.role}</span>
+                                <span className="bg-slate-200 text-slate-500 text-[8px] font-black px-2 py-0.5 rounded-full uppercase">{profile.sector}</span>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex flex-col gap-2">
+                             <div className="flex gap-1">
+                                {['membro', 'gerente', 'admin'].map((r) => (<button key={r} onClick={() => changeRole(profile.id, r)} className={`px-3 py-1 rounded-xl font-black text-[9px] uppercase border-2 transition-all ${profile.role === r ? 'bg-slate-900 border-slate-900 text-white' : 'bg-white border-slate-200 text-slate-400'}`}>{r}</button>))}
+                             </div>
+                             <select value={profile.sector || 'Geral'} onChange={async (e) => { await supabase.from('profiles').update({ sector: e.target.value }).eq('id', profile.id); fetchProfiles(); }} className="text-[9px] font-black uppercase bg-white border-2 border-slate-200 rounded-lg px-2 py-1 outline-none focus:border-blue-600"><option value="Geral">Geral</option><option value="Compras Perfumaria">Compras Perfumaria</option><option value="Compras Medicamentos">Compras Medicamentos</option><option value="Precificação">Precificação</option><option value="Logística">Logística</option></select>
+                          </div>
                         </div>
                       </div>
                     ))}
                   </div>
                 </div>
-              ) : ( <div className="p-8 bg-blue-50 rounded-[32px] text-center text-xs font-black text-blue-900 uppercase">Gestão restrita ao Admin</div> )}
-              <div className="space-y-6 pt-6 border-t-2 border-slate-100">
-                <button onClick={async () => { await supabase.auth.signOut(); window.location.reload(); }} className="w-full flex items-center justify-between p-6 bg-red-50 hover:bg-red-100 border-2 border-red-100 rounded-3xl transition-all">
-                  <div className="flex items-center gap-4"><div className="p-3 bg-white rounded-2xl text-red-600 border-2 border-red-50"><LogOut size={24} /></div><div className="text-left"><p className="font-black text-red-600 uppercase text-sm">Sair do Sistema</p></div></div>
-                  <ChevronRight className="text-red-300" />
+              ) : ( <div className="p-8 bg-blue-50 border-2 border-blue-100 rounded-[32px] text-center text-xs font-black text-blue-900 uppercase">Seu nível de acesso não permite gerenciar a equipe.</div> )}
+              <div className="pt-6 border-t-2 border-slate-100">
+                <button onClick={handleLogout} className="w-full flex items-center justify-between p-8 bg-red-50 hover:bg-red-100 border-4 border-red-100 rounded-[32px] font-black uppercase transition-all group shadow-sm active:translate-y-1"> 
+                  <div className="flex items-center gap-6"><div className="p-4 bg-white rounded-2xl text-red-600 border-2 border-red-50 shadow-inner"><LogOut size={32} /></div><div className="text-left"><p className="font-black text-red-600 uppercase text-lg">Sair do Sistema</p><p className="text-[10px] font-bold text-red-400 uppercase tracking-widest">Encerrar sessão operacional</p></div></div>
+                  <ChevronRight size={32} className="text-red-300 group-hover:translate-x-2 transition-transform" />
                 </button>
               </div>
             </div>
-            <div className="p-6 bg-slate-50 border-t-4 border-slate-100 text-center"><p className="text-[9px] font-black text-slate-400 uppercase tracking-[0.4em]">WALLY Task Builder • v2.0</p></div>
+            <div className="p-6 bg-slate-50 border-t-4 border-slate-100 text-center"><p className="text-[9px] font-black text-slate-400 uppercase tracking-[0.5em]">WALLY Task Control • v3.0 • Secure Access</p></div>
           </div>
         </div>
       )}
 
+      {/* PAINEL LATERAL DETALHES (GAVETA INTEGRADA) */}
+      <div className={`fixed inset-0 z-[100] transition-all duration-500 ${viewingTask ? 'visible' : 'invisible pointer-events-none'}`}>
+        <div className={`absolute inset-0 bg-slate-900/10 transition-opacity duration-500 ${viewingTask ? 'opacity-100' : 'opacity-0'}`} onClick={() => setViewingTask(null)} />
+        <div className={`absolute top-0 right-0 h-full bg-white w-full md:w-[420px] border-l-4 border-slate-900 shadow-[-10px_0_30px_rgba(0,0,0,0.1)] flex flex-col transition-transform duration-500 ease-in-out transform z-[110] ${viewingTask ? 'translate-x-0' : 'translate-x-full'}`}>
+          {viewingTask && (
+            <div className="flex flex-col h-full overflow-hidden bg-[#F8FAFC]">
+              <div className={`p-8 border-b-2 border-white/10 ${viewingTask.isDoneToday ? 'bg-green-600' : 'bg-[#232D4A]'} text-white relative`}>
+                <div className="flex justify-between items-center mb-6"><span className="bg-white/10 px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest border border-white/10">{viewingTask.category}</span><button onClick={(e) => { e.stopPropagation(); setViewingTask(null); }} className="w-10 h-10 flex items-center justify-center rounded-xl bg-white/5 hover:bg-white/20 text-white transition-all"><X size={24} strokeWidth={3}/></button></div>
+                <h2 className="text-2xl font-black uppercase italic tracking-tighter leading-tight break-words">{viewingTask.title}</h2>
+              </div>
+              <div className="flex-1 overflow-y-auto p-6 space-y-6 no-scrollbar">
+                <div className="grid grid-cols-2 gap-3">
+                   <div className="p-4 bg-white border border-slate-200 rounded-2xl shadow-sm"><p className="text-[8px] font-black text-slate-400 uppercase mb-1">Responsável</p><div className="flex items-center gap-2"><div className="w-6 h-6 bg-slate-900 text-white rounded-md flex items-center justify-center text-[10px] font-black uppercase">{profiles.find(p => p.id === viewingTask.assigned_to)?.full_name?.charAt(0)}</div><span className="font-bold text-[11px] text-slate-900 uppercase truncate">{profiles.find(p => p.id === viewingTask.assigned_to)?.full_name}</span></div></div>
+                   <div className="p-4 bg-white border border-slate-200 rounded-2xl shadow-sm"><p className="text-[8px] font-black text-slate-400 uppercase mb-1">Status</p><div className="flex items-center gap-2"><div className={`w-2 h-2 rounded-full ${viewingTask.isDoneToday ? 'bg-green-500' : 'bg-blue-500'}`} /><span className="font-bold text-[11px] text-slate-900 uppercase">{viewingTask.isDoneToday ? 'Completo' : 'Em curso'}</span></div></div>
+                </div>
+                <div className="space-y-2"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2 flex items-center gap-2"><FileText size={12}/> Detalhes</label><div className="bg-white p-6 rounded-2xl border border-slate-200 text-slate-700 font-medium leading-relaxed whitespace-pre-wrap text-sm break-all shadow-sm">{viewingTask.notes || "Nenhum detalhe."}</div></div>
+                {viewingTask.subtasks?.length > 0 && (
+                  <div className="space-y-3"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2 text-center block">Subtarefas</label><div className="bg-white rounded-2xl border border-slate-200 divide-y divide-slate-100 overflow-hidden shadow-sm">{viewingTask.subtasks.map((sub: any, i: number) => (<div key={i} className="flex items-center gap-4 p-4 transition-all">{sub.done ? <CheckCircle2 size={18} className="text-green-500" /> : <div className="w-4 h-4 rounded-full border-2 border-slate-200" />}<span className={`text-[10px] font-black uppercase ${sub.done ? 'line-through text-slate-300' : 'text-slate-600'}`}>{sub.title}</span></div>))}</div></div>
+                )}
+              </div>
+              <div className="p-6 bg-white border-t border-slate-200 flex gap-3">
+                 {(userRole === 'admin' || userRole === 'gerente' || viewingTask.assigned_to === user.id) && (<button onClick={() => { setEditingTask(viewingTask); setShowEditModal(true); setViewingTask(null); }} className="flex-[2] bg-[#232D4A] text-white p-4 rounded-xl font-black uppercase tracking-widest hover:bg-blue-600 transition-all flex items-center justify-center gap-2 text-[11px] shadow-md"><Edit3 size={16} /> Editar</button>)}
+                 <button onClick={() => setViewingTask(null)} className="flex-1 py-4 rounded-xl border border-slate-200 font-black uppercase text-[10px] text-slate-400 hover:bg-slate-50 transition-all">Fechar</button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
     </div> // Fim do div principal
   );
 } // Fim do export default
-
 const TaskItem = memo(({ task, profiles, onUpdate, onEdit, userRole, currentUser, onView, onToggle, onDelete }: any) => {
   const [expanded, setExpanded] = useState(false);
   const isOwner = task.assigned_to === currentUser?.id;
