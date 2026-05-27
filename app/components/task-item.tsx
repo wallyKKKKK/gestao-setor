@@ -2,7 +2,7 @@
 
 import { memo, useState } from "react";
 import { Check, ChevronDown, Edit3, Trash2, User } from "lucide-react";
-import { addTaskHistory, updateTaskCompletion } from "@/lib/api";
+import { addAuditLog, addTaskHistory, updateTaskCompletion } from "@/lib/api";
 import { formatToBR, getTodayStr } from "@/lib/task-recurrence";
 import type { Profile, Subtask, TaskItemProps } from "@/lib/types";
 
@@ -36,6 +36,21 @@ export const TaskItem = memo(({ task, profiles, onUpdate, onEdit, userRole, curr
     }
 
     await updateTaskCompletion(task.id, allDone ? todayStr : null, newSubtasks);
+
+    if (currentUser) {
+      const profile = profiles.find((p: Profile) => p.id === currentUser.id);
+      await addAuditLog({
+        actorId: currentUser.id,
+        actorName: profile?.full_name || currentUser.email || "Usuário",
+        action: allDone ? "task_completed" : "subtask_updated",
+        entityType: "task",
+        entityId: task.id,
+        entityTitle: task.title,
+        sector: task.sector,
+        details: `Checklist: ${newSubtasks.filter((sub: Subtask) => sub.done).length}/${newSubtasks.length}`,
+      }).catch((error) => console.error("Erro ao registrar auditoria:", error));
+    }
+
     onUpdate();
   };
 
@@ -46,34 +61,33 @@ export const TaskItem = memo(({ task, profiles, onUpdate, onEdit, userRole, curr
         "bg-white border-slate-100 hover:border-slate-900 hover:shadow-[6px_6px_0px_0px_rgba(15,23,42,1)]"
       }`}
     >
-      <div className="flex items-center gap-6 p-4 md:px-8">
+      <div className="flex flex-wrap sm:flex-nowrap items-center gap-3 sm:gap-6 p-3 sm:p-4 md:px-8">
         <div className="flex-shrink-0">
           <button
             onClick={() => canManage ? onToggle(task) : alert("Acesso negado.")}
-            className={`w-12 h-12 rounded-full border-4 flex items-center justify-center transition-all
+            className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full border-4 flex items-center justify-center transition-all
               ${task.isDoneToday ? "bg-green-600 border-green-700 text-white" : "bg-white border-slate-200 text-transparent hover:border-blue-500"}`}
           >
-            <Check size={26} strokeWidth={4} />
+            <Check size={22} className="sm:w-[26px] sm:h-[26px]" strokeWidth={4} />
           </button>
         </div>
 
-        <div className="flex-1 min-w-0 flex flex-col justify-center">
+        <div className="flex-1 min-w-[180px] flex flex-col justify-center">
           <div className="cursor-pointer select-none group/title" onClick={() => onView(task)}>
-            <h3 className={`text-lg font-black uppercase tracking-tight leading-none transition-colors
+            <h3 className={`text-base sm:text-lg font-black uppercase tracking-tight leading-tight sm:leading-none transition-colors
               ${task.isDoneToday ? "line-through text-green-900/40" : "text-slate-900 group-hover:text-blue-600"}`}
             >
               {task.title}
             </h3>
-            {task.notes && (
-              <p className={`text-[10px] font-bold text-slate-400 italic line-clamp-1 mt-1 max-w-[400px]
-                ${task.isDoneToday ? "text-green-700/30" : ""}`}
-              >
-                {task.notes}
-              </p>
-            )}
+            <p className={`text-[10px] font-bold text-slate-400 italic line-clamp-1 mt-1 max-w-[400px] min-h-[14px]
+              ${task.isDoneToday ? "text-green-700/30" : ""}
+              ${task.notes ? "" : "invisible"}`}
+            >
+              {task.notes || "Sem descrição"}
+            </p>
           </div>
 
-          <div className="flex items-center gap-2 mt-2">
+          <div className="flex flex-wrap items-center gap-2 mt-2">
             <span className="px-2.5 py-1 rounded-lg bg-[#232D4A] text-white text-[8px] font-black uppercase flex items-center gap-1.5 shadow-sm">
               <User size={10}/> {profiles.find((p: Profile) => p.id === task.assigned_to)?.full_name?.split(" ")[0]}
             </span>
@@ -89,7 +103,7 @@ export const TaskItem = memo(({ task, profiles, onUpdate, onEdit, userRole, curr
           </div>
         </div>
 
-        <div className="flex-shrink-0 flex items-center gap-3">
+        <div className="w-full sm:w-auto flex-shrink-0 flex items-center justify-end gap-3">
           {subTotal > 0 && (
             <div
               className={`flex items-center gap-3 px-4 py-2 rounded-2xl border-2 transition-all cursor-pointer
@@ -97,7 +111,7 @@ export const TaskItem = memo(({ task, profiles, onUpdate, onEdit, userRole, curr
               onClick={() => setExpanded(!expanded)}
             >
               <div className="flex items-center gap-2">
-                <div className={`w-16 h-1.5 rounded-full overflow-hidden ${expanded ? "bg-white/20" : "bg-slate-200"}`}>
+                <div className={`w-12 sm:w-16 h-1.5 rounded-full overflow-hidden ${expanded ? "bg-white/20" : "bg-slate-200"}`}>
                   <div className={`${expanded ? "bg-blue-400" : "bg-blue-600"} h-full transition-all duration-500`} style={{ width: `${(subDone / subTotal) * 100}%` }} />
                 </div>
                 <span className="text-[10px] font-black whitespace-nowrap">{subDone}/{subTotal}</span>
@@ -107,7 +121,7 @@ export const TaskItem = memo(({ task, profiles, onUpdate, onEdit, userRole, curr
           )}
         </div>
 
-        <div className="flex items-center gap-1 border-l-2 pl-4 border-slate-100 opacity-0 group-hover:opacity-100 transition-opacity">
+        <div className="flex items-center gap-1 border-l-2 pl-3 sm:pl-4 border-slate-100 opacity-100 sm:opacity-0 group-hover:opacity-100 transition-opacity">
           {canManage && (
             <>
               <button onClick={(e) => { e.stopPropagation(); onEdit(task); }} className="p-2 text-slate-300 hover:text-blue-600 transition-all">
@@ -122,7 +136,7 @@ export const TaskItem = memo(({ task, profiles, onUpdate, onEdit, userRole, curr
       </div>
 
       {expanded && subTotal > 0 && (
-        <div className="px-10 pb-6 space-y-2 animate-in slide-in-from-top-3 duration-300">
+        <div className="px-4 sm:px-10 pb-6 space-y-2 animate-in slide-in-from-top-3 duration-300">
           <div className="h-[2px] bg-slate-100 mb-4 w-full" />
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             {subtasks.map((sub: Subtask, index: number) => (

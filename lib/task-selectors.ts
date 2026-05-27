@@ -1,0 +1,139 @@
+import { GLOBAL_MEMBER_TABS } from "@/app/constants";
+import { getLastOccurrence, getNextOccurrence, getTodayStr } from "@/lib/task-recurrence";
+import type { ProcessedTask, Task, UserRole } from "@/lib/types";
+
+interface FilterTasksInput {
+  tasks: ProcessedTask[];
+  activeTab: string;
+  filterUsers: string[];
+  userRole: UserRole;
+  userSector: string;
+  userId?: string;
+  searchTerm: string;
+}
+
+interface TaskStatsInput {
+  tasks: ProcessedTask[];
+  dashFilter: "HOJE" | "SEMANAL";
+  filterUsers: string[];
+  userRole: UserRole;
+  userSector: string;
+}
+
+export interface SectorStat {
+  sector: string;
+  total: number;
+  concluidas: number;
+  pendentes: number;
+  porcentagem: number;
+}
+
+export function processTasks(tasks: Task[]): ProcessedTask[] {
+  const today = getTodayStr();
+
+  return tasks.map((task) => {
+    const lastOcc = getLastOccurrence(task);
+    const nextOcc = getNextOccurrence(task);
+    const isDoneToday = task.last_done_date === today || Boolean(task.last_done_date && task.last_done_date >= lastOcc);
+    const shouldResetSubtasks = Boolean(task.last_done_date && task.last_done_date < lastOcc && !isDoneToday);
+    const subtasks = shouldResetSubtasks
+      ? task.subtasks.map((subtask) => ({ ...subtask, done: false }))
+      : task.subtasks;
+
+    return {
+      ...task,
+      subtasks,
+      lastOcc,
+      nextOcc,
+      isDoneToday,
+    };
+  });
+}
+
+export function filterTasks({
+  tasks,
+  activeTab,
+  filterUsers,
+  userRole,
+  userSector,
+  userId,
+  searchTerm,
+}: FilterTasksInput): ProcessedTask[] {
+  const normalizedSearch = searchTerm.toLowerCase();
+  const today = getTodayStr();
+
+  return tasks.filter((task) => {
+    if (task.category === "Reunião") return false;
+
+    const canSeeCrossSectorTrade =
+      userSector === "Trade" &&
+      activeTab === "Trade" &&
+      task.category === "Trade";
+
+    if (userRole !== "admin" && task.sector !== userSector && !canSeeCrossSectorTrade) {
+      return false;
+    }
+
+    const matchesSearch =
+      task.title.toLowerCase().includes(normalizedSearch) ||
+      Boolean(task.notes && task.notes.toLowerCase().includes(normalizedSearch));
+
+    if (searchTerm && !matchesSearch) return false;
+    if (userRole === "membro" && !GLOBAL_MEMBER_TABS.includes(activeTab) && task.assigned_to !== userId) return false;
+    if (filterUsers.length > 0 && !filterUsers.includes(task.assigned_to)) return false;
+
+    if (activeTab === "ATRASADOS") return !task.isDoneToday && task.lastOcc < today;
+    if (activeTab === "HOJE") return task.lastOcc === today && !task.isDoneToday;
+    if (activeTab === "Minhas") return task.assigned_to === userId;
+    if (activeTab === "Todas") return true;
+
+    return task.category === activeTab;
+  });
+}
+
+export function getTaskStats({ tasks, dashFilter, filterUsers, userRole, userSector }: TaskStatsInput) {
+  const today = getTodayStr();
+  const taskOnlyItems = tasks.filter((task) => task.category !== "Reunião");
+  const visibleTasks = userRole === "admin" ? taskOnlyItems : taskOnlyItems.filter((task) => task.sector === userSector);
+  const baseTasks = filterUsers.length === 0 ? visibleTasks : visibleTasks.filter((task) => filterUsers.includes(task.assigned_to));
+  const periodTasks = dashFilter === "HOJE" ? baseTasks.filter((task) => task.lastOcc === today) : baseTasks;
+  const concluidas = periodTasks.filter((task) => task.isDoneToday).length;
+  const total = periodTasks.length;
+  const porcentagem = total > 0 ? Math.round((concluidas / total) * 100) : 0;
+
+  return {
+    total,
+    concluidas,
+    pendentes: total - concluidas,
+    porcentagem,
+  };
+}
+
+export function getSectorStats({
+  tasks,
+  dashFilter,
+  userRole,
+  userSector,
+}: Omit<TaskStatsInput, "filterUsers">): SectorStat[] {
+  const today = getTodayStr();
+  const taskOnlyItems = tasks.filter((task) => task.category !== "Reunião");
+  const visibleTasks = userRole === "admin" ? taskOnlyItems : taskOnlyItems.filter((task) => task.sector === userSector);
+  const periodTasks = dashFilter === "HOJE" ? visibleTasks.filter((task) => task.lastOcc === today) : visibleTasks;
+  const sectors = Array.from(new Set(periodTasks.map((task) => task.sector || "Geral")));
+
+  return sectors
+    .map((sector) => {
+      const sectorTasks = periodTasks.filter((task) => (task.sector || "Geral") === sector);
+      const concluidas = sectorTasks.filter((task) => task.isDoneToday).length;
+      const total = sectorTasks.length;
+
+      return {
+        sector,
+        total,
+        concluidas,
+        pendentes: total - concluidas,
+        porcentagem: total > 0 ? Math.round((concluidas / total) * 100) : 0,
+      };
+    })
+    .sort((a, b) => b.porcentagem - a.porcentagem || b.total - a.total);
+}

@@ -23,7 +23,7 @@ export const getLastOccurrence = (task: Task) => {
   const todayStr = getTodayStr();
   const createdAtStr = task.created_at.split("T")[0];
 
-  if (!task.repeat_days || task.repeat_days === "") return task.last_done_date || "1970-01-01";
+  if (!task.repeat_days || task.repeat_days === "") return task.due_date || task.last_done_date || "1970-01-01";
 
   let theoreticalLastStr = "1970-01-01";
 
@@ -70,7 +70,7 @@ export const getLastOccurrence = (task: Task) => {
 export const getNextOccurrence = (task: Task) => {
   const today = new Date();
   const todayStr = getTodayStr();
-  if (!task.repeat_days || task.repeat_days === "") return "--/--/----";
+  if (!task.repeat_days || task.repeat_days === "") return task.due_date || "--/--/----";
 
   const dayOfMonth = parseInt(task.repeat_days);
   if (!isNaN(dayOfMonth) && !task.repeat_days.includes(",")) {

@@ -1,43 +1,46 @@
 
 'use client'
-import Image from 'next/image'
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react'
-import { GLOBAL_MEMBER_TABS, NAV_CATEGORIES } from '@/app/constants'
 import { AnnouncementBoard } from '@/app/components/announcement-board'
+import { AppSection, AppSidebar } from '@/app/components/app-sidebar'
+import { AppShellNav } from '@/app/components/app-shell-nav'
+import { AuditTimeline } from '@/app/components/audit-timeline'
 import { CreateTaskModal } from '@/app/components/create-task-modal'
 import { DashboardView } from '@/app/components/dashboard-view'
 import { EditTaskModal } from '@/app/components/edit-task-modal'
 import { HistoryTimeline } from '@/app/components/history-timeline'
 import { Login } from '@/app/components/login'
+import { MeetingCalendarView } from '@/app/components/meeting-calendar-view'
+import { PaymentTermsManager } from '@/app/components/payment-terms-manager'
+import { PricingManager } from '@/app/components/pricing-manager'
 import { ProfileModal } from '@/app/components/profile-modal'
 import { SettingsModal } from '@/app/components/settings-modal'
 import { TaskDrawer } from '@/app/components/task-drawer'
-import { TaskItem } from '@/app/components/task-item'
+import { TaskListView } from '@/app/components/task-list-view'
+import { useAnnouncementActions } from '@/app/hooks/use-announcement-actions'
+import { useProfileActions } from '@/app/hooks/use-profile-actions'
 import {
   addTaskHistory,
-  createAnnouncement,
+  addAuditLog,
+  createMeeting,
   createTask,
-  deleteAnnouncement,
   deleteTask as deleteTaskApi,
   fetchAnnouncements as fetchAnnouncementsApi,
+  fetchAuditLogs,
   fetchCurrentProfile,
   fetchProfiles as fetchProfilesApi,
   fetchTaskHistory,
   fetchTasks as fetchTasksApi,
   updateTask as updateTaskApi,
   updateTaskCompletion,
-  updateProfileName,
-  updateProfileRole,
-  updateProfileSector,
 } from '@/lib/api'
 import { supabase } from '@/lib/supabase'
 import type { RealtimeChannel, User as SupabaseUser } from '@supabase/supabase-js'
-import { getLastOccurrence, getNextOccurrence, getTodayStr } from '@/lib/task-recurrence'
-import type { Announcement, ProcessedTask, Profile, Subtask, Task, TaskHistory, UserRole } from '@/lib/types'
-import { 
-  Plus, X,
-  ChevronRight, ChevronDown, Settings, Search, Filter,
-} from 'lucide-react'
+import { getTodayStr } from '@/lib/task-recurrence'
+import { filterTasks, getSectorStats, getTaskStats, processTasks } from '@/lib/task-selectors'
+import type { CreateMeetingInput } from '@/lib/api'
+import type { Announcement, AuditLog, ProcessedTask, Profile, Subtask, Task, TaskHistory, UserRole } from '@/lib/types'
+import { Plus, X } from 'lucide-react'
 
 export default function App() {
   const [user, setUser] = useState<SupabaseUser | null>(null)
@@ -45,14 +48,15 @@ export default function App() {
   const [profiles, setProfiles] = useState<Profile[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
   const [history, setHistory] = useState<TaskHistory[]>([])
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([])
   
+  const [activeSection, setActiveSection] = useState<AppSection>('TAREFAS')
   const [activeTab, setActiveTab] = useState('HOJE')
   const [dashFilter, setDashFilter] = useState<'HOJE' | 'SEMANAL'>('HOJE')
-  const [filterUser, setFilterUser] = useState('Todos')
+  const [filterUsers, setFilterUsers] = useState<string[]>([])
   const [showCreateBox, setShowCreateBox] = useState(false)
   const [showProfileModal, setShowProfileModal] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
-  const [newName, setNewName] = useState('')
   const [editingTask, setEditingTask] = useState<ProcessedTask | null>(null)
 
   const [taskTitle, setTaskTitle] = useState('')
@@ -64,8 +68,6 @@ export default function App() {
   const [tempSubtasks, setTempSubtasks] = useState<{title: string, done: boolean}[]>([])
   const [viewingTask, setViewingTask] = useState<ProcessedTask | null>(null);
   const [announcements, setAnnouncements] = useState<Announcement[]>([])
-  const [annTitle, setAnnTitle] = useState('')
-  const [annContent, setAnnContent] = useState('')
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [displayDate, setDisplayDate] = useState('DD/MM/YYYY');
   const dateInputRef = useRef<HTMLInputElement>(null);
@@ -73,12 +75,9 @@ export default function App() {
   const editDateInputRef = useRef<HTMLInputElement>(null);
   const [editMode, setEditMode] = useState('semanal');
   const [searchTerm, setSearchTerm] = useState('');
-  const [showUserMenu, setShowUserMenu] = useState(false);
   const [userSector, setUserSector] = useState('Geral');
   const [showAssignMenu, setShowAssignMenu] = useState(false);
   const [showCategoryMenu, setShowCategoryMenu] = useState(false);
-  const [annImage, setAnnImage] = useState<File | null>(null);
-  const [uploading, setUploading] = useState(false);
 
   // Trava o scroll do fundo quando modais estao abertos
 useEffect(() => {
@@ -99,25 +98,7 @@ useEffect(() => {
   };
 }, [showCreateBox, showSettingsModal, showProfileModal, showEditModal]);
 
-  // Calcula a recorrencia das tarefas apenas quando necessario
-  const processedTasks = useMemo<ProcessedTask[]>(() => {
-  const today = getTodayStr();
-
-  return tasks.map((task: Task) => {
-    const last = getLastOccurrence(task);
-    const next = getNextOccurrence(task);
-    
-    // Considera pronta se foi feita hoje ou se a ultima conclusao cobre a data prevista
-    const doneToday = (task.last_done_date === today) || (task.last_done_date && task.last_done_date >= last);
-
-    return {
-      ...task,
-      lastOcc: last,
-      nextOcc: next,
-      isDoneToday: !!doneToday // O !! garante que seja um valor verdadeiro/falso (booleano)
-    };
-  });
-}, [tasks]);
+  const processedTasks = useMemo(() => processTasks(tasks), [tasks]);
 
   const fetchProfiles = useCallback(async () => {
     const data = await fetchProfilesApi();
@@ -134,10 +115,44 @@ useEffect(() => {
     setHistory(data);
   }, []);
 
+  const fetchAudit = useCallback(async () => {
+    if (userRole !== 'admin') return;
+    try {
+      const data = await fetchAuditLogs();
+      setAuditLogs(data);
+    } catch (error) {
+      console.error('Erro ao carregar auditoria:', error);
+      setAuditLogs([]);
+    }
+  }, [userRole]);
+
   const fetchAnnouncements = useCallback(async () => {
     const data = await fetchAnnouncementsApi();
     setAnnouncements(data);
   }, []);
+
+  const announcementActions = useAnnouncementActions({
+    user,
+    userSector,
+    onChanged: fetchAnnouncements,
+  });
+
+  const {
+    newName,
+    setNewName,
+    changeRole,
+    changeSector,
+    changeAccountStatus,
+    changeActive,
+    updateProfile,
+    signOut,
+  } = useProfileActions({
+    user,
+    onProfilesChanged: fetchProfiles,
+    onRoleChanged: setUserRole,
+    onProfileSaved: () => setShowProfileModal(false),
+    setProfiles,
+  });
 
   useEffect(() => {
   let channel: RealtimeChannel | null = null; // Canal reaproveitado na limpeza
@@ -149,6 +164,14 @@ useEffect(() => {
       
       fetchCurrentProfile(session.user.id).then((data) => {
         if (data) {
+          const isBlocked = data.is_active === false || data.account_status === 'pending' || data.account_status === 'rejected';
+
+          if (isBlocked) {
+            alert('Sua conta ainda não foi aprovada ou está bloqueada. Fale com um administrador.');
+            supabase.auth.signOut().then(() => window.location.reload());
+            return;
+          }
+
           setUserRole((data.role as UserRole) || 'membro');
           setNewName(data.full_name || '');
           setUserSector(data.sector || 'Geral');
@@ -158,6 +181,7 @@ useEffect(() => {
       fetchProfiles(); 
       fetchTasks(); 
       fetchHistory();
+      fetchAudit();
       fetchAnnouncements();
 
       // Configuracao do realtime
@@ -185,91 +209,16 @@ useEffect(() => {
       supabase.removeChannel(channel);
     }
   };
-}, [fetchAnnouncements, fetchHistory, fetchProfiles, fetchTasks]);
+}, [fetchAnnouncements, fetchAudit, fetchHistory, fetchProfiles, fetchTasks, setNewName]);
 
-
-  async function changeRole(profileId: string, newRole: UserRole) {
-  // 1. Atualiza o perfil no Supabase
-  try {
-    await updateProfileRole(profileId, newRole);
-    // 2. Atualiza o estado local
-    // UserRole garante que newRole seja um cargo valido.
-
-    setProfiles((prevProfiles: Profile[]) => 
-      prevProfiles.map(p => 
-    p.id === profileId ? { ...p, role: newRole } : p
-  )
-);
-
-    if (profileId === user?.id) {
-      setUserRole(newRole);
-    }
-
-    alert("Cargo atualizado com sucesso!");
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Erro desconhecido';
-    alert("Erro ao mudar cargo: " + message);
-  }
-}
-
-  async function addAnnouncement() {
-  if (!annTitle || !annContent || !user) return;
-  setUploading(true);
-
-  try {
-    await createAnnouncement({
-      title: annTitle,
-      content: annContent,
-      createdBy: user.id,
-      sector: userSector,
-      image: annImage,
-    });
-    setAnnTitle(''); setAnnContent(''); setAnnImage(null);
-    fetchAnnouncements();
-    alert("Alerta transmitido!");
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Erro desconhecido';
-    alert("Erro ao transmitir alerta: " + message);
-  } finally {
-    setUploading(false);
-  }
-}
-
-  const removeAnnouncement = useCallback(async (announcementId: string) => {
-    await deleteAnnouncement(announcementId);
-    fetchAnnouncements();
-  }, [fetchAnnouncements]);
-
-  const changeSector = useCallback(async (profileId: string, sector: string) => {
-    await updateProfileSector(profileId, sector);
-    fetchProfiles();
-  }, [fetchProfiles]);
-
-  const signOut = useCallback(async () => {
-    await supabase.auth.signOut();
-    window.location.reload();
+  const openEditTaskModal = useCallback((task: ProcessedTask) => {
+    setEditingTask(task);
+    const isMonthly = task.repeat_days && !task.repeat_days.includes(',') && !isNaN(parseInt(task.repeat_days));
+    setEditMode(isMonthly ? 'mensal' : 'semanal');
+    setEditDisplayDate(isMonthly ? `DIA ${task.repeat_days} (MANTIDO)` : 'DD/MM/YYYY');
+    setShowEditModal(true);
   }, []);
 
-  async function updateProfile() {
-  if (!user?.id) return;
-
-  try {
-    await updateProfileName(user.id, newName);
-    alert("Perfil atualizado com sucesso!");
-    setShowProfileModal(false);
-    
-    // Atualiza o estado local para o nome mudar na tela sem precisar de F5
-    setProfiles((prev: Profile[]) => 
-      prev.map(p => p.id === user.id ? { ...p, full_name: newName } : p)
-    );
-    
-    fetchProfiles(); // Recarrega por seguranca
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Erro desconhecido';
-    alert("Erro do Banco: " + message);
-    console.error("Erro completo:", error);
-  }
-}
   // Marca/desmarca dias na criacao de nova tarefa
 const toggleDay = (day: string) => {
   setSelectedDays((prev: string[]) => 
@@ -287,6 +236,34 @@ const toggleDayInEdit = (day: string) => {
   
   setEditingTask({ ...editingTask, repeat_days: newDays.join(',') })
 }
+
+  const addAudit = useCallback(async (
+    action: string,
+    entityType: string,
+    entityId: string | null,
+    entityTitle: string | null,
+    sector: string,
+    details?: string,
+  ) => {
+    if (!user) return;
+    const profile = profiles.find((item) => item.id === user.id);
+
+    try {
+      await addAuditLog({
+        actorId: user.id,
+        actorName: profile?.full_name || user.email || 'Usuário',
+        action,
+        entityType,
+        entityId,
+        entityTitle,
+        sector,
+        details,
+      });
+      fetchAudit();
+    } catch (error) {
+      console.error('Erro ao registrar auditoria:', error);
+    }
+  }, [fetchAudit, profiles, user]);
 
   async function addTask() {
   if (!taskTitle) return;
@@ -306,6 +283,7 @@ const toggleDayInEdit = (day: string) => {
       dueDate: isRecurring ? null : getTodayStr(),
       sector: userSector,
     });
+    await addAudit('task_created', 'task', null, taskTitle, userSector, `Categoria: ${category}`);
     setTaskTitle('');
     setDisplayDate('DD/MM/YYYY'); 
     setNotes(''); 
@@ -350,26 +328,89 @@ const toggleDayInEdit = (day: string) => {
 
   try {
     await updateTaskCompletion(task.id, newDate, updatedSubtasks);
+    await addAudit(isCurrentlyDone ? 'task_reopened' : 'task_completed', 'task', task.id, task.title, task.sector);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Erro desconhecido';
     alert("Erro ao salvar: " + message);
     fetchTasks();
   }
-}, [fetchTasks, user, profiles]);
+}, [addAudit, fetchTasks, user, profiles]);
 
 const deleteTask = useCallback(async (taskId: string) => {
+  const taskToDelete = tasks.find((task) => task.id === taskId);
   if (!confirm('Deseja realmente deletar esta tarefa?')) return;
+
+  const shouldDeleteGoogleEvent = Boolean(
+    taskToDelete?.google_event_id &&
+    confirm('Esta reunião está vinculada ao Google Calendar. Deseja excluir o evento do Google também?')
+  );
 
   setTasks(prev => prev.filter(t => t.id !== taskId));
 
   try {
+    if (shouldDeleteGoogleEvent && taskToDelete?.google_event_id && user?.id) {
+      const response = await fetch(`/api/google-calendar/events?userId=${user.id}&eventId=${encodeURIComponent(taskToDelete.google_event_id)}`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        alert(data?.error || 'A tarefa será excluída, mas não foi possível excluir o evento do Google Calendar.');
+      }
+    }
+
     await deleteTaskApi(taskId);
+    if (taskToDelete) {
+      await addAudit('task_deleted', taskToDelete.category === 'Reunião' ? 'meeting' : 'task', taskToDelete.id, taskToDelete.title, taskToDelete.sector);
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Erro desconhecido';
     alert("Erro ao deletar: " + message);
     fetchTasks();
   }
-}, [fetchTasks]);
+}, [addAudit, fetchTasks, tasks, user]);
+
+const addMeeting = useCallback(async (meeting: CreateMeetingInput) => {
+  try {
+    await createMeeting(meeting);
+    await fetchTasks();
+    await addAudit('meeting_created', 'meeting', null, meeting.title, meeting.sector, `${meeting.date} ${meeting.time}`);
+    alert('Reunião agendada com sucesso!');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Erro desconhecido';
+    alert('Erro ao agendar reunião: ' + message);
+  }
+}, [addAudit, fetchTasks]);
+
+const updateMeeting = useCallback(async (task: ProcessedTask, meeting: CreateMeetingInput) => {
+  const details = [
+    `Horário: ${meeting.time}`,
+    `Motivo: ${meeting.motive}`,
+    meeting.location ? `Local: ${meeting.location}` : null,
+    meeting.notes ? `Observações: ${meeting.notes}` : null,
+  ].filter(Boolean).join('\n');
+
+  try {
+    await updateTaskApi({
+      id: task.id,
+      title: meeting.title,
+      notes: details,
+      assignedTo: meeting.assignedTo,
+      category: 'Reunião',
+      repeatDays: '',
+      repeatInterval: 1,
+      subtasks: task.subtasks || [],
+      dueDate: meeting.date,
+      sector: meeting.sector,
+    });
+    await fetchTasks();
+    await addAudit('task_updated', 'meeting', task.id, meeting.title, meeting.sector, `${meeting.date} ${meeting.time}`);
+    alert('Reunião atualizada com sucesso!');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Erro desconhecido';
+    alert('Erro ao atualizar reunião: ' + message);
+  }
+}, [addAudit, fetchTasks]);
 
   async function updateTask() {
   if (!editingTask) return;
@@ -390,6 +431,7 @@ const deleteTask = useCallback(async (taskId: string) => {
     setShowEditModal(false); 
     setEditingTask(null); 
     fetchTasks(); 
+    await addAudit('task_updated', 'task', editingTask.id, editingTask.title, editingTask.sector, `Categoria: ${editingTask.category}`);
     alert("Tarefa atualizada com sucesso!");
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Erro desconhecido';
@@ -397,248 +439,79 @@ const deleteTask = useCallback(async (taskId: string) => {
     alert(`Erro ao salvar: ${message}`);
   }
 }
-  const filteredTasks = useMemo(() => {
-  return processedTasks.filter(task => {
-    if (userRole !== 'admin' && task.sector !== userSector) {
-      return false;
-    }
-    const term = searchTerm.toLowerCase();
-    const matchesSearch = task.title.toLowerCase().includes(term) || (task.notes && task.notes.toLowerCase().includes(term));
-    if (searchTerm && !matchesSearch) return false;
+  const filteredTasks = useMemo(() => filterTasks({
+    tasks: processedTasks,
+    activeTab,
+    filterUsers,
+    userRole,
+    userSector,
+    userId: user?.id,
+    searchTerm,
+  }), [processedTasks, activeTab, filterUsers, userRole, userSector, user?.id, searchTerm]);
 
-    if (userRole === 'membro' && !GLOBAL_MEMBER_TABS.includes(activeTab) && task.assigned_to !== user?.id) return false;
-    if (filterUser !== 'Todos' && task.assigned_to !== filterUser) return false;
+  const stats = useMemo(
+    () => getTaskStats({ tasks: processedTasks, dashFilter, filterUsers, userRole, userSector }),
+    [processedTasks, dashFilter, filterUsers, userRole, userSector],
+  );
 
-    const todayStr = getTodayStr();
-    if (activeTab === 'ATRASADOS') return !task.isDoneToday && task.lastOcc < todayStr;
-    if (activeTab === 'HOJE') return task.lastOcc === todayStr && !task.isDoneToday;
-    if (activeTab === 'Minhas') return task.assigned_to === user?.id;
-    if (activeTab === 'Todas') return true;
+  const sectorStats = useMemo(
+    () => getSectorStats({ tasks: processedTasks, dashFilter, userRole, userSector }),
+    [processedTasks, dashFilter, userRole, userSector],
+  );
 
-    return task.category === activeTab;
-  });
-}, [processedTasks, activeTab, filterUser, userRole, userSector, user?.id, searchTerm]); // <--- searchTerm adicionado aqui
+  const meetingTasks = useMemo(() => {
+    return processedTasks.filter((task) => {
+      if (task.category !== 'Reunião') return false;
+      return userRole === 'admin' || task.sector === userSector;
+    });
+  }, [processedTasks, userRole, userSector]);
 
-  const stats = useMemo(() => {
-  const todayStr = getTodayStr();
-  
-  // Calcula a segunda-feira da semana atual
-  const now = new Date();
-  const day = now.getDay() || 7;
-  const monday = new Date(now);
-  monday.setDate(now.getDate() - day + 1);
-  monday.setHours(0,0,0,0);
-
-  // Base global (conforme solicitado anteriormente)
-  let baseTasks = processedTasks;
-  
-  if (filterUser !== 'Todos') {
-    baseTasks = baseTasks.filter(t => t.assigned_to === filterUser);
-  }
-
-  let totalPeriodo = 0;
-  let concluidasPeriodo = 0;
-
-  if (dashFilter === 'HOJE') {
-    const hojeTasks = baseTasks.filter(t => t.lastOcc === todayStr);
-    totalPeriodo = hojeTasks.length;
-    concluidasPeriodo = hojeTasks.filter(t => t.isDoneToday).length;
-  } else {
-    totalPeriodo = baseTasks.length;
-    concluidasPeriodo = baseTasks.filter(t => t.isDoneToday).length;
-  }
-
-  const porcentagem = totalPeriodo > 0 ? Math.round((concluidasPeriodo / totalPeriodo) * 100) : 0;
-
-  return { 
-    total: totalPeriodo, 
-    concluidas: concluidasPeriodo, 
-    pendentes: totalPeriodo - concluidasPeriodo, 
-    porcentagem 
-  };
-}, [processedTasks, dashFilter, filterUser]);
+  const canAccessPricing = userRole === 'admin' || ['precificação', 'price'].includes(userSector.toLowerCase());
+  const canAccessPaymentTerms = userRole === 'admin' || userSector.toLowerCase().startsWith('compras');
+  const visibleSection =
+    (activeSection === 'AUDITORIA' && userRole !== 'admin') ||
+    (activeSection === 'PRECIFICACAO' && !canAccessPricing) ||
+    (activeSection === 'PRAZOS' && !canAccessPaymentTerms)
+      ? 'TAREFAS'
+      : activeSection;
 
   if (!user) return <Login />
 
   return (
-    <div className="min-h-screen bg-[#E8EEF7] text-slate-900 pb-20 font-sans overflow-x-hidden w-full">
-      <nav className="bg-[#232D4A] text-white sticky top-0 z-30 shadow-white-100xl border-b border-white/10 px-6 h-20 flex justify-between items-center">
- {/* NAVBAR LOGO */}
-<div className="flex items-center gap-3">
-  {/* Bloco do logo */}
-  <Image 
-    src="/icon.png" 
-    alt="Logo" 
-    width={40}
-    height={40}
-    className="w-10 h-10 rounded-xl shadow-lg object-contain bg-blue-600 p-1" 
-  />
-  
-  <h1 className="text-xl font-black italic tracking-tighter uppercase">
-    WALLY<span className="text-blue-500 text-sm block not-italic font-medium">Task Manager</span>
-  </h1>
-</div>
+    <div className="min-h-screen bg-[#E8EEF7] text-slate-900 pb-24 md:pb-20 font-sans overflow-x-hidden w-full">
+      <AppSidebar
+        activeSection={visibleSection}
+        userRole={userRole}
+        userSector={userSector}
+        onSectionChange={(section) => {
+          setActiveSection(section);
+          if (section === 'AUDITORIA') {
+            fetchAudit();
+          }
+        }}
+      />
 
-  {/* Botoes da direita */}
-  <div className="flex items-center gap-4">
-    {/* Botao de perfil */}
-    <button 
-      onClick={() => setShowProfileModal(true)} 
-      className="flex items-center gap-3 bg-white/5 pl-2 pr-4 py-1.5 rounded-full border border-white/10 hover:bg-white/10 transition-all shadow-sm"
-    >
-      <div className="w-8 h-8 bg-gradient-to-tr from-blue-600 to-indigo-600 rounded-full flex items-center justify-center text-[10px] font-black shadow-lg">
-        {profiles.find(p => p.id === user.id)?.full_name?.charAt(0) || 'U'}
-      </div>
-      <span className="text-[11px] font-bold uppercase text-slate-300 hidden md:block">
-        {profiles.find(p => p.id === user.id)?.full_name || 'Meu Perfil'} 
-        {userRole === 'admin' ? ' ADMIN' : userRole === 'gerente' ? ' GERENTE' : ''}
-      </span>
-    </button>
-    
-    {/* Botao de configuracoes */}
-    <button 
-      onClick={() => setShowSettingsModal(true)} 
-      className="w-10 h-10 flex items-center justify-center bg-white/5 rounded-xl border border-white/10 text-slate-400 hover:text-white hover:bg-white/10 transition-all"
-    >
-      <Settings size={20} />
-    </button>
-  </div>
-</nav>
-
-      {/* Area de controle */}
-<div className="sticky top-20 z-30 w-full">
-  
-  {/* LINHA 1: ABAS NO FUNDO CINZA CLARO */}
-  <div className="bg-[#DCE7F5] border-b border-slate-200 pt-6 px-4">
-    <div className="max-w-[99%] mx-auto flex items-end justify-center gap-2 overflow-x-auto no-scrollbar">
-      {NAV_CATEGORIES.map(tab => {
-        const Icon = tab.icon;
-        const isActive = activeTab === tab.id;
-        
-        return (
-          <button 
-            key={tab.id} 
-            onClick={() => { setActiveTab(tab.id); setShowCreateBox(false); }} 
-            className={`
-              flex flex-col items-center justify-center min-w-[109px] h-[80px] gap-1 px-4 transition-all duration-2 relative
-              rounded-t-2xl border-x-2 border-t-0 border-transparent
-              ${isActive
-                ? 'bg-[#F6F7F9] border-blue-500 border-t-2 z-40 -mb-[-3px] h-[85px] shadow-[0_-4px_10px_rgba(0,0,0,0.02)]' 
-                : 'bg-gradient-to-b from-white to-slate-200 border-slate-300 text-slate-500 hover:to-white'}
-            `}
-          >
-            <Icon size={isActive ? 24 : 20} className={isActive ? 'text-blue-500' : ''} strokeWidth={isActive ? 3 : 2} />
-            <span className={`text-[10px] font-black uppercase tracking-tight ${isActive ? 'text-blue-500' : ''}`}>
-              {tab.label}
-            </span>
-
-            {/* A "BORRACHA" QUE APAGA A LINHA: Esta div fica por cima da borda cinza */}
-            {isActive && (
-              <div className="absolute -bottom-[3px] left-[-1px] right-[-1px] h-[5px] bg-[#F6F7F9] z-[50]"></div>
-            )}
-          </button>
-        );
-      })}
-    </div>
-  </div>
-
-  {/* Barra de comando compacta */}
-  <div className="bg-[#F6F7F9] border-b-2 border-slate-200 pt-10 pb-8 px-10 relative z-10 -mt-[2px]">
-   <div className="max-w-[98%] mx-auto flex items-center justify-between gap-8">
-      
-      {/* SELETOR DE EQUIPE DROPDOWN (SUBSTITUI OS NOMES ESPALHADOS) */}
-      <div className="relative">
-       <button 
-  type="button"
-  onClick={() => setShowUserMenu(!showUserMenu)}
-  className={`
-    h-12 px-6 rounded-2xl border-2 font-black text-[10px] uppercase flex items-center gap-3 whitespace-nowrap relative
-    
-    /* Efeito fisico sem delay */
-    transition-transform duration-75 active:duration-0
-    active:translate-x-[4px] active:translate-y-[4px] active:shadow-none
-    
-    ${filterUser === 'Todos' 
-      ? 'border-slate-100 bg-white text-slate-900 shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] hover:bg-slate-50' 
-      : 'border-blue-600 bg-blue-50 text-blue-600 shadow-[4px_4px_0px_0px_rgba(37,99,235,1)] hover:bg-blue-100'}
-  `}
->
-  <Filter size={16} />
-  <span>{filterUser === 'Todos' ? 'Filtrar Equipe' : profiles.find(p => p.id === filterUser)?.full_name}</span>
-  
-  {/* A setinha continua rodando conforme o menu abre/fecha */}
-  <ChevronDown 
-    size={16} 
-    className={`transition-transform duration-300 ${showUserMenu ? 'rotate-180' : ''}`} 
-  />
-</button>
-
-        {/* Menu de usuarios com filtro de setor */}
-{showUserMenu && (
-  <>
-    <div className="fixed inset-0 z-10" onClick={() => setShowUserMenu(false)}></div>
-    <div className="absolute left-0 mt-3 w-64 bg-white border-4 border-slate-900 rounded-[32px] shadow-[15px_15px_0px_0px_rgba(15,23,42,1)] z-20 p-4">
-      <div className="flex flex-col gap-2">
-        <button 
-          type="button"
-          onClick={() => { setFilterUser('Todos'); setShowUserMenu(false); }}
-          className={`p-3 text-left font-black text-[10px] uppercase rounded-xl transition-all ${filterUser === 'Todos' ? 'bg-slate-900 text-white' : 'hover:bg-slate-100 text-slate-600'}`}
-        >
-          Equipe Total {userRole === 'admin' ? '' : `(${userSector})`}
-        </button>
-        
-        <div className="h-[1px] bg-slate-100 my-1"></div>
-
-        {/* --- FILTRAGEM AQUI --- */}
-        {profiles
-          .filter(p => userRole === 'admin' || p.sector === userSector) // Admin ve todos; os demais veem o proprio setor
-          .map(p => (
-          <button 
-            key={p.id} 
-            type="button"
-            onClick={() => { setFilterUser(p.id); setShowUserMenu(false); }}
-            className={`p-3 text-left font-black text-[10px] uppercase flex items-center gap-3 rounded-xl transition-all ${filterUser === p.id ? 'bg-blue-600 text-white' : 'hover:bg-blue-50 text-slate-600'}`}
-          >
-            <div className={`w-5 h-5 rounded bg-blue-100 text-blue-600 flex items-center justify-center text-[8px] font-bold ${filterUser === p.id ? 'bg-white/20' : ''}`}>
-              {p.full_name?.charAt(0)}
-            </div>
-            {p.full_name}
-          </button>
-        ))}
-      </div>
-    </div>
-  </>
-)}
-      </div>
-
-      {/* Area de pesquisa */}
-      <div className="w-full md:w-96 group">
-        <div className="relative flex items-center h-12">
-          <Search size={18} className={`absolute left-5 top-1/2 -translate-y-1/2 transition-colors duration-300 z-10 ${searchTerm ? 'text-blue-600' : 'text-slate-400'}`} />
-          <input 
-            type="text"
-            placeholder="DIGITE PARA BUSCAR TAREFAS..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className={`w-full h-full pl-14 pr-12 bg-white border-2 border-transparent rounded-2xl font-black text-[11px] text-slate-900 outline-none transition-all placeholder:text-slate-300 shadow-[5px_5px_0px_0px_rgba(15,23,42,1)]
-              ${searchTerm 
-                ? 'border-blue-600 bg-white shadow-[0_0_20px_rgba(37,99,235,0.1)]' 
-                : 'border-transparent shadow-[0px_0px_0px_1px_rgba(15,23,42,1)] focus:border-slate-200 focus:shadow-none focus:translate-x-[1px] focus:translate-y-[1px]'}`}
-          />
-          {searchTerm && (
-            <button type="button" onClick={() => setSearchTerm('')} className="absolute right-4 bg-slate-100 hover:bg-red-100 text-slate-400 p-1.5 rounded-lg transition-all">
-              <X size={14} strokeWidth={3} />
-            </button>
-          )}
-        </div>
-      </div> 
-    </div>
-  </div>
-</div> {/* Este fecha o sticky top-20 w-full */}
+      <div className="md:pl-24">
+      {visibleSection === 'TAREFAS' ? (
+        <>
+        <AppShellNav
+        userId={user.id}
+        userRole={userRole}
+        profiles={profiles}
+        activeTab={activeTab}
+        filterUsers={filterUsers}
+        userSector={userSector}
+        searchTerm={searchTerm}
+        onActiveTabChange={(tab) => { setActiveTab(tab); setShowCreateBox(false); }}
+        onFilterUsersChange={setFilterUsers}
+        onSearchTermChange={setSearchTerm}
+        onOpenProfile={() => setShowProfileModal(true)}
+        onOpenSettings={() => setShowSettingsModal(true)}
+      />
 
       <main className="max-w-4xl mx-auto p-4">
   {activeTab === 'DASHBOARD' ? (
-    <DashboardView filter={dashFilter} onFilterChange={setDashFilter} stats={stats} />
+    <DashboardView filter={dashFilter} onFilterChange={setDashFilter} stats={stats} sectorStats={sectorStats} />
   ) : activeTab === 'HISTÓRICO' ? (
     <HistoryTimeline history={history} userRole={userRole} userSector={userSector} />
   ) : activeTab === 'COMUNICADOS' ? (
@@ -647,20 +520,20 @@ const deleteTask = useCallback(async (taskId: string) => {
       userRole={userRole}
       userSector={userSector}
       user={user}
-      title={annTitle}
-      content={annContent}
-      image={annImage}
-      uploading={uploading}
-      onTitleChange={setAnnTitle}
-      onContentChange={setAnnContent}
-      onImageChange={setAnnImage}
-      onAdd={addAnnouncement}
-      onDelete={removeAnnouncement}
+      title={announcementActions.title}
+      content={announcementActions.content}
+      image={announcementActions.image}
+      uploading={announcementActions.uploading}
+      onTitleChange={announcementActions.setTitle}
+      onContentChange={announcementActions.setContent}
+      onImageChange={announcementActions.setImage}
+      onAdd={announcementActions.addAnnouncement}
+      onDelete={announcementActions.removeAnnouncement}
     />
 ) : (
     /* Aba padrao de tarefas */
     <>
-      <div className="max-w-4xl mx-auto mt-5 mb-6 px-60">
+      <div className="max-w-4xl mx-auto mt-5 mb-6 px-4 sm:px-16 lg:px-60">
         <button onClick={() => setShowCreateBox(!showCreateBox)} className={`w-full py-5 rounded-[32px] font-black uppercase tracking-[0.2em] text-[11px] transition-all duration-500 flex items-center justify-center gap-3 border-2 ${showCreateBox ? 'bg-slate-100 border-slate-200 text-slate-400' : 'bg-white border-slate-100 text-slate-900 shadow-[10px_10px_0px_0px_rgba(15,23,42,1)] hover:translate-x-1 hover:translate-y-1'}`}>
           {showCreateBox ? <><X size={20} /> Cancelar Operação</> : <><Plus size={20} strokeWidth={3} className="text-blue-600" /> Lançar Nova Tarefa</>}
         </button>
@@ -700,36 +573,43 @@ const deleteTask = useCallback(async (taskId: string) => {
     onSave={addTask}
   />
 )}
-      <div className="space-y-6">
-        <h2 className="font-black uppercase text-slate-400 text-[10px] tracking-[0.3em] px-2 flex items-center gap-2"><ChevronRight size={14} className="text-blue-600" /> {activeTab} • {filteredTasks.length} TAREFAS</h2>
-        {/* Localize este bloco no seu App.tsx */}
-{filteredTasks.map(task => (
-  <TaskItem 
-    key={task.id} 
-    task={task} 
-    profiles={profiles} 
-    userRole={userRole} 
-    currentUser={user} 
-    onToggle={toggleComplete} 
-    onView={setViewingTask} 
-    onEdit={(t: ProcessedTask) => { 
-  setEditingTask(t); 
-  const isMonthly = t.repeat_days && !t.repeat_days.includes(',') && !isNaN(parseInt(t.repeat_days));
-  setEditMode(isMonthly ? 'mensal' : 'semanal');
-  
-  // Se for mensal, mostra o dia atual na legenda; senao, usa o padrao
-  setEditDisplayDate(isMonthly ? `DIA ${t.repeat_days} (MANTIDO)` : 'DD/MM/YYYY');
-  
-  setShowEditModal(true); 
-}}
-    onUpdate={fetchTasks} // <--- VOLTE PARA fetchTasks (para atualizar subtarefas)
-    onDelete={deleteTask} // <--- ADICIONE ESTA NOVA PROPRIEDADE
-  />
-))}
-      </div>
+      <TaskListView
+        activeTab={activeTab}
+        tasks={filteredTasks}
+        profiles={profiles}
+        userRole={userRole}
+        currentUser={user}
+        onToggle={toggleComplete}
+        onView={setViewingTask}
+        onEdit={openEditTaskModal}
+        onUpdate={fetchTasks}
+        onDelete={deleteTask}
+      />
     </>
   )}
 </main>
+        </>
+      ) : visibleSection === 'REUNIAO' ? (
+        <MeetingCalendarView
+          tasks={meetingTasks}
+          profiles={profiles}
+          userSector={userSector}
+          defaultAssignedTo={user.id}
+          onViewTask={setViewingTask}
+          onDeleteTask={deleteTask}
+          onCreateMeeting={addMeeting}
+          onUpdateMeeting={updateMeeting}
+        />
+      ) : visibleSection === 'PRECIFICACAO' ? (
+        <PricingManager />
+      ) : visibleSection === 'PRAZOS' ? (
+        <PaymentTermsManager />
+      ) : (
+        <main className="max-w-5xl mx-auto p-4 pt-8">
+          <AuditTimeline logs={auditLogs} />
+        </main>
+      )}
+      </div>
 
       {/* --- MODALS --- */}
       
@@ -782,10 +662,12 @@ const deleteTask = useCallback(async (taskId: string) => {
           onClose={() => setShowSettingsModal(false)}
           onRoleChange={changeRole}
           onSectorChange={changeSector}
+          onAccountStatusChange={changeAccountStatus}
+          onActiveChange={changeActive}
           onSignOut={signOut}
         />
       )}
 
-    </div> // Fim do div principal
+    </div> 
   );
-} // Fim do export default
+}

@@ -7,7 +7,6 @@ import {
   Megaphone,
   TrendingUp,
   User,
-  Users,
 } from "lucide-react";
 import type { UserRole } from "@/lib/types";
 
@@ -19,19 +18,20 @@ export const WEEK_DAYS = [
   { id: "sex", label: "S" },
 ];
 
-export const TASK_CATEGORIES = ["Trade", "Reunião", "Geral"];
+export const TASK_CATEGORIES = ["Trade", "Geral"];
 
 export const USER_ROLES: UserRole[] = ["membro", "gerente", "admin"];
 
 export const SECTORS = [
   "Geral",
+  "Trade",
   "Compras Perfumaria",
   "Compras Medicamentos",
   "Precificação",
   "Logística",
 ];
 
-export const GLOBAL_MEMBER_TABS = ["Todas", "HOJE", "Trade", "Reunião", "ATRASADOS"];
+export const GLOBAL_MEMBER_TABS = ["Todas", "HOJE", "Trade", "ATRASADOS"];
 
 export const NAV_CATEGORIES = [
   { id: "HOJE", label: "Hoje", icon: Calendar },
@@ -39,7 +39,6 @@ export const NAV_CATEGORIES = [
   { id: "Minhas", label: "Minhas", icon: User },
   { id: "Todas", label: "Todas", icon: ListChecks },
   { id: "Trade", label: "Trade", icon: TrendingUp },
-  { id: "Reunião", label: "Reunião", icon: Users },
   { id: "HISTÓRICO", label: "Histórico", icon: History },
   { id: "DASHBOARD", label: "Dashboard", icon: LayoutDashboard },
   { id: "COMUNICADOS", label: "Alertas", icon: Megaphone },
