@@ -1,13 +1,14 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseAdmin } from "@/lib/supabase-admin";
 
 function isEmailLike(value: string) {
   return value.includes("@");
 }
 
-async function assertProfileCanAccess(userId: string) {
-  const supabaseAdmin = getSupabaseAdmin();
+async function assertProfileCanAccess(userId: string, supabaseAdmin: SupabaseClient | null) {
+  if (!supabaseAdmin) return;
+
   const { data: profile, error } = await supabaseAdmin
     .from("profiles")
     .select("*")
@@ -29,7 +30,15 @@ async function assertProfileCanAccess(userId: string) {
   }
 }
 
-async function resolveLoginEmail(identifier: string) {
+function getOptionalSupabaseAdmin() {
+  try {
+    return getSupabaseAdmin();
+  } catch {
+    return null;
+  }
+}
+
+async function resolveLoginEmail(identifier: string, supabaseAdmin: SupabaseClient | null) {
   const cleanIdentifier = identifier.trim();
 
   if (isEmailLike(cleanIdentifier)) {
@@ -40,7 +49,10 @@ async function resolveLoginEmail(identifier: string) {
     return "admin@wally.system";
   }
 
-  const supabaseAdmin = getSupabaseAdmin();
+  if (!supabaseAdmin) {
+    throw new Error("Login por nome indisponivel no momento. Entre com o e-mail ou reinicie o servidor para recarregar as variaveis do Supabase.");
+  }
+
   const { data: profiles, error } = await supabaseAdmin
     .from("profiles")
     .select("id")
@@ -82,7 +94,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Configuração de autenticação ausente." }, { status: 500 });
     }
 
-    const email = await resolveLoginEmail(identifier);
+    const supabaseAdmin = getOptionalSupabaseAdmin();
+    const email = await resolveLoginEmail(identifier, supabaseAdmin);
     const supabaseAuth = createClient(supabaseUrl, anonKey, {
       auth: {
         persistSession: false,
@@ -99,7 +112,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Credenciais inválidas." }, { status: 401 });
     }
 
-    await assertProfileCanAccess(data.user.id);
+    await assertProfileCanAccess(data.user.id, supabaseAdmin);
 
     return NextResponse.json({
       session: {
