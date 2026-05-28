@@ -32,67 +32,66 @@ export function Login() {
 
     setIsLoading(true);
 
-    if (isSignUp) {
-      if (!fullName.trim()) {
-        setErrorMessage("Informe o nome completo.");
-        setIsLoading(false);
+    try {
+      if (isSignUp) {
+        if (!fullName.trim()) {
+          setErrorMessage("Informe o nome completo.");
+          return;
+        }
+
+        if (!isEmailLike(identifier.trim())) {
+          setErrorMessage("Use um e-mail para criar a conta.");
+          return;
+        }
+
+        const { error } = await supabase.auth.signUp({
+          email: identifier.trim(),
+          password,
+          options: { data: { full_name: fullName.trim() } },
+        });
+
+        if (error) {
+          setErrorMessage("Não foi possível criar a conta.");
+          return;
+        }
+
+        await supabase.auth.signOut();
+        setIsSignUp(false);
+        setIdentifier("");
+        setFullName("");
+        setPassword("");
+        setSuccessMessage("Conta criada. Aguarde a aprovação do administrador.");
         return;
       }
 
-      if (!isEmailLike(identifier.trim())) {
-        setErrorMessage("Use um e-mail para criar a conta.");
-        setIsLoading(false);
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ identifier: identifier.trim(), password }),
+      });
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok || !data?.session) {
+        setErrorMessage(data?.error || "Credenciais inválidas.");
         return;
       }
 
-      const { error } = await supabase.auth.signUp({
-        email: identifier.trim(),
-        password,
-        options: { data: { full_name: fullName.trim() } },
+      const { error } = await supabase.auth.setSession({
+        access_token: data.session.access_token,
+        refresh_token: data.session.refresh_token,
       });
 
-      setIsLoading(false);
-
       if (error) {
-        setErrorMessage("Não foi possível criar a conta.");
+        setErrorMessage("Não foi possível iniciar a sessão.");
         return;
       }
 
-      await supabase.auth.signOut();
-      setIsSignUp(false);
-      setIdentifier("");
-      setFullName("");
-      setPassword("");
-      setSuccessMessage("Conta criada. Aguarde a aprovação do administrador.");
-      return;
-    }
-
-    const response = await fetch("/api/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ identifier: identifier.trim(), password }),
-    });
-    const data = await response.json().catch(() => null);
-
-    if (!response.ok || !data?.session) {
+      window.location.reload();
+    } catch {
+      setErrorMessage("Falha de conexão. Confira a internet, as variáveis da Vercel/Supabase ou tente reiniciar o servidor.");
+    } finally {
       setIsLoading(false);
-      setErrorMessage(data?.error || "Credenciais inválidas.");
-      return;
     }
-
-    const { error } = await supabase.auth.setSession({
-      access_token: data.session.access_token,
-      refresh_token: data.session.refresh_token,
-    });
-
-    setIsLoading(false);
-
-    if (error) {
-      setErrorMessage("Não foi possível iniciar a sessão.");
-      return;
-    }
-
-    window.location.reload();
   };
 
   return (
