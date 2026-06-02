@@ -14,6 +14,10 @@ interface CreateTaskModalProps {
   setAssignedTo: (value: string) => void;
   category: string;
   setCategory: (value: string) => void;
+  taskScheduleMode: "pontual" | "semanal" | "mensal";
+  setTaskScheduleMode: (value: "pontual" | "semanal" | "mensal") => void;
+  oneOffDate: string;
+  setOneOffDate: (value: string) => void;
   repeatInterval: number;
   setRepeatInterval: (value: number) => void;
   selectedDays: string[];
@@ -44,6 +48,10 @@ export function CreateTaskModal({
   setAssignedTo,
   category,
   setCategory,
+  taskScheduleMode,
+  setTaskScheduleMode,
+  oneOffDate,
+  setOneOffDate,
   repeatInterval,
   setRepeatInterval,
   selectedDays,
@@ -64,7 +72,8 @@ export function CreateTaskModal({
   onClose,
   onSave,
 }: CreateTaskModalProps) {
-  const isMonthly = !isNaN(parseInt(selectedDays[0]));
+  const isMonthly = taskScheduleMode === "mensal";
+  const isOneOff = taskScheduleMode === "pontual";
 
   return (
     <div className="fixed inset-0 bg-slate-900/90 z-[70] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
@@ -113,10 +122,22 @@ export function CreateTaskModal({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-end">
             <div className="space-y-3 bg-white p-4 rounded-[24px] border-2 border-slate-100 shadow-sm">
               <div className="flex bg-slate-100 p-1 rounded-xl border-2 border-slate-200">
-                <button type="button" onClick={() => setSelectedDays([])} className={`flex-1 py-1.5 rounded-lg font-black text-[9px] uppercase transition-all ${isNaN(parseInt(selectedDays[0])) ? "bg-white text-blue-600 shadow-sm" : "text-slate-400"}`}>Semanal</button>
-                <button type="button" onClick={() => setSelectedDays(["1"])} className={`flex-1 py-1.5 rounded-lg font-black text-[9px] uppercase transition-all ${isMonthly ? "bg-white text-blue-600 shadow-sm" : "text-slate-400"}`}>Mensal</button>
+                <button type="button" onClick={() => { const [y, m, d] = oneOffDate.split("-"); setTaskScheduleMode("pontual"); setSelectedDays([]); setDisplayDate(`${d}/${m}/${y}`); }} className={`flex-1 py-1.5 rounded-lg font-black text-[9px] uppercase transition-all ${isOneOff ? "bg-white text-blue-600 shadow-sm" : "text-slate-400"}`}>Pontual</button>
+                <button type="button" onClick={() => { setTaskScheduleMode("semanal"); setSelectedDays([]); }} className={`flex-1 py-1.5 rounded-lg font-black text-[9px] uppercase transition-all ${taskScheduleMode === "semanal" ? "bg-white text-blue-600 shadow-sm" : "text-slate-400"}`}>Semanal</button>
+                <button type="button" onClick={() => { setTaskScheduleMode("mensal"); setSelectedDays(["1"]); }} className={`flex-1 py-1.5 rounded-lg font-black text-[9px] uppercase transition-all ${isMonthly ? "bg-white text-blue-600 shadow-sm" : "text-slate-400"}`}>Mensal</button>
               </div>
-              {isMonthly ? (
+              {isOneOff ? (
+                <div className="space-y-2">
+                  <label className="text-[8px] font-black uppercase text-slate-400 italic">Data de execucao</label>
+                  <div className="relative h-[50px] group cursor-pointer" onClick={() => dateInputRef.current?.showPicker()}>
+                    <div className="absolute inset-0 flex items-center justify-center bg-slate-50 rounded-xl border-2 border-slate-100 font-black text-slate-700 text-base pointer-events-none uppercase">
+                      {displayDate === "DD/MM/YYYY" ? "Hoje" : displayDate}
+                      <Calendar size={16} className="absolute right-4 text-blue-500" />
+                    </div>
+                    <input ref={dateInputRef} type="date" value={oneOffDate} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" onChange={e => { const dVal = e.target.value; if (dVal) { const [y, m, d] = dVal.split("-"); setOneOffDate(dVal); setDisplayDate(`${d}/${m}/${y}`); }}} />
+                  </div>
+                </div>
+              ) : isMonthly ? (
                 <div className="relative h-[50px] group cursor-pointer" onClick={() => dateInputRef.current?.showPicker()}>
                   <div className="absolute inset-0 flex items-center justify-center bg-slate-50 rounded-xl border-2 border-slate-100 font-black text-slate-700 text-base pointer-events-none uppercase">{displayDate}<Calendar size={16} className="absolute right-4 text-blue-500" /></div>
                   <input ref={dateInputRef} type="date" className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" onChange={e => { const dVal = e.target.value; if (dVal) { const [y, m, d] = dVal.split("-"); setDisplayDate(`${d}/${m}/${y}`); setSelectedDays([d]); }}} />
@@ -126,7 +147,7 @@ export function CreateTaskModal({
                   {WEEK_DAYS.map(day => (<button key={day.id} type="button" onClick={() => onToggleDay(day.id)} className={`w-8 h-8 rounded-lg font-black text-[10px] transition-all ${selectedDays.includes(day.id) ? "bg-blue-600 text-white shadow-lg scale-110" : "bg-white text-slate-300"}`}>{day.label}</button>))}
                 </div>
               )}
-              <div className="flex items-center justify-between gap-4 px-2"><label className="text-[8px] font-black uppercase text-slate-400 italic">Intervalo</label><input type="number" min="1" className="w-16 p-1.5 bg-slate-50 rounded-lg font-black border-2 border-slate-100 text-slate-900 text-center text-xs" value={repeatInterval} onChange={e => setRepeatInterval(parseInt(e.target.value) || 1)} /></div>
+              {!isOneOff && <div className="flex items-center justify-between gap-4 px-2"><label className="text-[8px] font-black uppercase text-slate-400 italic">Intervalo</label><input type="number" min="1" className="w-16 p-1.5 bg-slate-50 rounded-lg font-black border-2 border-slate-100 text-slate-900 text-center text-xs" value={repeatInterval} onChange={e => setRepeatInterval(parseInt(e.target.value) || 1)} /></div>}
             </div>
 
             <div className="space-y-4">

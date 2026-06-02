@@ -1,32 +1,46 @@
 'use client';
 
-import { CalendarDays, ClipboardList, Clock3, ListTodo, Tags } from 'lucide-react';
+import { CalendarDays, ClipboardList, Clock3, Database, ListTodo, Shuffle, Tags } from 'lucide-react';
 import type { UserRole } from '@/lib/types';
 
-export type AppSection = 'TAREFAS' | 'REUNIAO' | 'PRECIFICACAO' | 'PRAZOS' | 'AUDITORIA';
+export type AppSection = 'TAREFAS' | 'REUNIAO' | 'CADASTROS' | 'PRECIFICACAO' | 'PRAZOS' | 'BALACUBACO' | 'AUDITORIA';
 
 interface AppSidebarProps {
   activeSection: AppSection;
   userRole: UserRole;
   userSector: string;
+  isSupremeAdmin: boolean;
   onSectionChange: (section: AppSection) => void;
 }
 
 const items = [
   { id: 'TAREFAS' as const, label: 'Tarefas', icon: ListTodo },
   { id: 'REUNIAO' as const, label: 'Reunião', icon: CalendarDays },
+  { id: 'CADASTROS' as const, label: 'Cadastros', icon: Database, registryOnly: true },
   { id: 'PRECIFICACAO' as const, label: 'Price', icon: Tags, priceOnly: true },
   { id: 'PRAZOS' as const, label: 'Prazos', icon: Clock3, purchaseOnly: true },
+  { id: 'BALACUBACO' as const, label: 'Balacubaco', icon: Shuffle, transferOnly: true },
   { id: 'AUDITORIA' as const, label: 'Auditoria', icon: ClipboardList, adminOnly: true },
 ];
 
-export function AppSidebar({ activeSection, userRole, userSector, onSectionChange }: AppSidebarProps) {
-  const canAccessPricing = userRole === 'admin' || ['precificação', 'price'].includes(userSector.toLowerCase());
-  const canAccessPaymentTerms = userRole === 'admin' || userSector.toLowerCase().startsWith('compras');
+function normalizeSector(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+}
+
+export function AppSidebar({ activeSection, userRole, userSector, isSupremeAdmin, onSectionChange }: AppSidebarProps) {
+  const normalizedSector = normalizeSector(userSector);
+  const canAccessPricing = userRole === 'admin' || ['precificacao', 'price'].includes(normalizedSector);
+  const canAccessPaymentTerms = userRole === 'admin' || normalizedSector.startsWith('compras');
+  const canAccessRegistries = userRole === 'admin' || canAccessPricing || canAccessPaymentTerms;
   const visibleItems = items.filter((item) => {
     if (item.adminOnly && userRole !== 'admin') return false;
+    if (item.registryOnly && !canAccessRegistries) return false;
     if (item.priceOnly && !canAccessPricing) return false;
     if (item.purchaseOnly && !canAccessPaymentTerms) return false;
+    if (item.transferOnly && !isSupremeAdmin) return false;
     return true;
   });
 

@@ -9,6 +9,7 @@ interface TaskListViewProps {
   activeTab: string;
   tasks: ProcessedTask[];
   profiles: Profile[];
+  tradeNoteTaskIds: string[];
   userRole: UserRole;
   currentUser: SupabaseUser | null;
   onToggle: (task: ProcessedTask) => void;
@@ -16,12 +17,14 @@ interface TaskListViewProps {
   onEdit: (task: ProcessedTask) => void;
   onUpdate: () => void;
   onDelete: (taskId: string) => void;
+  onScheduleOverride: (task: ProcessedTask, action: 'advance' | 'postpone' | 'clear') => void;
 }
 
 export function TaskListView({
   activeTab,
   tasks,
   profiles,
+  tradeNoteTaskIds,
   userRole,
   currentUser,
   onToggle,
@@ -29,6 +32,7 @@ export function TaskListView({
   onEdit,
   onUpdate,
   onDelete,
+  onScheduleOverride,
 }: TaskListViewProps) {
   return (
     <div className="space-y-6">
@@ -41,6 +45,7 @@ export function TaskListView({
           key={task.id}
           task={task}
           profiles={profiles}
+          hasTradeNotes={tradeNoteTaskIds.includes(String(task.id))}
           userRole={userRole}
           currentUser={currentUser}
           onToggle={onToggle}
@@ -48,6 +53,7 @@ export function TaskListView({
           onEdit={onEdit}
           onUpdate={onUpdate}
           onDelete={onDelete}
+          onScheduleOverride={onScheduleOverride}
         />
       ))}
     </div>

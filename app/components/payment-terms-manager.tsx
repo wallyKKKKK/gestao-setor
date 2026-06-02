@@ -101,8 +101,27 @@ export function PaymentTermsManager() {
   }, []);
 
   useEffect(() => {
-    loadTerms();
+    queueMicrotask(() => {
+      void loadTerms();
+    });
   }, [loadTerms]);
+
+  useEffect(() => {
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+
+      if (editingTerm) {
+        setEditingTerm(null);
+        return;
+      }
+      if (searchTerm) {
+        setSearchTerm('');
+      }
+    };
+
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, [editingTerm, searchTerm]);
 
   const categories = useMemo(() => Array.from(new Set(terms.map((item) => item.category).filter(Boolean))).sort(), [terms]);
   const visibleTableColumns = useMemo(() => {
@@ -290,7 +309,7 @@ export function PaymentTermsManager() {
   };
 
   const renderHeader = (label: string, key: string, align: 'left' | 'right' | 'center' = 'left') => (
-    <th className={`px-3 py-3 ${align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left'}`}>
+    <th key={key} className={`px-3 py-3 ${align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left'}`}>
       <span className="block truncate pr-1">{label}</span>
       <span
         className="column-resizer payment-print-hidden"
@@ -437,7 +456,7 @@ export function PaymentTermsManager() {
         </div>
       )}
 
-      <section id="payment-terms-print" className="bg-white border border-slate-300 rounded-md overflow-x-auto overflow-y-hidden shadow-sm">
+      <section id="payment-terms-print" className="bg-white border border-slate-300 rounded-md max-h-[calc(100vh-220px)] overflow-auto shadow-sm print:max-h-none print:overflow-visible">
         <style>{paymentTableCss}</style>
         <div className="hidden print:block p-4">
           <h2 className="text-xl font-black uppercase">Setor de Compras - Tabela de Prazos</h2>

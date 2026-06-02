@@ -1,5 +1,6 @@
 import { inflateRawSync } from "node:zlib";
 import { NextResponse } from "next/server";
+import { requireAuthenticatedProfile } from "@/lib/server-auth";
 import type { DiscountMode } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -292,6 +293,9 @@ function parseProductsFromSheet(rows: Array<Array<string | number>>, sheetName: 
 
 export async function POST(request: Request) {
   try {
+    const auth = await requireAuthenticatedProfile(request);
+    if (!auth.ok) return auth.response;
+
     const formData = await request.formData();
     const file = formData.get("file");
 

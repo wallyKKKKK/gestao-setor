@@ -1,19 +1,137 @@
 "use client";
 
-import { memo, useState } from "react";
-import { Check, ChevronDown, Edit3, Trash2, User } from "lucide-react";
+import { memo, useRef, useState } from "react";
+import type { PointerEvent, WheelEvent } from "react";
+import { Check, ChevronDown, Edit3, MessageSquare, RotateCcw, Trash2, User } from "lucide-react";
 import { addAuditLog, addTaskHistory, updateTaskCompletion } from "@/lib/api";
 import { formatToBR, getTodayStr } from "@/lib/task-recurrence";
 import type { Profile, Subtask, TaskItemProps } from "@/lib/types";
 
-export const TaskItem = memo(({ task, profiles, onUpdate, onEdit, userRole, currentUser, onView, onToggle, onDelete }: TaskItemProps) => {
+export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit, userRole, currentUser, onView, onToggle, onDelete, onScheduleOverride }: TaskItemProps) => {
   const [expanded, setExpanded] = useState(false);
+  const [feedbackOffset, setFeedbackOffset] = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
+  const dragStartX = useRef<number | null>(null);
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const offsetRef = useRef(0);
+  const wheelOffset = useRef(0);
+  const wheelCommitTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const suppressNextClick = useRef(false);
   const isOwner = task.assigned_to === currentUser?.id;
   const canManage = userRole === "admin" || userRole === "gerente" || isOwner;
   const subtasks = task.subtasks || [];
   const subDone = subtasks.filter((s: Subtask) => s.done).length;
   const subTotal = subtasks.length;
   const isLate = task.lastOcc < getTodayStr() && !task.isDoneToday && task.lastOcc !== "1970-01-01";
+  const isAdvanced = task.schedule_override_type === "advanced";
+  const isPostponed = task.schedule_override_type === "postponed";
+  const hasScheduleOverride = isAdvanced || isPostponed;
+  const isScheduledToday = task.lastOcc === getTodayStr();
+  const scheduleLabel = isLate
+    ? `DESDE ${formatToBR(task.lastOcc)}`
+    : isAdvanced
+      ? "ADIANTADA PARA HOJE"
+      : isPostponed
+        ? `ADIADA: ${task.nextOcc}`
+        : isScheduledToday
+          ? "HOJE"
+          : `PROXIMA: ${task.nextOcc}`;
+  const swipeDistance = 90;
+  const dragAction = feedbackOffset <= -swipeDistance ? "advance" : feedbackOffset >= swipeDistance ? "postpone" : null;
+
+  const setVisualOffset = (offset: number) => {
+    offsetRef.current = offset;
+    if (cardRef.current) {
+      cardRef.current.style.transform = `translate3d(${offset}px, 0, 0)`;
+    }
+  };
+
+  const resetVisualOffset = () => {
+    offsetRef.current = 0;
+    if (cardRef.current) {
+      cardRef.current.style.transform = "";
+    }
+  };
+
+  const beginDrag = (event: PointerEvent<HTMLDivElement>) => {
+    if (!canManage || task.isDoneToday) return;
+    const target = event.target as HTMLElement;
+    if (target.closest("button,input,textarea,select,a")) return;
+
+    dragStartX.current = event.clientX;
+    suppressNextClick.current = false;
+    setIsDragging(true);
+    setFeedbackOffset(0);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const moveDrag = (event: PointerEvent<HTMLDivElement>) => {
+    if (dragStartX.current === null) return;
+    const offset = Math.max(-140, Math.min(140, event.clientX - dragStartX.current));
+    if (Math.abs(offset) > 8) suppressNextClick.current = true;
+    setVisualOffset(offset);
+    if (
+      Math.abs(offset) <= 8 ||
+      Math.abs(offsetRef.current - feedbackOffset) > 28 ||
+      (offset <= -swipeDistance && feedbackOffset > -swipeDistance) ||
+      (offset >= swipeDistance && feedbackOffset < swipeDistance)
+    ) {
+      setFeedbackOffset(offset);
+    }
+  };
+
+  const finishDrag = (event: PointerEvent<HTMLDivElement>) => {
+    if (dragStartX.current === null) return;
+    const currentOffset = offsetRef.current;
+    const action = currentOffset <= -swipeDistance ? "advance" : currentOffset >= swipeDistance ? "postpone" : null;
+
+    dragStartX.current = null;
+    setIsDragging(false);
+    setFeedbackOffset(0);
+    resetVisualOffset();
+    event.currentTarget.releasePointerCapture(event.pointerId);
+
+    if (action) onScheduleOverride(task, action);
+  };
+
+  const cancelDrag = () => {
+    dragStartX.current = null;
+    setIsDragging(false);
+    setFeedbackOffset(0);
+    resetVisualOffset();
+  };
+
+  const commitWheelDrag = () => {
+    const action = wheelOffset.current <= -swipeDistance ? "advance" : wheelOffset.current >= swipeDistance ? "postpone" : null;
+    wheelOffset.current = 0;
+    setIsDragging(false);
+    setFeedbackOffset(0);
+    resetVisualOffset();
+
+    if (action) onScheduleOverride(task, action);
+  };
+
+  const handleWheelDrag = (event: WheelEvent<HTMLDivElement>) => {
+    if (!canManage || task.isDoneToday) return;
+    if (Math.abs(event.deltaX) <= Math.abs(event.deltaY)) return;
+
+    event.preventDefault();
+    const nextOffset = Math.max(-140, Math.min(140, wheelOffset.current - event.deltaX));
+    wheelOffset.current = nextOffset;
+    suppressNextClick.current = true;
+    setIsDragging(true);
+    setFeedbackOffset(nextOffset);
+    setVisualOffset(nextOffset);
+
+    if (wheelCommitTimeout.current) clearTimeout(wheelCommitTimeout.current);
+    wheelCommitTimeout.current = setTimeout(commitWheelDrag, 180);
+  };
+
+  const viewTask = (event?: PointerEvent<HTMLDivElement>) => {
+    event?.stopPropagation();
+    suppressNextClick.current = false;
+    onView(task);
+  };
 
   const toggleSubtask = async (index: number) => {
     if (!canManage) return alert("Acesso negado.");
@@ -35,7 +153,7 @@ export const TaskItem = memo(({ task, profiles, onUpdate, onEdit, userRole, curr
       });
     }
 
-    await updateTaskCompletion(task.id, allDone ? todayStr : null, newSubtasks);
+    await updateTaskCompletion(task.id, allDone ? todayStr : null, newSubtasks, Boolean(task.is_one_off && allDone));
 
     if (currentUser) {
       const profile = profiles.find((p: Profile) => p.id === currentUser.id);
@@ -55,12 +173,58 @@ export const TaskItem = memo(({ task, profiles, onUpdate, onEdit, userRole, curr
   };
 
   return (
-    <div className={`relative flex flex-col transition-all duration-200 border-[3px] rounded-[24px] mb-2 group
-      ${task.isDoneToday ? "bg-green-400 border-green-200 opacity-80" :
-        isLate ? "bg-red-400 border-red-200 shadow-[4px_4px_0px_0px_rgba(220,38,38,1)]" :
-        "bg-white border-slate-100 hover:border-slate-900 hover:shadow-[6px_6px_0px_0px_rgba(15,23,42,1)]"
-      }`}
-    >
+    <div className="relative mb-2">
+      {isDragging && Math.abs(feedbackOffset) > 8 && (
+        <div className={`pointer-events-none absolute inset-0 z-0 rounded-[24px] border-[3px] ${
+          feedbackOffset < 0 ? "border-blue-300 bg-blue-100" : "border-slate-300 bg-slate-100"
+        }`}>
+          <div
+            style={{ width: `${Math.max(72, Math.min(170, Math.abs(feedbackOffset)))}px` }}
+            className={`absolute inset-y-0 flex items-center justify-center px-2 ${
+              feedbackOffset < 0 ? "right-0 text-blue-700" : "left-0 text-[#232D4A]"
+            }`}
+          >
+            <span className="rounded-full bg-white/80 px-2.5 py-1 text-[8px] font-black uppercase tracking-widest shadow-sm">
+              {feedbackOffset < 0 ? "Adiantar" : "Adiar"}
+            </span>
+          </div>
+        </div>
+      )}
+
+      <div
+        ref={cardRef}
+        onPointerDown={beginDrag}
+        onPointerMove={moveDrag}
+        onPointerUp={finishDrag}
+        onPointerCancel={cancelDrag}
+        onWheel={handleWheelDrag}
+        className={`relative z-10 flex flex-col border-[3px] rounded-[24px] group touch-pan-y
+        will-change-transform
+        ${isDragging ? "transition-none cursor-grabbing" : "transition-all duration-200"}
+        ${dragAction === "advance" ? "ring-4 ring-blue-300" : dragAction === "postpone" ? "ring-4 ring-slate-300" : ""}
+        ${task.isDoneToday ? "bg-green-400 border-green-200 opacity-80" :
+          isLate ? "bg-red-400 border-red-200 shadow-[4px_4px_0px_0px_rgba(220,38,38,1)]" :
+          isAdvanced ? "bg-blue-50 border-blue-500 shadow-[4px_4px_0px_0px_rgba(37,99,235,1)]" :
+          isPostponed ? "bg-slate-50 border-[#232D4A] shadow-[4px_4px_0px_0px_rgba(35,45,74,1)]" :
+          "bg-white border-slate-100 hover:border-slate-900 hover:shadow-[6px_6px_0px_0px_rgba(15,23,42,1)]"
+        }`}
+      >
+      {hasTradeNotes && task.category === "Trade" && (
+        <button
+          type="button"
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            onView(task);
+          }}
+          className="absolute -right-3 -top-3 z-20 flex h-9 min-w-9 items-center justify-center gap-1 rounded-full border-2 border-white bg-blue-600 px-2.5 text-white shadow-[0_6px_14px_rgba(37,99,235,0.35)]"
+          title="Tem notas de Trade"
+          aria-label="Abrir notas de Trade"
+        >
+          <MessageSquare size={15} strokeWidth={3} />
+          <span className="hidden sm:inline text-[8px] font-black uppercase tracking-widest">Nota</span>
+        </button>
+      )}
       <div className="flex flex-wrap sm:flex-nowrap items-center gap-3 sm:gap-6 p-3 sm:p-4 md:px-8">
         <div className="flex-shrink-0">
           <button
@@ -73,7 +237,19 @@ export const TaskItem = memo(({ task, profiles, onUpdate, onEdit, userRole, curr
         </div>
 
         <div className="flex-1 min-w-[180px] flex flex-col justify-center">
-          <div className="cursor-pointer select-none group/title" onClick={() => onView(task)}>
+          <div
+            role="button"
+            tabIndex={0}
+            className="cursor-pointer select-none group/title"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={() => viewTask()}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onView(task);
+              }
+            }}
+          >
             <h3 className={`text-base sm:text-lg font-black uppercase tracking-tight leading-tight sm:leading-none transition-colors
               ${task.isDoneToday ? "line-through text-green-900/40" : "text-slate-900 group-hover:text-blue-600"}`}
             >
@@ -94,11 +270,18 @@ export const TaskItem = memo(({ task, profiles, onUpdate, onEdit, userRole, curr
             <span className="px-2.5 py-1 rounded-lg bg-blue-50 text-blue-600 border border-blue-100 text-[8px] font-black uppercase shadow-sm">
               {task.category}
             </span>
+            {hasScheduleOverride && (
+              <span className={`px-2.5 py-1 rounded-lg text-[8px] font-black uppercase border shadow-sm ${
+                isAdvanced ? "bg-blue-600 border-blue-700 text-white" : "bg-[#232D4A] border-slate-900 text-white"
+              }`}>
+                {isAdvanced ? "ADIANTADA" : "ADIADA"}
+              </span>
+            )}
             <span className={`px-2.5 py-1 rounded-lg text-[8px] font-black uppercase border shadow-sm
               ${task.isDoneToday ? "bg-green-100 border-green-200 text-green-700" :
                 isLate ? "bg-red-600 border-red-700 text-white animate-pulse" : "bg-slate-50 border-slate-200 text-slate-500"}`}
             >
-              {isLate ? `DESDE ${formatToBR(task.lastOcc)}` : `PRÓXIMA: ${task.nextOcc}`}
+              {scheduleLabel}
             </span>
           </div>
         </div>
@@ -124,6 +307,16 @@ export const TaskItem = memo(({ task, profiles, onUpdate, onEdit, userRole, curr
         <div className="flex items-center gap-1 border-l-2 pl-3 sm:pl-4 border-slate-100 opacity-100 sm:opacity-0 group-hover:opacity-100 transition-opacity">
           {canManage && (
             <>
+              {hasScheduleOverride && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onScheduleOverride(task, "clear"); }}
+                  className="p-2 text-slate-300 hover:text-slate-900 transition-all"
+                  title="Restaurar agenda original"
+                  aria-label="Restaurar agenda original"
+                >
+                  <RotateCcw size={18}/>
+                </button>
+              )}
               <button onClick={(e) => { e.stopPropagation(); onEdit(task); }} className="p-2 text-slate-300 hover:text-blue-600 transition-all">
                 <Edit3 size={20}/>
               </button>
@@ -158,6 +351,7 @@ export const TaskItem = memo(({ task, profiles, onUpdate, onEdit, userRole, curr
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 });

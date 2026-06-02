@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CalendarDays, ChevronLeft, ChevronRight, Clock, Edit3, ExternalLink, MapPin, Plus, Trash2, User, X } from 'lucide-react';
 import type { CreateMeetingInput } from '@/lib/api';
+import { getAuthHeaders } from '@/lib/auth-headers';
 import type { GoogleCalendarEvent } from '@/lib/google-calendar';
 import type { ProcessedTask, Profile } from '@/lib/types';
 
@@ -56,27 +57,46 @@ export function MeetingCalendarView({
   const [editingMeeting, setEditingMeeting] = useState<ProcessedTask | null>(null);
 
   useEffect(() => {
-    fetch(`/api/google-calendar/status?userId=${defaultAssignedTo}`)
+    let cancelled = false;
+
+    getAuthHeaders()
+      .then((headers) => fetch(`/api/google-calendar/status?userId=${defaultAssignedTo}`, { headers }))
       .then((response) => response.json())
       .then((data) => {
+        if (cancelled) return;
         setGoogleStatus({ configured: Boolean(data.configured), connected: Boolean(data.connected) });
         setSyncGoogleCalendar(Boolean(data.configured && data.connected));
       })
       .catch(() => {
+        if (cancelled) return;
         setGoogleStatus({ configured: false, connected: false });
       });
+
+    return () => {
+      cancelled = true;
+    };
   }, [defaultAssignedTo]);
 
   useEffect(() => {
     if (!googleStatus.connected) return;
+    let cancelled = false;
 
     const start = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), 1);
     const end = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 1);
 
-    fetch(`/api/google-calendar/events?userId=${defaultAssignedTo}&timeMin=${encodeURIComponent(start.toISOString())}&timeMax=${encodeURIComponent(end.toISOString())}`)
+    getAuthHeaders()
+      .then((headers) => fetch(`/api/google-calendar/events?userId=${defaultAssignedTo}&timeMin=${encodeURIComponent(start.toISOString())}&timeMax=${encodeURIComponent(end.toISOString())}`, { headers }))
       .then((response) => response.ok ? response.json() : Promise.reject(response))
-      .then((data) => setGoogleEvents(data.events || []))
-      .catch(() => setGoogleEvents([]));
+      .then((data) => {
+        if (!cancelled) setGoogleEvents(data.events || []);
+      })
+      .catch(() => {
+        if (!cancelled) setGoogleEvents([]);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [defaultAssignedTo, googleStatus.connected, visibleMonth]);
 
   const days = useMemo(() => {
@@ -144,7 +164,7 @@ export function MeetingCalendarView({
     return match?.[1] || '';
   };
 
-  const resetMeetingForm = () => {
+  const resetMeetingForm = useCallback(() => {
     setMeetingTitle('');
     setMeetingDate(toISODate(new Date()));
     setMeetingTime('09:00');
@@ -153,7 +173,21 @@ export function MeetingCalendarView({
     setMeetingNotes('');
     setMeetingAssignedTo(defaultAssignedTo);
     setEditingMeeting(null);
-  };
+  }, [defaultAssignedTo]);
+
+  useEffect(() => {
+    if (!showCreateModal) return;
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setShowCreateModal(false);
+        resetMeetingForm();
+      }
+    };
+
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, [resetMeetingForm, showCreateModal]);
 
   const openEditMeeting = (task: ProcessedTask) => {
     setEditingMeeting(task);
@@ -191,7 +225,7 @@ export function MeetingCalendarView({
       if (!editingMeeting && syncGoogleCalendar && googleStatus.connected) {
         const response = await fetch('/api/google-calendar/events', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...await getAuthHeaders() },
           body: JSON.stringify({ userId: defaultAssignedTo, meeting }),
         });
 
@@ -227,6 +261,7 @@ export function MeetingCalendarView({
 
     const response = await fetch(`/api/google-calendar/events?userId=${defaultAssignedTo}&eventId=${encodeURIComponent(event.id)}`, {
       method: 'DELETE',
+      headers: await getAuthHeaders(),
     });
 
     if (!response.ok) {
@@ -262,7 +297,17 @@ export function MeetingCalendarView({
             <button
               onClick={() => {
                 if (!googleStatus.connected) {
-                  window.location.href = `/api/google-calendar/connect?userId=${defaultAssignedTo}`;
+                  getAuthHeaders()
+                    .then((headers) => fetch('/api/google-calendar/connect', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json', ...headers },
+                      body: JSON.stringify({ userId: defaultAssignedTo }),
+                    }))
+                    .then((response) => response.ok ? response.json() : Promise.reject(response))
+                    .then((data) => {
+                      if (data?.url) window.location.href = data.url;
+                    })
+                    .catch(() => alert('Nao foi possivel iniciar a conexao com o Google Calendar.'));
                 }
               }}
               className={`h-11 px-5 rounded-2xl font-black uppercase text-[10px] tracking-widest shadow-sm ${

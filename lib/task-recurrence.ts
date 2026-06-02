@@ -13,6 +13,13 @@ export const getTodayStr = () => {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 };
 
+export const addDaysToDateStr = (dateStr: string, days: number) => {
+  const [year, month, day] = dateStr.split("-").map(Number);
+  const date = new Date(year, month - 1, day);
+  date.setDate(date.getDate() + days);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+};
+
 export const formatToBR = (dateStr: string) => {
   if (!dateStr || dateStr === "1970-01-01" || dateStr.includes("/")) return dateStr;
   const [y, m, d] = dateStr.split("-");

@@ -1,7 +1,9 @@
 "use client";
 
-import { CheckCircle2, Edit3, FileText, X } from "lucide-react";
-import type { ProcessedTask, Profile, Subtask, UserRole } from "@/lib/types";
+import { useEffect, useState } from "react";
+import { CheckCircle2, Edit3, FileText, MessageSquare, Plus, Trash2, X } from "lucide-react";
+import { createTradeTaskNote, deleteTradeTaskNote, fetchTradeTaskNotes } from "@/lib/api";
+import type { ProcessedTask, Profile, Subtask, TradeTaskNote, UserRole } from "@/lib/types";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
 
 interface TaskDrawerProps {
@@ -9,11 +11,79 @@ interface TaskDrawerProps {
   profiles: Profile[];
   user: SupabaseUser | null;
   userRole: UserRole;
+  onTradeNotesChanged: () => void;
   onClose: () => void;
   onEdit: (task: ProcessedTask) => void;
 }
 
-export function TaskDrawer({ task, profiles, user, userRole, onClose, onEdit }: TaskDrawerProps) {
+export function TaskDrawer({ task, profiles, user, userRole, onTradeNotesChanged, onClose, onEdit }: TaskDrawerProps) {
+  const [tradeNotes, setTradeNotes] = useState<TradeTaskNote[]>([]);
+  const [tradeNoteText, setTradeNoteText] = useState("");
+  const [loadingTradeNotes, setLoadingTradeNotes] = useState(false);
+  const [savingTradeNote, setSavingTradeNote] = useState(false);
+  const isTradeTask = task?.category === "Trade";
+
+  useEffect(() => {
+    let isCurrent = true;
+
+    if (!task?.id || !isTradeTask) {
+      queueMicrotask(() => {
+        if (!isCurrent) return;
+        setTradeNotes([]);
+        setTradeNoteText("");
+      });
+      return;
+    }
+
+    queueMicrotask(() => {
+      if (isCurrent) setLoadingTradeNotes(true);
+    });
+    fetchTradeTaskNotes(task.id)
+      .then((notes) => {
+        if (isCurrent) setTradeNotes(notes);
+      })
+      .catch(() => {
+        if (isCurrent) setTradeNotes([]);
+      })
+      .finally(() => {
+        if (isCurrent) setLoadingTradeNotes(false);
+      });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [isTradeTask, task?.id]);
+
+  const addTradeNote = async () => {
+    if (!task || !user || !tradeNoteText.trim()) return;
+
+    setSavingTradeNote(true);
+    try {
+      const note = await createTradeTaskNote(task.id, tradeNoteText.trim(), user.id);
+      setTradeNotes((current) => [note, ...current]);
+      setTradeNoteText("");
+      onTradeNotesChanged();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Erro desconhecido";
+      alert("Erro ao salvar nota de Trade: " + message);
+    } finally {
+      setSavingTradeNote(false);
+    }
+  };
+
+  const removeTradeNote = async (noteId: string) => {
+    if (!confirm("Excluir esta nota de Trade?")) return;
+
+    try {
+      await deleteTradeTaskNote(noteId);
+      setTradeNotes((current) => current.filter((note) => note.id !== noteId));
+      onTradeNotesChanged();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Erro desconhecido";
+      alert("Erro ao excluir nota de Trade: " + message);
+    }
+  };
+
   return (
     <div className={`fixed inset-0 z-[100] transition-all duration-500 ${task ? "visible" : "invisible pointer-events-none"}`}>
       <div
@@ -74,6 +144,71 @@ export function TaskDrawer({ task, profiles, user, userRole, onClose, onEdit }: 
                   {task.notes || "Sem notas adicionais."}
                 </div>
               </div>
+
+              {isTradeTask && (
+                <div className="space-y-3">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2 flex items-center gap-2">
+                    <MessageSquare size={12}/> Notas de Trade
+                  </label>
+                  <div className="rounded-2xl border border-blue-100 bg-blue-50/60 p-3 shadow-sm">
+                    <textarea
+                      value={tradeNoteText}
+                      onChange={(event) => setTradeNoteText(event.target.value)}
+                      placeholder="Adicionar uma atualizacao rapida..."
+                      className="min-h-20 w-full resize-none rounded-xl border-2 border-white bg-white p-3 text-xs font-bold text-slate-700 outline-none focus:border-blue-500"
+                    />
+                    <button
+                      onClick={addTradeNote}
+                      disabled={savingTradeNote || !tradeNoteText.trim()}
+                      className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-[10px] font-black uppercase tracking-widest text-white transition-all disabled:opacity-50"
+                    >
+                      <Plus size={14} /> {savingTradeNote ? "Salvando..." : "Adicionar nota"}
+                    </button>
+                  </div>
+
+                  <div className="space-y-2">
+                    {loadingTradeNotes && (
+                      <div className="rounded-xl bg-white p-4 text-center text-[10px] font-black uppercase tracking-widest text-slate-300">
+                        Carregando notas...
+                      </div>
+                    )}
+                    {!loadingTradeNotes && tradeNotes.length === 0 && (
+                      <div className="rounded-xl border border-dashed border-slate-200 bg-white p-4 text-center text-[10px] font-black uppercase tracking-widest text-slate-300">
+                        Nenhuma nota de Trade
+                      </div>
+                    )}
+                    {tradeNotes.map((note) => {
+                      const canDeleteNote = note.created_by === user?.id || userRole === "admin" || userRole === "gerente";
+                      return (
+                        <div key={note.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                          <div className="mb-2 flex items-center justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="truncate text-[10px] font-black uppercase text-slate-700">
+                                {note.profiles?.full_name || "Usuario"}
+                              </p>
+                              <p className="text-[9px] font-bold uppercase text-slate-400">
+                                {new Date(note.created_at).toLocaleString("pt-BR")}
+                              </p>
+                            </div>
+                            {canDeleteNote && (
+                              <button
+                                onClick={() => removeTradeNote(note.id)}
+                                className="rounded-lg bg-red-50 p-2 text-red-500 transition-all hover:bg-red-100"
+                                aria-label="Excluir nota"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            )}
+                          </div>
+                          <p className="whitespace-pre-wrap break-words text-sm font-medium leading-relaxed text-slate-700">
+                            {note.content}
+                          </p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               {task.subtasks?.length > 0 && (
                 <div className="space-y-3">

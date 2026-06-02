@@ -1,5 +1,5 @@
 import { supabase } from "@/lib/supabase";
-import type { AccountStatus, Announcement, AuditLog, PricingBranch, PricingProduct, Profile, Subtask, SupplierPaymentTerm, Task, TaskHistory, UserRole } from "@/lib/types";
+import type { AccountStatus, Announcement, AuditLog, PricingBranch, PricingProduct, Profile, ReallocationProduct, ReallocationStockItem, ReallocationStockSnapshot, Subtask, SupplierPaymentTerm, Task, TaskHistory, TradeTaskNote, UserRole } from "@/lib/types";
 
 interface CreateAnnouncementInput {
   title: string;
@@ -21,6 +21,7 @@ interface CreateTaskInput {
   sector: string;
   googleEventId?: string | null;
   googleEventLink?: string | null;
+  isOneOff?: boolean;
 }
 
 export interface CreateMeetingInput {
@@ -83,6 +84,13 @@ export type SupplierPaymentTermInput = Omit<SupplierPaymentTerm, "id" | "created
   id?: string;
 };
 
+interface ReallocationProductFilters {
+  searchTerm?: string;
+  manufacturers?: string[];
+  classifications?: string[];
+  limit?: number;
+}
+
 export async function fetchProfiles() {
   const { data, error } = await supabase.from("profiles").select("*");
   if (error) throw error;
@@ -107,7 +115,7 @@ export async function fetchTasks() {
     .order("created_at", { ascending: false });
 
   if (error) throw error;
-  return (data || []) as Task[];
+  return ((data || []) as Task[]).filter((task) => !task.archived_at);
 }
 
 export async function fetchTaskHistory() {
@@ -119,6 +127,56 @@ export async function fetchTaskHistory() {
 
   if (error) throw error;
   return (data || []) as TaskHistory[];
+}
+
+export async function fetchTradeTaskNotes(taskId: string) {
+  const { data, error } = await supabase
+    .from("trade_task_notes")
+    .select("*, profiles(full_name)")
+    .eq("task_id", taskId)
+    .order("created_at", { ascending: false });
+
+  if (error) throw error;
+  return (data || []) as TradeTaskNote[];
+}
+
+export async function fetchTradeTaskNoteTaskIds(taskIds: Array<string | number>) {
+  if (taskIds.length === 0) return [];
+
+  const { data, error } = await supabase
+    .from("trade_task_notes")
+    .select("task_id")
+    .in("task_id", taskIds);
+
+  if (error) {
+    if (error.code === "42P01" || error.code === "PGRST205") return [];
+    throw error;
+  }
+
+  return Array.from(new Set((data || []).map((row) => String(row.task_id))));
+}
+
+export async function createTradeTaskNote(taskId: string, content: string, createdBy: string) {
+  const { data, error } = await supabase
+    .from("trade_task_notes")
+    .insert([{ task_id: taskId, content, created_by: createdBy }])
+    .select("*, profiles(full_name)")
+    .single();
+
+  if (error) {
+    if (error.code === "42P01" || error.code === "PGRST205") {
+      throw new Error("Tabela de notas de Trade ainda nao existe no Supabase. Rode o SQL supabase/trade-task-notes.sql.");
+    }
+
+    throw new Error(error.message || "Erro ao salvar nota de Trade.");
+  }
+
+  return data as TradeTaskNote;
+}
+
+export async function deleteTradeTaskNote(noteId: string) {
+  const { error } = await supabase.from("trade_task_notes").delete().eq("id", noteId);
+  if (error) throw error;
 }
 
 export async function fetchAuditLogs() {
@@ -174,6 +232,7 @@ export async function savePricingBranch(input: PricingBranchInput) {
     legal_name: input.legal_name.toUpperCase(),
     uf: input.uf.toUpperCase(),
     cnpj: input.cnpj,
+    logistics_group: (input.logistics_group || "").toUpperCase(),
   };
 
   if (input.id) {
@@ -324,6 +383,110 @@ export async function deleteSupplierPaymentTerm(termId: string) {
   if (error) throw error;
 }
 
+export async function fetchReallocationProducts(searchTermOrFilters: string | ReallocationProductFilters = "", limit = 80) {
+  const filters = typeof searchTermOrFilters === "string"
+    ? { searchTerm: searchTermOrFilters, limit }
+    : searchTermOrFilters;
+  let query = supabase
+    .from("reallocation_products")
+    .select("*")
+    .order("description", { ascending: true })
+    .limit(filters.limit || limit);
+
+  const normalizedSearch = (filters.searchTerm || "").trim();
+  if (normalizedSearch) {
+    const safeSearch = normalizedSearch.replace(/[%_]/g, "");
+    query = query.or(`erp_code.ilike.%${safeSearch}%,ean.ilike.%${safeSearch}%,description.ilike.%${safeSearch}%,manufacturer.ilike.%${safeSearch}%,classification.ilike.%${safeSearch}%`);
+  }
+
+  if (filters.manufacturers?.length) {
+    const manufacturerTerms = filters.manufacturers
+      .map((term) => term.trim().replace(/[%_]/g, ""))
+      .filter(Boolean);
+    if (manufacturerTerms.length === 1) {
+      query = query.ilike("manufacturer", `%${manufacturerTerms[0]}%`);
+    } else if (manufacturerTerms.length > 1) {
+      query = query.or(manufacturerTerms.map((term) => `manufacturer.ilike.%${term}%`).join(","));
+    }
+  }
+
+  if (filters.classifications?.length) {
+    const classificationTerms = filters.classifications
+      .map((term) => term.trim().replace(/[%_]/g, ""))
+      .filter(Boolean);
+    if (classificationTerms.length === 1) {
+      query = query.ilike("classification", `%${classificationTerms[0]}%`);
+    } else if (classificationTerms.length > 1) {
+      query = query.or(classificationTerms.map((term) => `classification.ilike.%${term}%`).join(","));
+    }
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data || []) as ReallocationProduct[];
+}
+
+export async function fetchReallocationAttributeOptions(field: "manufacturer" | "classification", searchTerm: string, limit = 200) {
+  let query = supabase
+    .from("reallocation_products")
+    .select(field)
+    .neq(field, "")
+    .order(field, { ascending: true })
+    .limit(limit);
+
+  const normalizedSearch = searchTerm.trim();
+  if (normalizedSearch) {
+    const safeSearch = normalizedSearch.replace(/[%_]/g, "");
+    query = query.ilike(field, `%${safeSearch}%`);
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+
+  return Array.from(new Set(((data || []) as Record<string, string>[]).map((row) => String(row[field] || "").trim()).filter(Boolean)));
+}
+
+export async function countReallocationProducts() {
+  const { count, error } = await supabase
+    .from("reallocation_products")
+    .select("id", { count: "exact", head: true });
+
+  if (error) throw error;
+  return count || 0;
+}
+
+export async function fetchLatestReallocationStockSnapshot() {
+  const { data, error } = await supabase
+    .from("reallocation_stock_snapshots")
+    .select("*")
+    .order("imported_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+  return (data || null) as ReallocationStockSnapshot | null;
+}
+
+export async function fetchReallocationStockItems(snapshotId: string, searchTerm = "", limit = 200) {
+  let query = supabase
+    .from("reallocation_stock_items")
+    .select("*")
+    .eq("snapshot_id", snapshotId)
+    .order("store_code", { ascending: true })
+    .order("product_description", { ascending: true })
+    .limit(limit);
+
+  const normalizedSearch = searchTerm.trim();
+  if (normalizedSearch) {
+    const safeSearch = normalizedSearch.replace(/[%_]/g, "");
+    query = query.or(`store_code.ilike.%${safeSearch}%,store_name.ilike.%${safeSearch}%,ean.ilike.%${safeSearch}%,erp_code.ilike.%${safeSearch}%,product_description.ilike.%${safeSearch}%,curve.ilike.%${safeSearch}%`);
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data || []) as ReallocationStockItem[];
+}
+
 export async function updateProfileName(userId: string, fullName: string) {
   const { error } = await supabase.from("profiles").update({ full_name: fullName }).eq("id", userId);
   if (error) throw error;
@@ -397,9 +560,16 @@ export async function createTask(input: CreateTaskInput) {
     sector: input.sector,
     google_event_id: input.googleEventId || null,
     google_event_link: input.googleEventLink || null,
+    is_one_off: input.isOneOff || false,
   }]);
 
-  if (error) throw error;
+  if (error) {
+    if (error.code === "PGRST204") {
+      throw new Error("Campos de tarefa pontual ainda nao existem no Supabase. Rode o SQL supabase/task-one-off-archive.sql.");
+    }
+
+    throw new Error(error.message || "Erro ao criar tarefa.");
+  }
 }
 
 export async function createMeeting(input: CreateMeetingInput) {
@@ -453,14 +623,49 @@ export async function addAuditLog(input: AuditLogInput) {
   if (error) throw error;
 }
 
-export async function updateTaskCompletion(taskId: string, lastDoneDate: string | null, subtasks: Subtask[]) {
-  const { error } = await supabase.from("tasks").update({
+export async function updateTaskCompletion(taskId: string, lastDoneDate: string | null, subtasks: Subtask[], archiveCompleted = false) {
+  let { error } = await supabase.from("tasks").update({
     last_done_date: lastDoneDate,
     status: lastDoneDate ? "concluido" : "pendente",
     subtasks,
+    schedule_override_date: null,
+    schedule_override_type: null,
+    archived_at: archiveCompleted && lastDoneDate ? new Date().toISOString() : null,
   }).eq("id", taskId);
 
+  if (error?.code === "PGRST204") {
+    if (archiveCompleted) {
+      throw new Error("Campos de tarefa pontual ainda nao existem no Supabase. Rode o SQL supabase/task-one-off-archive.sql.");
+    }
+
+    const fallback = await supabase.from("tasks").update({
+      last_done_date: lastDoneDate,
+      status: lastDoneDate ? "concluido" : "pendente",
+      subtasks,
+    }).eq("id", taskId);
+    error = fallback.error;
+  }
+
   if (error) throw error;
+}
+
+export async function updateTaskScheduleOverride(
+  taskId: string,
+  scheduleOverrideDate: string | null,
+  scheduleOverrideType: "advanced" | "postponed" | null,
+) {
+  const { error } = await supabase.from("tasks").update({
+    schedule_override_date: scheduleOverrideDate,
+    schedule_override_type: scheduleOverrideType,
+  }).eq("id", taskId);
+
+  if (error) {
+    if (error.code === "PGRST204") {
+      throw new Error("Campos de adiantar/adiar ainda nao existem no Supabase. Rode o SQL supabase/task-schedule-overrides.sql.");
+    }
+
+    throw new Error(error.message || "Erro ao salvar ajuste de agenda.");
+  }
 }
 
 export async function deleteTask(taskId: string) {

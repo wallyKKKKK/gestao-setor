@@ -9,6 +9,7 @@ import {
   refreshGoogleAccessToken,
 } from "@/lib/google-calendar";
 import { getSupabaseAdmin } from "@/lib/supabase-admin";
+import { requireSelfOrRole } from "@/lib/server-auth";
 
 async function getConnectionAccessToken(userId: string) {
   const supabase = getSupabaseAdmin();
@@ -62,6 +63,9 @@ export async function GET(request: Request) {
   }
 
   try {
+    const auth = await requireSelfOrRole(request, userId, ["admin"]);
+    if (!auth.ok) return auth.response;
+
     const accessToken = await getConnectionAccessToken(userId);
     const events = await listGoogleCalendarEvents(accessToken, timeMin, timeMax);
     return Response.json({ events });
@@ -82,6 +86,9 @@ export async function POST(request: Request) {
   }
 
   try {
+    const auth = await requireSelfOrRole(request, body.userId, ["admin"]);
+    if (!auth.ok) return auth.response;
+
     const accessToken = await getConnectionAccessToken(body.userId);
     const event = await createGoogleCalendarEvent(accessToken, body.meeting);
     return Response.json({ event });
@@ -105,6 +112,9 @@ export async function DELETE(request: Request) {
   }
 
   try {
+    const auth = await requireSelfOrRole(request, userId, ["admin"]);
+    if (!auth.ok) return auth.response;
+
     const accessToken = await getConnectionAccessToken(userId);
     await deleteGoogleCalendarEvent(accessToken, eventId);
     return Response.json({ ok: true });

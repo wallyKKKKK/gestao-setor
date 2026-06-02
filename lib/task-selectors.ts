@@ -1,5 +1,5 @@
 import { GLOBAL_MEMBER_TABS } from "@/app/constants";
-import { getLastOccurrence, getNextOccurrence, getTodayStr } from "@/lib/task-recurrence";
+import { formatToBR, getLastOccurrence, getNextOccurrence, getTodayStr } from "@/lib/task-recurrence";
 import type { ProcessedTask, Task, UserRole } from "@/lib/types";
 
 interface FilterTasksInput {
@@ -31,9 +31,12 @@ export interface SectorStat {
 export function processTasks(tasks: Task[]): ProcessedTask[] {
   const today = getTodayStr();
 
-  return tasks.map((task) => {
-    const lastOcc = getLastOccurrence(task);
-    const nextOcc = getNextOccurrence(task);
+  return tasks.filter((task) => !task.archived_at).map((task) => {
+    const baseLastOcc = getLastOccurrence(task);
+    const baseNextOcc = getNextOccurrence(task);
+    const hasActiveScheduleOverride = Boolean(task.schedule_override_date && task.schedule_override_date >= today);
+    const lastOcc = hasActiveScheduleOverride ? task.schedule_override_date || baseLastOcc : baseLastOcc;
+    const nextOcc = hasActiveScheduleOverride && task.schedule_override_date ? formatToBR(task.schedule_override_date) : baseNextOcc;
     const isDoneToday = task.last_done_date === today || Boolean(task.last_done_date && task.last_done_date >= lastOcc);
     const shouldResetSubtasks = Boolean(task.last_done_date && task.last_done_date < lastOcc && !isDoneToday);
     const subtasks = shouldResetSubtasks

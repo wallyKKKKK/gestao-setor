@@ -1,18 +1,15 @@
 
 'use client'
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react'
+import dynamic from 'next/dynamic'
 import { AnnouncementBoard } from '@/app/components/announcement-board'
 import { AppSection, AppSidebar } from '@/app/components/app-sidebar'
 import { AppShellNav } from '@/app/components/app-shell-nav'
-import { AuditTimeline } from '@/app/components/audit-timeline'
 import { CreateTaskModal } from '@/app/components/create-task-modal'
 import { DashboardView } from '@/app/components/dashboard-view'
 import { EditTaskModal } from '@/app/components/edit-task-modal'
 import { HistoryTimeline } from '@/app/components/history-timeline'
 import { Login } from '@/app/components/login'
-import { MeetingCalendarView } from '@/app/components/meeting-calendar-view'
-import { PaymentTermsManager } from '@/app/components/payment-terms-manager'
-import { PricingManager } from '@/app/components/pricing-manager'
 import { ProfileModal } from '@/app/components/profile-modal'
 import { SettingsModal } from '@/app/components/settings-modal'
 import { TaskDrawer } from '@/app/components/task-drawer'
@@ -31,22 +28,63 @@ import {
   fetchProfiles as fetchProfilesApi,
   fetchTaskHistory,
   fetchTasks as fetchTasksApi,
+  fetchTradeTaskNoteTaskIds,
   updateTask as updateTaskApi,
   updateTaskCompletion,
+  updateTaskScheduleOverride,
 } from '@/lib/api'
+import { getAuthHeaders } from '@/lib/auth-headers'
 import { supabase } from '@/lib/supabase'
 import type { RealtimeChannel, User as SupabaseUser } from '@supabase/supabase-js'
-import { getTodayStr } from '@/lib/task-recurrence'
+import { addDaysToDateStr, getTodayStr } from '@/lib/task-recurrence'
 import { filterTasks, getSectorStats, getTaskStats, processTasks } from '@/lib/task-selectors'
 import type { CreateMeetingInput } from '@/lib/api'
 import type { Announcement, AuditLog, ProcessedTask, Profile, Subtask, Task, TaskHistory, UserRole } from '@/lib/types'
 import { Plus, X } from 'lucide-react'
+
+const SectionLoader = () => (
+  <main className="max-w-5xl mx-auto p-6">
+    <div className="rounded-[28px] border-2 border-slate-100 bg-white p-8 text-center text-[10px] font-black uppercase tracking-widest text-slate-300">
+      Carregando interface...
+    </div>
+  </main>
+)
+
+const AuditTimeline = dynamic(() => import('@/app/components/audit-timeline').then((mod) => mod.AuditTimeline), { loading: SectionLoader })
+const MeetingCalendarView = dynamic(() => import('@/app/components/meeting-calendar-view').then((mod) => mod.MeetingCalendarView), { loading: SectionLoader })
+const PaymentTermsManager = dynamic(() => import('@/app/components/payment-terms-manager').then((mod) => mod.PaymentTermsManager), { loading: SectionLoader })
+const PricingManager = dynamic(() => import('@/app/components/pricing-manager').then((mod) => mod.PricingManager), { loading: SectionLoader })
+const ReallocationManager = dynamic(() => import('@/app/components/reallocation-manager').then((mod) => mod.ReallocationManager), { loading: SectionLoader })
+const RegistrationsManager = dynamic(() => import('@/app/components/registrations-manager').then((mod) => mod.RegistrationsManager), { loading: SectionLoader })
+
+function normalizeSector(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+}
+
+function getErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === 'object' && 'message' in error) {
+    return String((error as { message?: unknown }).message || fallback);
+  }
+  return fallback;
+}
+
+function isSupremeAdminEmail(email: string | undefined) {
+  const normalizedEmail = email?.trim().toLowerCase();
+  const configuredEmail = process.env.NEXT_PUBLIC_SUPREME_ADMIN_EMAIL?.trim().toLowerCase();
+
+  return Boolean(normalizedEmail && (normalizedEmail === configuredEmail || normalizedEmail === 'admin@wally.system'));
+}
 
 export default function App() {
   const [user, setUser] = useState<SupabaseUser | null>(null)
   const [userRole, setUserRole] = useState<UserRole>('membro')
   const [profiles, setProfiles] = useState<Profile[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
+  const [tradeNoteTaskIds, setTradeNoteTaskIds] = useState<string[]>([])
   const [history, setHistory] = useState<TaskHistory[]>([])
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([])
   
@@ -63,6 +101,8 @@ export default function App() {
   const [notes, setNotes] = useState('')
   const [assignedTo, setAssignedTo] = useState('')
   const [category, setCategory] = useState('Trade')
+  const [taskScheduleMode, setTaskScheduleMode] = useState<'pontual' | 'semanal' | 'mensal'>('semanal')
+  const [oneOffDate, setOneOffDate] = useState(getTodayStr())
   const [repeatInterval, setRepeatInterval] = useState(1)
   const [selectedDays, setSelectedDays] = useState<string[]>([])
   const [tempSubtasks, setTempSubtasks] = useState<{title: string, done: boolean}[]>([])
@@ -98,6 +138,48 @@ useEffect(() => {
   };
 }, [showCreateBox, showSettingsModal, showProfileModal, showEditModal]);
 
+useEffect(() => {
+  const handleEscape = (event: KeyboardEvent) => {
+    if (event.key !== 'Escape') return;
+
+    if (showAssignMenu) {
+      setShowAssignMenu(false);
+      return;
+    }
+    if (showCategoryMenu) {
+      setShowCategoryMenu(false);
+      return;
+    }
+    if (viewingTask) {
+      setViewingTask(null);
+      return;
+    }
+    if (showEditModal) {
+      setShowEditModal(false);
+      setEditingTask(null);
+      return;
+    }
+    if (showCreateBox) {
+      setShowCreateBox(false);
+      return;
+    }
+    if (showProfileModal) {
+      setShowProfileModal(false);
+      return;
+    }
+    if (showSettingsModal) {
+      setShowSettingsModal(false);
+      return;
+    }
+    if (searchTerm) {
+      setSearchTerm('');
+    }
+  };
+
+  window.addEventListener('keydown', handleEscape);
+  return () => window.removeEventListener('keydown', handleEscape);
+}, [searchTerm, showAssignMenu, showCategoryMenu, showCreateBox, showEditModal, showProfileModal, showSettingsModal, viewingTask]);
+
   const processedTasks = useMemo(() => processTasks(tasks), [tasks]);
 
   const fetchProfiles = useCallback(async () => {
@@ -105,10 +187,19 @@ useEffect(() => {
     setProfiles(data);
   }, []);
 
+  const fetchTradeNoteIndicators = useCallback(async (taskRows: Task[]) => {
+    const tradeTaskIds = taskRows
+      .filter((task) => task.category === 'Trade')
+      .map((task) => task.id);
+    const ids = await fetchTradeTaskNoteTaskIds(tradeTaskIds).catch(() => []);
+    setTradeNoteTaskIds(ids);
+  }, []);
+
   const fetchTasks = useCallback(async () => {
     const data = await fetchTasksApi();
     setTasks(data);
-  }, []);
+    await fetchTradeNoteIndicators(data);
+  }, [fetchTradeNoteIndicators]);
 
   const fetchHistory = useCallback(async () => {
     const data = await fetchTaskHistory();
@@ -180,9 +271,6 @@ useEffect(() => {
       
       fetchProfiles(); 
       fetchTasks(); 
-      fetchHistory();
-      fetchAudit();
-      fetchAnnouncements();
 
       // Configuracao do realtime
       // 1. Criamos o canal
@@ -209,7 +297,34 @@ useEffect(() => {
       supabase.removeChannel(channel);
     }
   };
-}, [fetchAnnouncements, fetchAudit, fetchHistory, fetchProfiles, fetchTasks, setNewName]);
+}, [fetchProfiles, fetchTasks, setNewName]);
+
+  useEffect(() => {
+    if (!user) return;
+    if (activeSection === 'TAREFAS' && activeTab === 'HISTÓRICO') {
+      queueMicrotask(() => {
+        void fetchHistory();
+      });
+    }
+  }, [activeSection, activeTab, fetchHistory, user]);
+
+  useEffect(() => {
+    if (!user) return;
+    if (activeSection === 'TAREFAS' && activeTab === 'COMUNICADOS') {
+      queueMicrotask(() => {
+        void fetchAnnouncements();
+      });
+    }
+  }, [activeSection, activeTab, fetchAnnouncements, user]);
+
+  useEffect(() => {
+    if (!user || userRole !== 'admin') return;
+    if (activeSection === 'AUDITORIA') {
+      queueMicrotask(() => {
+        void fetchAudit();
+      });
+    }
+  }, [activeSection, fetchAudit, user, userRole]);
 
   const openEditTaskModal = useCallback((task: ProcessedTask) => {
     setEditingTask(task);
@@ -267,9 +382,18 @@ const toggleDayInEdit = (day: string) => {
 
   async function addTask() {
   if (!taskTitle) return;
-  
-  // Detecta recorrencia mensal e semanal
-  const isRecurring = selectedDays.length > 0;
+  if (taskScheduleMode === 'semanal' && selectedDays.length === 0) {
+    alert('Selecione ao menos um dia da semana ou use o modo Pontual.');
+    return;
+  }
+
+  if (taskScheduleMode === 'mensal' && selectedDays.length === 0) {
+    alert('Selecione o dia da tarefa mensal.');
+    return;
+  }
+
+  const isOneOff = taskScheduleMode === 'pontual';
+  const repeatDays = isOneOff ? '' : selectedDays.join(',');
 
   try {
     await createTask({
@@ -277,17 +401,20 @@ const toggleDayInEdit = (day: string) => {
       assignedTo,
       category,
       notes,
-      repeatDays: selectedDays.join(','),
-      repeatInterval,
+      repeatDays,
+      repeatInterval: isOneOff ? 1 : repeatInterval,
       subtasks: tempSubtasks,
-      dueDate: isRecurring ? null : getTodayStr(),
+      dueDate: isOneOff ? oneOffDate : null,
       sector: userSector,
+      isOneOff,
     });
     await addAudit('task_created', 'task', null, taskTitle, userSector, `Categoria: ${category}`);
     setTaskTitle('');
     setDisplayDate('DD/MM/YYYY'); 
     setNotes(''); 
     setSelectedDays([]); 
+    setTaskScheduleMode('semanal');
+    setOneOffDate(getTodayStr());
     setTempSubtasks([]); 
     setShowCreateBox(false); 
     fetchTasks(); 
@@ -310,9 +437,12 @@ const toggleDayInEdit = (day: string) => {
   }));
 
   // Optimistic Update
-  setTasks(prevTasks => prevTasks.map(t => 
-    t.id === task.id ? { ...t, last_done_date: newDate, subtasks: updatedSubtasks } : t
-  ));
+  const shouldArchive = Boolean(task.is_one_off && !isCurrentlyDone);
+
+  setTasks(prevTasks => prevTasks
+    .map(t => t.id === task.id ? { ...t, last_done_date: newDate, subtasks: updatedSubtasks, archived_at: shouldArchive ? new Date().toISOString() : t.archived_at } : t)
+    .filter((t) => !t.archived_at)
+  );
 
   if (!isCurrentlyDone) {
     const profile = profiles.find(p => p.id === user.id);
@@ -327,7 +457,7 @@ const toggleDayInEdit = (day: string) => {
   }
 
   try {
-    await updateTaskCompletion(task.id, newDate, updatedSubtasks);
+    await updateTaskCompletion(task.id, newDate, updatedSubtasks, shouldArchive);
     await addAudit(isCurrentlyDone ? 'task_reopened' : 'task_completed', 'task', task.id, task.title, task.sector);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Erro desconhecido';
@@ -351,6 +481,7 @@ const deleteTask = useCallback(async (taskId: string) => {
     if (shouldDeleteGoogleEvent && taskToDelete?.google_event_id && user?.id) {
       const response = await fetch(`/api/google-calendar/events?userId=${user.id}&eventId=${encodeURIComponent(taskToDelete.google_event_id)}`, {
         method: 'DELETE',
+        headers: await getAuthHeaders(),
       });
 
       if (!response.ok) {
@@ -369,6 +500,44 @@ const deleteTask = useCallback(async (taskId: string) => {
     fetchTasks();
   }
 }, [addAudit, fetchTasks, tasks, user]);
+
+const scheduleTaskOverride = useCallback(async (task: ProcessedTask, action: 'advance' | 'postpone' | 'clear') => {
+  if (!user) return;
+
+  const todayStr = getTodayStr();
+  const overrideDate = action === 'advance'
+    ? todayStr
+    : action === 'postpone'
+      ? addDaysToDateStr(todayStr, 1)
+      : null;
+  const overrideType = action === 'advance'
+    ? 'advanced'
+    : action === 'postpone'
+      ? 'postponed'
+      : null;
+
+  setTasks((prevTasks) => prevTasks.map((item) => (
+    item.id === task.id
+      ? { ...item, schedule_override_date: overrideDate, schedule_override_type: overrideType }
+      : item
+  )));
+
+  try {
+    await updateTaskScheduleOverride(task.id, overrideDate, overrideType);
+    await addAudit(
+      action === 'advance' ? 'task_advanced' : action === 'postpone' ? 'task_postponed' : 'task_schedule_restored',
+      'task',
+      task.id,
+      task.title,
+      task.sector,
+      overrideDate ? `Data ajustada para ${overrideDate}` : 'Agenda original restaurada',
+    );
+  } catch (error) {
+    const message = getErrorMessage(error, 'Erro desconhecido');
+    alert('Erro ao ajustar a agenda da tarefa: ' + message);
+    fetchTasks();
+  }
+}, [addAudit, fetchTasks, user]);
 
 const addMeeting = useCallback(async (meeting: CreateMeetingInput) => {
   try {
@@ -466,12 +635,17 @@ const updateMeeting = useCallback(async (task: ProcessedTask, meeting: CreateMee
     });
   }, [processedTasks, userRole, userSector]);
 
-  const canAccessPricing = userRole === 'admin' || ['precificação', 'price'].includes(userSector.toLowerCase());
-  const canAccessPaymentTerms = userRole === 'admin' || userSector.toLowerCase().startsWith('compras');
+  const normalizedSector = normalizeSector(userSector);
+  const isSupremeAdmin = userRole === 'admin' && isSupremeAdminEmail(user?.email);
+  const canAccessPricing = userRole === 'admin' || ['precificacao', 'price'].includes(normalizedSector);
+  const canAccessPaymentTerms = userRole === 'admin' || normalizedSector.startsWith('compras');
+  const canAccessRegistries = userRole === 'admin' || canAccessPricing || canAccessPaymentTerms;
   const visibleSection =
     (activeSection === 'AUDITORIA' && userRole !== 'admin') ||
+    (activeSection === 'CADASTROS' && !canAccessRegistries) ||
     (activeSection === 'PRECIFICACAO' && !canAccessPricing) ||
-    (activeSection === 'PRAZOS' && !canAccessPaymentTerms)
+    (activeSection === 'PRAZOS' && !canAccessPaymentTerms) ||
+    (activeSection === 'BALACUBACO' && !isSupremeAdmin)
       ? 'TAREFAS'
       : activeSection;
 
@@ -483,6 +657,7 @@ const updateMeeting = useCallback(async (task: ProcessedTask, meeting: CreateMee
         activeSection={visibleSection}
         userRole={userRole}
         userSector={userSector}
+        isSupremeAdmin={isSupremeAdmin}
         onSectionChange={(section) => {
           setActiveSection(section);
           if (section === 'AUDITORIA') {
@@ -552,6 +727,10 @@ const updateMeeting = useCallback(async (task: ProcessedTask, meeting: CreateMee
     setAssignedTo={setAssignedTo}
     category={category}
     setCategory={setCategory}
+    taskScheduleMode={taskScheduleMode}
+    setTaskScheduleMode={setTaskScheduleMode}
+    oneOffDate={oneOffDate}
+    setOneOffDate={setOneOffDate}
     repeatInterval={repeatInterval}
     setRepeatInterval={setRepeatInterval}
     selectedDays={selectedDays}
@@ -577,6 +756,7 @@ const updateMeeting = useCallback(async (task: ProcessedTask, meeting: CreateMee
         activeTab={activeTab}
         tasks={filteredTasks}
         profiles={profiles}
+        tradeNoteTaskIds={tradeNoteTaskIds}
         userRole={userRole}
         currentUser={user}
         onToggle={toggleComplete}
@@ -584,6 +764,7 @@ const updateMeeting = useCallback(async (task: ProcessedTask, meeting: CreateMee
         onEdit={openEditTaskModal}
         onUpdate={fetchTasks}
         onDelete={deleteTask}
+        onScheduleOverride={scheduleTaskOverride}
       />
     </>
   )}
@@ -600,10 +781,14 @@ const updateMeeting = useCallback(async (task: ProcessedTask, meeting: CreateMee
           onCreateMeeting={addMeeting}
           onUpdateMeeting={updateMeeting}
         />
+      ) : visibleSection === 'CADASTROS' ? (
+        <RegistrationsManager />
       ) : visibleSection === 'PRECIFICACAO' ? (
         <PricingManager />
       ) : visibleSection === 'PRAZOS' ? (
         <PaymentTermsManager />
+      ) : visibleSection === 'BALACUBACO' ? (
+        <ReallocationManager />
       ) : (
         <main className="max-w-5xl mx-auto p-4 pt-8">
           <AuditTimeline logs={auditLogs} />
@@ -651,6 +836,7 @@ const updateMeeting = useCallback(async (task: ProcessedTask, meeting: CreateMee
   profiles={profiles}
   user={user}
   userRole={userRole}
+  onTradeNotesChanged={() => fetchTradeNoteIndicators(tasks)}
   onClose={() => setViewingTask(null)}
   onEdit={(task) => { setEditingTask(task); setShowEditModal(true); setViewingTask(null); }}
 />

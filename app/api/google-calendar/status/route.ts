@@ -1,5 +1,6 @@
 import { getGoogleCalendarConfig } from "@/lib/google-calendar";
 import { getSupabaseAdmin } from "@/lib/supabase-admin";
+import { requireSelfOrRole } from "@/lib/server-auth";
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -13,6 +14,9 @@ export async function GET(request: Request) {
   if (!config.isConfigured) {
     return Response.json({ configured: false, connected: false });
   }
+
+  const auth = await requireSelfOrRole(request, userId, ["admin"]);
+  if (!auth.ok) return auth.response;
 
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase

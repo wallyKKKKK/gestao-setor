@@ -7,13 +7,15 @@ import {
   deletePricingProduct,
   fetchPricingBranches,
   fetchPricingProducts,
+  fetchReallocationProducts,
   savePricingBranch,
   savePricingProduct,
   type PricingBranchInput,
   type PricingProductInput,
 } from '@/lib/api';
 import { MultiCheckboxFilter } from '@/app/components/multi-checkbox-filter';
-import type { DiscountMode, PricingBranch, PricingProduct } from '@/lib/types';
+import { getAuthHeaders } from '@/lib/auth-headers';
+import type { DiscountMode, PricingBranch, PricingProduct, ReallocationProduct } from '@/lib/types';
 
 const COMPETITORS = ['TEM TUDO', 'BEM POPULAR', 'EXTRAFARMA', 'DROGASIL', 'AMERICANAS'];
 const EXPORT_OPTIONS = [
@@ -104,6 +106,7 @@ const blankBranch: PricingBranchInput = {
   legal_name: '',
   uf: '',
   cnpj: '',
+  logistics_group: '',
   is_active: true,
 };
 
@@ -141,11 +144,14 @@ function serializeCsv(rows: string[][]) {
 
 export function PricingManager() {
   const [products, setProducts] = useState<PricingProduct[]>([]);
+  const [catalogProducts, setCatalogProducts] = useState<ReallocationProduct[]>([]);
   const [branches, setBranches] = useState<PricingBranch[]>([]);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [brandFilters, setBrandFilters] = useState<string[]>([]);
+  const [classificationFilters, setClassificationFilters] = useState<string[]>([]);
+  const [branchFilters, setBranchFilters] = useState<string[]>([]);
   const [visibleColumns, setVisibleColumns] = useState<string[]>(DEFAULT_VISIBLE_COLUMNS);
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
   const [showBranches, setShowBranches] = useState(false);
@@ -153,10 +159,20 @@ export function PricingManager() {
   const [editingBranch, setEditingBranch] = useState<PricingBranchInput | null>(null);
   const [exportPrice, setExportPrice] = useState<(typeof EXPORT_OPTIONS)[number]['id']>('full_table');
   const [showExportModal, setShowExportModal] = useState(false);
+  const [showPriceResults, setShowPriceResults] = useState(false);
   const [saving, setSaving] = useState(false);
   const [importing, setImporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const resizingColumnRef = useRef<{ key: string; startX: number; startWidth: number } | null>(null);
+
+  const loadCatalogProducts = useCallback(async () => {
+    try {
+      const data = await fetchReallocationProducts({ limit: 5000 });
+      setCatalogProducts(data);
+    } catch {
+      setCatalogProducts([]);
+    }
+  }, []);
 
   const loadProducts = useCallback(async () => {
     setLoading(true);
@@ -209,18 +225,84 @@ export function PricingManager() {
     };
   }, []);
 
-  const brands = useMemo(() => Array.from(new Set(products.map((item) => item.brand).filter(Boolean))).sort(), [products]);
+  useEffect(() => {
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+
+      if (editingProduct) {
+        setEditingProduct(null);
+        return;
+      }
+      if (editingBranch) {
+        setEditingBranch(null);
+        return;
+      }
+      if (showExportModal) {
+        setShowExportModal(false);
+        return;
+      }
+      if (showBranches) {
+        setShowBranches(false);
+        return;
+      }
+      if (searchTerm) {
+        setSearchTerm('');
+      }
+    };
+
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, [editingBranch, editingProduct, searchTerm, showBranches, showExportModal]);
+
+  const brands = useMemo(() => Array.from(new Set([
+    ...products.map((item) => item.brand).filter(Boolean),
+    ...catalogProducts.map((item) => item.manufacturer).filter(Boolean),
+  ])).sort(), [catalogProducts, products]);
+  const classifications = useMemo(() => Array.from(new Set(catalogProducts.map((item) => item.classification).filter(Boolean))).sort(), [catalogProducts]);
   const activeBranches = useMemo(() => branches.filter((branch) => branch.is_active), [branches]);
+  const catalogByEan = useMemo(() => new Map(catalogProducts.filter((item) => item.ean).map((item) => [item.ean, item])), [catalogProducts]);
+  const catalogByDescription = useMemo(() => new Map(catalogProducts.map((item) => [item.description.toUpperCase(), item])), [catalogProducts]);
+  const tableProducts = useMemo<PricingProduct[]>(() => {
+    const pricingEans = new Set(products.map((product) => product.ean).filter(Boolean));
+    const pricingDescriptions = new Set(products.map((product) => product.description.toUpperCase()));
+    const catalogOnlyProducts = catalogProducts
+      .filter((product) => !pricingEans.has(product.ean) && !pricingDescriptions.has(product.description.toUpperCase()))
+      .map((product) => ({
+        id: `catalog:${product.id}`,
+        ean: product.ean,
+        description: product.description,
+        brand: product.manufacturer,
+        purchase_price: 0,
+        sell_in_value: 0,
+        sell_in_mode: 'currency' as DiscountMode,
+        sell_out_value: 0,
+        sell_out_mode: 'currency' as DiscountMode,
+        trade_value: 0,
+        trade_mode: 'percent' as DiscountMode,
+        sale_price: 0,
+        baby_wednesday_price: 0,
+        month_end_price: 0,
+        competitor_prices: Object.fromEntries(COMPETITORS.map((item) => [item, 0])),
+        store_prices: {},
+      }));
+
+    return [...products, ...catalogOnlyProducts].sort((left, right) => left.description.localeCompare(right.description));
+  }, [catalogProducts, products]);
+  const tableBranches = useMemo(() => {
+    if (branchFilters.length === 0) return activeBranches;
+    const selected = new Set(branchFilters);
+    return activeBranches.filter((branch) => selected.has(branch.code));
+  }, [activeBranches, branchFilters]);
   const isColumnVisible = useCallback((column: string) => visibleColumns.includes(column), [visibleColumns]);
   const showCompetitors = isColumnVisible('competitors');
-  const showBranchColumns = isColumnVisible('branches');
+  const showBranchColumns = isColumnVisible('branches') || branchFilters.length > 0;
   const visibleTableColumnCount = useMemo(() => {
     return visibleColumns.reduce((total, column) => {
       if (column === 'competitors') return total + COMPETITORS.length;
-      if (column === 'branches') return total + activeBranches.length;
+      if (column === 'branches') return total + tableBranches.length;
       return total + 1;
-    }, 0);
-  }, [activeBranches.length, visibleColumns]);
+    }, branchFilters.length > 0 && !visibleColumns.includes('branches') ? tableBranches.length : 0);
+  }, [branchFilters.length, tableBranches.length, visibleColumns]);
   const getColumnWidth = useCallback((key: string, baseKey = key) => {
     return columnWidths[key] || columnWidths[baseKey] || DEFAULT_COLUMN_WIDTHS[baseKey] || 86;
   }, [columnWidths]);
@@ -249,7 +331,7 @@ export function PricingManager() {
     );
 
     if (showBranchColumns) {
-      activeBranches.forEach((branch) => columns.push({ key: `branch:${branch.code}`, baseKey: 'branches' }));
+      tableBranches.forEach((branch) => columns.push({ key: `branch:${branch.code}`, baseKey: 'branches' }));
     }
 
     columns.push(
@@ -258,7 +340,7 @@ export function PricingManager() {
     );
 
     return columns;
-  }, [activeBranches, showBranchColumns, showCompetitors]);
+  }, [showBranchColumns, showCompetitors, tableBranches]);
   const tableWidth = useMemo(() => {
     return tableColumns.reduce((total, column) => total + getColumnWidth(column.key, column.baseKey), 0);
   }, [getColumnWidth, tableColumns]);
@@ -323,7 +405,7 @@ export function PricingManager() {
     addColumn('sale_price');
     addColumn('baby_wednesday_price');
     addColumn('month_end_price');
-    if (showBranchColumns) activeBranches.forEach(() => { index += 1; });
+    if (showBranchColumns) tableBranches.forEach(() => { index += 1; });
     addColumn('markup');
     addColumn('actions');
 
@@ -351,7 +433,7 @@ export function PricingManager() {
     return `
       #pricing-products-table {
         table-layout: fixed;
-        width: ${tableWidth}px;
+        width: max(100%, ${tableWidth}px);
         min-width: ${tableWidth}px;
         border-collapse: collapse;
         border-spacing: 0;
@@ -445,29 +527,60 @@ export function PricingManager() {
       .map((columnIndex) => `#pricing-products-table th:nth-child(${columnIndex}), #pricing-products-table td:nth-child(${columnIndex}){display:none}`)
       .join('\n')}
     `;
-  }, [activeBranches, showBranchColumns, showCompetitors, tableWidth, visibleColumns, visibleTableColumnCount]);
+  }, [showBranchColumns, showCompetitors, tableBranches, tableWidth, visibleColumns, visibleTableColumnCount]);
 
   const filteredProducts = useMemo(() => {
     const normalizedSearch = searchTerm.toLowerCase();
 
-    return products.filter((product) => {
-      if (brandFilters.length > 0 && !brandFilters.includes(product.brand)) return false;
-      if (normalizedSearch && ![product.ean, product.description, product.brand].some((value) => value.toLowerCase().includes(normalizedSearch))) {
+    return tableProducts.filter((product) => {
+      const catalogProduct = catalogByEan.get(product.ean) || catalogByDescription.get(product.description.toUpperCase());
+      const manufacturer = catalogProduct?.manufacturer || product.brand;
+      const classification = catalogProduct?.classification || '';
+      const searchValues = [
+        product.ean,
+        product.description,
+        product.brand,
+        manufacturer,
+        classification,
+        catalogProduct?.erp_code || '',
+      ];
+
+      if (brandFilters.length > 0 && !brandFilters.includes(manufacturer)) return false;
+      if (classificationFilters.length > 0 && !classificationFilters.includes(classification)) return false;
+      if (normalizedSearch && !searchValues.some((value) => value.toLowerCase().includes(normalizedSearch))) {
         return false;
       }
       return true;
     });
-  }, [brandFilters, products, searchTerm]);
+  }, [brandFilters, catalogByDescription, catalogByEan, classificationFilters, searchTerm, tableProducts]);
+  const hasPriceFilters = Boolean(searchTerm.trim()) || brandFilters.length > 0 || classificationFilters.length > 0 || branchFilters.length > 0;
+  const visibleProducts = useMemo(() => (hasPriceFilters || showPriceResults ? filteredProducts : []), [filteredProducts, hasPriceFilters, showPriceResults]);
+
+  const editableProduct = (product: PricingProduct): PricingProductInput => {
+    const catalogProduct = catalogByEan.get(product.ean) || catalogByDescription.get(product.description.toUpperCase());
+    const { id, created_at, updated_at, ...input } = product;
+    void created_at;
+    void updated_at;
+
+    if (id.startsWith('catalog:')) {
+      return {
+        ...input,
+        brand: catalogProduct?.manufacturer || input.brand,
+      };
+    }
+
+    return { id, ...input };
+  };
 
   const summary = useMemo(() => {
-    const totalPurchase = filteredProducts.reduce((sum, product) => sum + product.purchase_price, 0);
-    const negativeMargins = filteredProducts.filter((product) => markup(product) < 0).length;
-    const averageMarkup = filteredProducts.length
-      ? filteredProducts.reduce((sum, product) => sum + markup(product), 0) / filteredProducts.length
+    const totalPurchase = visibleProducts.reduce((sum, product) => sum + product.purchase_price, 0);
+    const negativeMargins = visibleProducts.filter((product) => markup(product) < 0).length;
+    const averageMarkup = visibleProducts.length
+      ? visibleProducts.reduce((sum, product) => sum + markup(product), 0) / visibleProducts.length
       : 0;
 
     return { totalPurchase, negativeMargins, averageMarkup };
-  }, [filteredProducts]);
+  }, [visibleProducts]);
 
   const updateEditing = <K extends keyof PricingProductInput>(key: K, value: PricingProductInput[K]) => {
     setEditingProduct((current) => current ? { ...current, [key]: value } : current);
@@ -489,7 +602,7 @@ export function PricingManager() {
     setSaving(true);
     try {
       await savePricingProduct(editingProduct);
-      await loadProducts();
+      await Promise.all([loadProducts(), loadCatalogProducts()]);
       setEditingProduct(null);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Erro desconhecido';
@@ -534,6 +647,7 @@ export function PricingManager() {
       formData.append('file', file);
       const response = await fetch('/api/pricing/import', {
         method: 'POST',
+        headers: await getAuthHeaders(),
         body: formData,
       });
       const data = await response.json().catch(() => null);
@@ -547,7 +661,7 @@ export function PricingManager() {
         await savePricingProduct(product);
       }
 
-      await loadProducts();
+      await Promise.all([loadProducts(), loadCatalogProducts()]);
       alert(`${data.products.length} produtos importados com sucesso.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Erro desconhecido';
@@ -570,15 +684,15 @@ export function PricingManager() {
       exportPrice === 'full_table'
         ? ['BARRAS', 'PRODUTO', ...COMPETITORS, 'Preço', 'Sell in', 'Cálculo', 'Sell out', 'Trade', 'Custo Real', 'Custo Lançado', 'Novo Preço', 'Quarta da Fralda', 'Fecha mês', 'Margem (%)']
         : exportPrice === 'branch_prices'
-          ? ['BARRAS', 'PRODUTO', 'MARCA', ...activeBranches.map((branch) => branch.name)]
+          ? ['BARRAS', 'PRODUTO', 'MARCA', ...tableBranches.map((branch) => branch.name)]
         : ['BARRAS', 'PRODUTO', 'MARCA', selectedLabel],
-      ...filteredProducts.map((product) => {
+      ...visibleProducts.map((product) => {
         if (exportPrice === 'branch_prices') {
           return [
             product.ean,
             product.description,
             product.brand,
-            ...activeBranches.map((branch) => String(product.store_prices?.[branch.code] || product.sale_price || 0).replace('.', ',')),
+            ...tableBranches.map((branch) => String(product.store_prices?.[branch.code] || product.sale_price || 0).replace('.', ',')),
           ];
         }
 
@@ -616,7 +730,7 @@ export function PricingManager() {
   };
 
   const renderHeader = (label: string, key: string, baseKey = key, align: 'left' | 'right' | 'center' = 'right') => (
-    <th className={`px-4 py-4 ${align === 'left' ? 'text-left' : align === 'center' ? 'text-center' : 'text-right'}`}>
+    <th key={key} className={`px-4 py-4 ${align === 'left' ? 'text-left' : align === 'center' ? 'text-center' : 'text-right'}`}>
       <span className="block truncate pr-1" style={{ color: HEADER_COLORS[baseKey] }}>{label}</span>
       <span
         className="column-resizer"
@@ -630,7 +744,7 @@ export function PricingManager() {
   );
 
   return (
-    <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 pb-24 md:pb-8">
+    <main className="w-full max-w-none px-3 sm:px-5 py-6 sm:py-8 pb-24 md:pb-8">
       <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 mb-6">
         <div className="flex items-center gap-4">
           <div className="w-14 h-14 rounded-2xl bg-blue-600 text-white flex items-center justify-center shadow-md">
@@ -663,6 +777,15 @@ export function PricingManager() {
           <button onClick={() => setShowExportModal(true)} className="h-11 px-4 rounded-2xl bg-white border-2 border-slate-100 font-black uppercase text-[10px] flex items-center gap-2">
             <Download size={16} /> Exportar Excel
           </button>
+          <button
+            onClick={async () => {
+              await Promise.all([loadProducts(), loadCatalogProducts()]);
+              setShowPriceResults(true);
+            }}
+            className="h-11 px-4 rounded-2xl bg-white border-2 border-slate-100 font-black uppercase text-[10px] flex items-center gap-2"
+          >
+            <FileSpreadsheet size={16} /> Atualizar
+          </button>
           <button onClick={() => setShowBranches((value) => !value)} className="h-11 px-4 rounded-2xl bg-white border-2 border-slate-100 font-black uppercase text-[10px] flex items-center gap-2">
             <Building2 size={16} /> Filiais
           </button>
@@ -686,8 +809,8 @@ export function PricingManager() {
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
         <div className="bg-white border-2 border-slate-100 rounded-2xl p-5">
-          <p className="text-[10px] font-black uppercase text-slate-400">Total Produtos</p>
-          <p className="text-2xl font-black">{filteredProducts.length}</p>
+          <p className="text-[10px] font-black uppercase text-slate-400">Produtos exibidos</p>
+          <p className="text-2xl font-black">{visibleProducts.length}</p>
         </div>
         <div className="bg-white border-2 border-slate-100 rounded-2xl p-5">
           <p className="text-[10px] font-black uppercase text-slate-400">Markup Médio</p>
@@ -703,17 +826,31 @@ export function PricingManager() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_240px_260px] gap-3 mb-5">
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_210px_210px_210px_250px] gap-3 mb-5">
         <div className="relative">
           <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
           <input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="BUSCAR POR EAN OU DESCRIÇÃO..." className="w-full h-12 rounded-2xl bg-white border-2 border-slate-100 pl-12 pr-4 text-sm font-bold outline-none focus:border-blue-600" />
         </div>
         <MultiCheckboxFilter
-          label="Marca"
-          allLabel="Todas as marcas"
+          label="Fabricante"
+          allLabel="Todos fabricantes"
           selectedValues={brandFilters}
           onChange={setBrandFilters}
           options={brands.map((brand) => ({ value: brand, label: brand }))}
+        />
+        <MultiCheckboxFilter
+          label="Classificacao"
+          allLabel="Todas classificacoes"
+          selectedValues={classificationFilters}
+          onChange={setClassificationFilters}
+          options={classifications.map((classification) => ({ value: classification, label: classification }))}
+        />
+        <MultiCheckboxFilter
+          label="Filial"
+          allLabel="Todas as filiais"
+          selectedValues={branchFilters}
+          onChange={setBranchFilters}
+          options={activeBranches.map((branch) => ({ value: branch.code, label: `${branch.code} - ${branch.name}` }))}
         />
         <MultiCheckboxFilter
           label="Colunas"
@@ -750,6 +887,7 @@ export function PricingManager() {
                     <p className="font-black uppercase text-slate-900">{branch.name}</p>
                     <p className="text-[10px] font-black uppercase text-slate-400">{branch.code} {branch.uf ? `• ${branch.uf}` : ''}</p>
                     {branch.cnpj && <p className="text-[10px] font-bold text-slate-400 mt-1">{branch.cnpj}</p>}
+                    {branch.logistics_group && <p className="text-[10px] font-black text-blue-600 mt-1">Grupo: {branch.logistics_group}</p>}
                     <p className={`text-[9px] font-black uppercase mt-2 ${branch.is_active ? 'text-green-600' : 'text-red-600'}`}>{branch.is_active ? 'Ativa' : 'Inativa'}</p>
                   </div>
                   <div className="flex gap-1">
@@ -768,7 +906,7 @@ export function PricingManager() {
         </div>
       )}
 
-      <div className="bg-white border border-slate-300 rounded-md overflow-x-auto overflow-y-hidden shadow-sm">
+      <div className="bg-white border border-slate-300 rounded-md max-h-[calc(100vh-220px)] overflow-auto shadow-sm">
         <style>{pricingTableCss}</style>
         <table id="pricing-products-table" className="w-full text-sm">
           <colgroup>
@@ -792,13 +930,13 @@ export function PricingManager() {
               {renderHeader('Novo Preco', 'sale_price')}
               {renderHeader('Quarta da Fralda', 'baby_wednesday_price')}
               {renderHeader('Fecha mes', 'month_end_price')}
-              {showBranchColumns && activeBranches.map((branch) => renderHeader(branch.name, `branch:${branch.code}`, 'branches'))}
+              {showBranchColumns && tableBranches.map((branch) => renderHeader(branch.name, `branch:${branch.code}`, 'branches'))}
               {renderHeader('Markup', 'markup')}
               {renderHeader('Acoes', 'actions')}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {filteredProducts.map((product, index) => {
+            {visibleProducts.map((product, index) => {
               const currentMarkup = markup(product);
               return (
                 <tr key={product.id} className="hover:bg-blue-50/40">
@@ -821,21 +959,27 @@ export function PricingManager() {
                   <td className="px-4 py-4 text-right excel-sale">{money(product.sale_price)}</td>
                   <td className="px-4 py-4 text-right excel-offer">{money(product.baby_wednesday_price)}</td>
                   <td className="px-4 py-4 text-right excel-offer">{money(product.month_end_price)}</td>
-                  {showBranchColumns && activeBranches.map((branch) => (
+                  {showBranchColumns && tableBranches.map((branch) => (
                     <td key={branch.id} className="px-4 py-4 text-right">{money(product.store_prices?.[branch.code] || product.sale_price || 0)}</td>
                   ))}
                   <td className={`px-4 py-4 text-right ${currentMarkup < 0 ? 'excel-markup-negative' : 'excel-markup-positive'}`}>{currentMarkup.toFixed(2).replace('.', ',')}%</td>
                   <td className="px-4 py-4">
                     <div className="flex justify-end gap-2">
-                      <button onClick={() => setEditingProduct(product)} className="p-2 rounded-xl bg-blue-50 text-blue-600"><Save size={16} /></button>
-                      <button onClick={() => removeProduct(product)} className="p-2 rounded-xl bg-red-50 text-red-600"><Trash2 size={16} /></button>
+                      <button onClick={() => setEditingProduct(editableProduct(product))} className="p-2 rounded-xl bg-blue-50 text-blue-600"><Save size={16} /></button>
+                      {!product.id.startsWith('catalog:') && (
+                        <button onClick={() => removeProduct(product)} className="p-2 rounded-xl bg-red-50 text-red-600"><Trash2 size={16} /></button>
+                      )}
                     </div>
                   </td>
                 </tr>
               );
             })}
-            {!loading && filteredProducts.length === 0 && (
-              <tr><td colSpan={Math.max(1, visibleTableColumnCount)} className="px-4 py-16 text-center text-[10px] font-black uppercase tracking-widest text-slate-300">Nenhum produto encontrado</td></tr>
+            {!loading && visibleProducts.length === 0 && (
+              <tr>
+                <td colSpan={Math.max(1, visibleTableColumnCount)} className="px-4 py-16 text-center text-[10px] font-black uppercase tracking-widest text-slate-300">
+                  {hasPriceFilters ? 'Nenhum produto encontrado' : 'Aplique filtros ou clique em atualizar para carregar os produtos'}
+                </td>
+              </tr>
             )}
           </tbody>
         </table>
@@ -846,7 +990,7 @@ export function PricingManager() {
           {COMPETITORS.map((competitor) => (
             <div key={competitor} className="bg-white border-2 border-slate-100 rounded-2xl p-4">
               <p className="text-[10px] font-black uppercase text-slate-400">{competitor}</p>
-              <p className="text-sm font-bold text-slate-700 mt-1">{filteredProducts.filter((product) => (product.competitor_prices?.[competitor] || 0) > 0).length} preços cadastrados</p>
+              <p className="text-sm font-bold text-slate-700 mt-1">{visibleProducts.filter((product) => (product.competitor_prices?.[competitor] || 0) > 0).length} preços cadastrados</p>
             </div>
           ))}
         </div>
@@ -911,6 +1055,7 @@ export function PricingManager() {
               <PriceInput label="Código" value={editingBranch.code} onChange={(value) => setEditingBranch((current) => current ? { ...current, code: value } : current)} text />
               <PriceInput label="Cidade" value={editingBranch.city} onChange={(value) => setEditingBranch((current) => current ? { ...current, city: value } : current)} text />
               <PriceInput label="UF" value={editingBranch.uf} onChange={(value) => setEditingBranch((current) => current ? { ...current, uf: value } : current)} text />
+              <PriceInput label="Grupo logistico" value={editingBranch.logistics_group || ''} onChange={(value) => setEditingBranch((current) => current ? { ...current, logistics_group: value } : current)} text />
               <PriceInput label="CNPJ" value={editingBranch.cnpj} onChange={(value) => setEditingBranch((current) => current ? { ...current, cnpj: value } : current)} text />
               <PriceInput label="Razão Social" value={editingBranch.legal_name} onChange={(value) => setEditingBranch((current) => current ? { ...current, legal_name: value } : current)} text />
               <label className="flex items-center gap-3 rounded-2xl bg-slate-50 border-2 border-slate-100 p-4">
@@ -951,7 +1096,7 @@ export function PricingManager() {
               ))}
             </div>
             <div className="mt-6 flex justify-between items-center gap-3">
-              <p className="text-xs font-bold text-slate-500">{filteredProducts.length} produtos • {activeBranches.length} filiais</p>
+              <p className="text-xs font-bold text-slate-500">{visibleProducts.length} produtos • {tableBranches.length} filiais</p>
               <button onClick={exportCsv} className="px-5 py-3 rounded-2xl bg-green-600 text-white font-black uppercase text-xs flex items-center gap-2">
                 <Download size={16} /> Baixar Excel
               </button>

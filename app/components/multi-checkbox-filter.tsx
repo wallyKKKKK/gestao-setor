@@ -1,7 +1,7 @@
 'use client';
 
-import { Check, ChevronDown, X } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { Check, ChevronDown, Search, X } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 
 export interface MultiCheckboxOption {
   value: string;
@@ -31,13 +31,26 @@ export function MultiCheckboxFilter({
   emptyMeansAll = true,
 }: MultiCheckboxFilterProps) {
   const [open, setOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
   const allValues = useMemo(() => options.map((option) => option.value), [options]);
-  const effectiveSelectedValues = emptyMeansAll && selectedValues.length === 0 ? allValues : selectedValues;
-  const selectedSet = useMemo(() => new Set(effectiveSelectedValues), [effectiveSelectedValues]);
+  const selectedSet = useMemo(() => new Set(selectedValues), [selectedValues]);
   const selectedLabels = options.filter((option) => selectedSet.has(option.value)).map((option) => option.label);
-  const hasSelection = emptyMeansAll ? selectedValues.length > 0 : effectiveSelectedValues.length > 0;
-  const isAllSelected = effectiveSelectedValues.length === options.length;
-  const summary = isAllSelected
+  const filteredOptions = useMemo(() => {
+    const normalizedSearch = searchTerm.trim().toLowerCase();
+    if (!normalizedSearch) return options;
+
+    return options.filter((option) => (
+      option.label.toLowerCase().includes(normalizedSearch) ||
+      option.value.toLowerCase().includes(normalizedSearch) ||
+      option.helper?.toLowerCase().includes(normalizedSearch)
+    ));
+  }, [options, searchTerm]);
+  const hasSelection = selectedValues.length > 0;
+  const isAllSelected = emptyMeansAll
+    ? selectedValues.length === 0 || selectedValues.length === options.length
+    : selectedValues.length === options.length;
+  const isFilteredSelectionComplete = filteredOptions.length > 0 && filteredOptions.every((option) => selectedSet.has(option.value));
+  const summary = selectedValues.length === 0 && emptyMeansAll
     ? allLabel
     : selectedLabels.length === 1
       ? selectedLabels[0]
@@ -45,16 +58,42 @@ export function MultiCheckboxFilter({
 
   const toggleValue = (value: string) => {
     if (selectedSet.has(value)) {
-      onChange(effectiveSelectedValues.filter((item) => item !== value));
+      onChange(selectedValues.filter((item) => item !== value));
       return;
     }
 
-    onChange([...effectiveSelectedValues, value]);
+    onChange([...selectedValues, value]);
   };
 
   const selectAll = () => {
     onChange(emptyMeansAll ? [] : allValues);
   };
+
+  const toggleFilteredOptions = () => {
+    const filteredValues = filteredOptions.map((option) => option.value);
+    if (filteredValues.length === 0) return;
+
+    if (isFilteredSelectionComplete) {
+      onChange(selectedValues.filter((value) => !filteredValues.includes(value)));
+      return;
+    }
+
+    onChange(Array.from(new Set([...selectedValues, ...filteredValues])));
+  };
+
+  useEffect(() => {
+    if (!open) return;
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setOpen(false);
+        setSearchTerm('');
+      }
+    };
+
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, [open]);
 
   return (
     <div className={`relative ${className}`}>
@@ -81,12 +120,26 @@ export function MultiCheckboxFilter({
             <div className="mb-2 flex items-center justify-between gap-2">
               <button
                 type="button"
-                onClick={selectAll}
-                className={`rounded-xl px-3 py-2 text-[9px] font-black uppercase ${
-                  isAllSelected ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-500'
+                onClick={toggleFilteredOptions}
+                className={`flex min-w-0 flex-1 items-center gap-2 rounded-xl px-3 py-2 text-left text-[9px] font-black uppercase ${
+                  isFilteredSelectionComplete ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-500'
                 }`}
               >
-                {allLabel}
+                <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border-2 ${
+                  isFilteredSelectionComplete ? 'border-white bg-white text-slate-900' : 'border-slate-300 bg-white text-transparent'
+                }`}>
+                  <Check size={11} strokeWidth={4} />
+                </span>
+                <span className="truncate">{searchTerm.trim() ? 'Marcar filtrados' : allLabel}</span>
+              </button>
+              <button
+                type="button"
+                onClick={selectAll}
+                className={`shrink-0 rounded-xl px-3 py-2 text-[9px] font-black uppercase ${
+                  isAllSelected ? 'bg-blue-600 text-white' : 'bg-blue-50 text-blue-700'
+                }`}
+              >
+                Tudo
               </button>
               {!isAllSelected && (
                 <button
@@ -100,8 +153,18 @@ export function MultiCheckboxFilter({
               )}
             </div>
 
+            <div className="relative mb-2">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                value={searchTerm}
+                onChange={(event) => setSearchTerm(event.target.value)}
+                placeholder={`Buscar ${label.toLowerCase()}...`}
+                className="h-10 w-full rounded-xl border-2 border-slate-100 bg-slate-50 pl-9 pr-3 text-xs font-bold outline-none focus:border-blue-500"
+              />
+            </div>
+
             <div className="max-h-72 overflow-y-auto pr-1">
-              {options.map((option) => {
+              {filteredOptions.map((option) => {
                 const checked = selectedSet.has(option.value);
 
                 return (
@@ -125,6 +188,11 @@ export function MultiCheckboxFilter({
                   </button>
                 );
               })}
+              {filteredOptions.length === 0 && (
+                <div className="rounded-xl border-2 border-dashed border-slate-100 px-3 py-8 text-center text-[10px] font-black uppercase tracking-widest text-slate-300">
+                  Nenhum item encontrado
+                </div>
+              )}
             </div>
           </div>
         </>
