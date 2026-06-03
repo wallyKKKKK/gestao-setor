@@ -658,7 +658,7 @@ export function TransportDebtManager() {
         .map((cell) => cell.trim())
         .filter((cell, cellIndex, allCells) => cell || cellIndex < allCells.length - 1);
 
-      if (cells.length < 5) return [];
+      if (cells.length < 4) return [];
 
       const [supplier, category, invoice, rawValue, rawFee] = cells;
       const value = parseMoney(rawValue);
@@ -685,7 +685,7 @@ export function TransportDebtManager() {
     });
 
     if (!parsedEntries.length) {
-      setManualError('Cole linhas com fornecedor, tipo, nota, valor NF e 3,5%.');
+      setManualError('Cole linhas com fornecedor, tipo, nota e valor NF. A coluna 3,5% e opcional.');
       return;
     }
 
@@ -1466,7 +1466,7 @@ export function TransportDebtManager() {
 
             <div className="p-3">
               <p className="text-[11px] font-bold text-slate-500">
-                Cole linhas copiadas do Excel com as colunas: fornecedor, tipo, nota, valor NF e 3,5%.
+                Cole linhas do Excel com fornecedor, tipo, nota e valor NF. Se a coluna 3,5% nao vier, o sistema calcula.
               </p>
 
               <div className="mt-3 max-w-[240px]">
@@ -1486,12 +1486,12 @@ export function TransportDebtManager() {
               <textarea
                 value={bulkPasteText}
                 onChange={(event) => setBulkPasteText(event.target.value)}
-                placeholder={`ARMAZEM MATEUS S A - CD SANTA ISABEL\tSOFYTS\t5.238.196\tR$ 1.683,61\tR$ 58,93`}
+                placeholder={`ARMAZEM MATEUS S A - CD SANTA ISABEL\tSOFYTS\t5.238.196\tR$ 1.683,61`}
                 className="mt-3 h-48 w-full resize-none rounded-md border border-slate-300 bg-white p-2 font-mono text-[11px] font-bold text-slate-700 outline-none placeholder:text-slate-300 focus:border-blue-400"
               />
 
               <div className="mt-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">
-                Linhas de total sem nota valida serao ignoradas automaticamente.
+                A quinta coluna de 3,5% pode ser colada, mas nao e obrigatoria.
               </div>
 
               <div className="mt-3 flex justify-end gap-2 border-t border-slate-200 pt-3">
