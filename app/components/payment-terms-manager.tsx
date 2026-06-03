@@ -129,6 +129,10 @@ export function PaymentTermsManager() {
     return visible.length ? visible : COLUMN_OPTIONS.filter((column) => column.value === 'supplier_name');
   }, [visibleColumns]);
   const visibleTableColumnCount = visibleTableColumns.length;
+  const exportableTableColumns = useMemo(() => {
+    const columns = visibleTableColumns.filter((column) => column.value !== 'actions');
+    return columns.length ? columns : COLUMN_OPTIONS.filter((column) => column.value === 'supplier_name');
+  }, [visibleTableColumns]);
   const getColumnWidth = useCallback((key: string) => {
     return columnWidths[key] || DEFAULT_COLUMN_WIDTHS[key] || 130;
   }, [columnWidths]);
@@ -181,11 +185,11 @@ export function PaymentTermsManager() {
       min-width: ${tableWidth}px;
       border-collapse: collapse;
       border-spacing: 0;
-      background: #ffffff;
+      background: var(--app-surface);
     }
     #payment-terms-table th,
     #payment-terms-table td {
-      border: 1px solid #cbd5e1;
+      border: 1px solid var(--app-border);
       overflow: hidden;
       text-overflow: ellipsis;
       vertical-align: middle;
@@ -225,6 +229,33 @@ export function PaymentTermsManager() {
     #payment-terms-table .column-resizer:hover,
     #payment-terms-table .column-resizer:active {
       background: #059669;
+    }
+    html[data-theme="dark"] #payment-terms-table {
+      background: #1d1d1d;
+    }
+    html[data-theme="dark"] #payment-terms-table th {
+      background: #2b2b2b;
+      color: #f2f2f2;
+      border-color: #4a4a4a;
+      box-shadow: inset 0 -1px 0 #525252;
+    }
+    html[data-theme="dark"] #payment-terms-table td {
+      background: #202020;
+      color: #e7e7e7;
+      border-color: #464646;
+    }
+    html[data-theme="dark"] #payment-terms-table tbody tr:nth-child(even) td {
+      background: #262626;
+    }
+    html[data-theme="dark"] #payment-terms-table tbody tr:hover td {
+      background: #333333;
+    }
+    html[data-theme="dark"] #payment-terms-table .condition-cell {
+      color: #cfcfcf;
+    }
+    html[data-theme="dark"] #payment-terms-table .column-resizer:hover,
+    html[data-theme="dark"] #payment-terms-table .column-resizer:active {
+      background: #10b981;
     }
   `, [tableWidth]);
   const filteredTerms = useMemo(() => {
@@ -279,20 +310,24 @@ export function PaymentTermsManager() {
   };
 
   const exportCsv = () => {
+    const getExportValue = (term: SupplierPaymentTerm, column: string) => {
+      if (column === 'supplier_name') return term.supplier_name;
+      if (column === 'payment_terms') return term.payment_terms;
+      if (column === 'category') return term.category;
+      if (column === 'region') return term.region;
+      if (column === 'min_order_value') return term.min_order_value ? money(term.min_order_value) : '';
+      if (column === 'condition_notes') return term.condition_notes;
+      if (column === 'contact_name') return term.contact_name;
+      if (column === 'phone') return term.phone;
+      if (column === 'email') return term.email;
+      if (column === 'tax_id') return term.tax_id;
+      if (column === 'status') return term.is_active ? 'Ativo' : 'Inativo';
+      return '';
+    };
+
     const rows = [
-      ['Fornecedor', 'Prazos', 'Categoria', 'Regiao', 'Pedido minimo', 'Condicoes', 'Contato', 'Telefone', 'Email', 'Status'],
-      ...filteredTerms.map((term) => [
-        term.supplier_name,
-        term.payment_terms,
-        term.category,
-        term.region,
-        term.min_order_value ? money(term.min_order_value) : '',
-        term.condition_notes,
-        term.contact_name,
-        term.phone,
-        term.email,
-        term.is_active ? 'Ativo' : 'Inativo',
-      ]),
+      exportableTableColumns.map((column) => column.label),
+      ...filteredTerms.map((term) => exportableTableColumns.map((column) => getExportValue(term, column.value))),
     ];
     const csv = rows.map((row) => row.map(csvValue).join(';')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -309,7 +344,7 @@ export function PaymentTermsManager() {
   };
 
   const renderHeader = (label: string, key: string, align: 'left' | 'right' | 'center' = 'left') => (
-    <th key={key} className={`px-3 py-3 ${align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left'}`}>
+    <th key={key} className={`${key === 'actions' ? 'payment-print-hidden' : ''} px-3 py-3 ${align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left'}`}>
       <span className="block truncate pr-1">{label}</span>
       <span
         className="column-resizer payment-print-hidden"
@@ -365,8 +400,8 @@ export function PaymentTermsManager() {
     return (
       <td className="payment-print-hidden px-3 py-3">
         <div className="flex justify-end gap-2">
-          <button onClick={() => setEditingTerm(term)} className="p-2 rounded-xl bg-emerald-50 text-emerald-700"><Save size={16} /></button>
-          <button onClick={() => removeTerm(term)} className="p-2 rounded-xl bg-red-50 text-red-600"><Trash2 size={16} /></button>
+          <button onClick={() => setEditingTerm(term)} className="p-2 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-100"><Save size={16} /></button>
+          <button onClick={() => removeTerm(term)} className="p-2 rounded-xl bg-red-50 text-red-600 border border-red-100"><Trash2 size={16} /></button>
         </div>
       </td>
     );
@@ -456,7 +491,7 @@ export function PaymentTermsManager() {
         </div>
       )}
 
-      <section id="payment-terms-print" className="bg-white border border-slate-300 rounded-md max-h-[calc(100vh-220px)] overflow-auto shadow-sm print:max-h-none print:overflow-visible">
+      <section id="payment-terms-print" className="bg-[var(--app-surface)] border border-[var(--app-border)] rounded-md max-h-[calc(100vh-220px)] overflow-auto shadow-sm print:max-h-none print:overflow-visible">
         <style>{paymentTableCss}</style>
         <div className="hidden print:block p-4">
           <h2 className="text-xl font-black uppercase">Setor de Compras - Tabela de Prazos</h2>
@@ -464,7 +499,7 @@ export function PaymentTermsManager() {
         <table id="payment-terms-table" className="text-sm">
           <colgroup>
             {visibleTableColumns.map((column) => (
-              <col key={column.value} style={{ width: `${getColumnWidth(column.value)}px` }} />
+              <col key={column.value} className={column.value === 'actions' ? 'payment-print-hidden' : ''} style={{ width: `${getColumnWidth(column.value)}px` }} />
             ))}
           </colgroup>
           <thead className="bg-emerald-50 text-[10px] uppercase text-slate-600">

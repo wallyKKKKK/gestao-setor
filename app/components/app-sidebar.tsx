@@ -1,16 +1,18 @@
 'use client';
 
-import { CalendarDays, ClipboardList, Clock3, Database, ListTodo, Shuffle, Tags } from 'lucide-react';
+import { CalendarDays, ClipboardList, Clock3, Database, ListTodo, Moon, Shuffle, Sun, Tags, Truck } from 'lucide-react';
 import type { UserRole } from '@/lib/types';
 
-export type AppSection = 'TAREFAS' | 'REUNIAO' | 'CADASTROS' | 'PRECIFICACAO' | 'PRAZOS' | 'BALACUBACO' | 'AUDITORIA';
+export type AppSection = 'TAREFAS' | 'REUNIAO' | 'CADASTROS' | 'PRECIFICACAO' | 'PRAZOS' | 'TRANSPORTE' | 'BALACUBACO' | 'AUDITORIA';
 
 interface AppSidebarProps {
   activeSection: AppSection;
   userRole: UserRole;
   userSector: string;
   isSupremeAdmin: boolean;
+  theme: 'light' | 'dark';
   onSectionChange: (section: AppSection) => void;
+  onThemeToggle: () => void;
 }
 
 const items = [
@@ -19,6 +21,7 @@ const items = [
   { id: 'CADASTROS' as const, label: 'Cadastros', icon: Database, registryOnly: true },
   { id: 'PRECIFICACAO' as const, label: 'Price', icon: Tags, priceOnly: true },
   { id: 'PRAZOS' as const, label: 'Prazos', icon: Clock3, purchaseOnly: true },
+  { id: 'TRANSPORTE' as const, label: 'Transporte', icon: Truck, transportOnly: true },
   { id: 'BALACUBACO' as const, label: 'Balacubaco', icon: Shuffle, transferOnly: true },
   { id: 'AUDITORIA' as const, label: 'Auditoria', icon: ClipboardList, adminOnly: true },
 ];
@@ -30,16 +33,26 @@ function normalizeSector(value: string) {
     .toLowerCase();
 }
 
-export function AppSidebar({ activeSection, userRole, userSector, isSupremeAdmin, onSectionChange }: AppSidebarProps) {
+export function AppSidebar({
+  activeSection,
+  userRole,
+  userSector,
+  isSupremeAdmin,
+  theme,
+  onSectionChange,
+  onThemeToggle,
+}: AppSidebarProps) {
   const normalizedSector = normalizeSector(userSector);
   const canAccessPricing = userRole === 'admin' || ['precificacao', 'price'].includes(normalizedSector);
   const canAccessPaymentTerms = userRole === 'admin' || normalizedSector.startsWith('compras');
+  const canAccessTransport = isSupremeAdmin || (normalizedSector.includes('compras') && normalizedSector.includes('perfumaria'));
   const canAccessRegistries = userRole === 'admin' || canAccessPricing || canAccessPaymentTerms;
   const visibleItems = items.filter((item) => {
     if (item.adminOnly && userRole !== 'admin') return false;
     if (item.registryOnly && !canAccessRegistries) return false;
     if (item.priceOnly && !canAccessPricing) return false;
     if (item.purchaseOnly && !canAccessPaymentTerms) return false;
+    if (item.transportOnly && !canAccessTransport) return false;
     if (item.transferOnly && !isSupremeAdmin) return false;
     return true;
   });
@@ -72,6 +85,16 @@ export function AppSidebar({ activeSection, userRole, userSector, isSupremeAdmin
             );
           })}
         </div>
+
+        <button
+          type="button"
+          onClick={onThemeToggle}
+          className="hidden md:flex mt-auto w-12 h-12 rounded-2xl items-center justify-center border border-white/10 bg-white/5 text-slate-300 hover:bg-white/10 hover:text-white transition-all"
+          aria-label={theme === 'dark' ? 'Ativar modo claro' : 'Ativar modo escuro'}
+          title={theme === 'dark' ? 'Modo claro' : 'Modo escuro'}
+        >
+          {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
+        </button>
       </div>
     </aside>
   );

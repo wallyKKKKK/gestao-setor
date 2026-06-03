@@ -1,7 +1,7 @@
 'use client';
 
 import Image from 'next/image';
-import { Search, Settings, X } from 'lucide-react';
+import { Moon, Search, Settings, Sun, X } from 'lucide-react';
 import { NAV_CATEGORIES } from '@/app/constants';
 import { MultiCheckboxFilter } from '@/app/components/multi-checkbox-filter';
 import type { Profile, UserRole } from '@/lib/types';
@@ -14,9 +14,11 @@ interface AppShellNavProps {
   filterUsers: string[];
   userSector: string;
   searchTerm: string;
+  theme: 'light' | 'dark';
   onActiveTabChange: (tab: string) => void;
   onFilterUsersChange: (userIds: string[]) => void;
   onSearchTermChange: (term: string) => void;
+  onThemeToggle: () => void;
   onOpenProfile: () => void;
   onOpenSettings: () => void;
 }
@@ -29,9 +31,11 @@ export function AppShellNav({
   filterUsers,
   userSector,
   searchTerm,
+  theme,
   onActiveTabChange,
   onFilterUsersChange,
   onSearchTermChange,
+  onThemeToggle,
   onOpenProfile,
   onOpenSettings,
 }: AppShellNavProps) {
@@ -70,6 +74,16 @@ export function AppShellNav({
           </button>
 
           <button
+            type="button"
+            onClick={onThemeToggle}
+            className="w-10 h-10 flex items-center justify-center bg-white/5 rounded-xl border border-white/10 text-slate-300 hover:text-white hover:bg-white/10 transition-all"
+            aria-label={theme === 'dark' ? 'Ativar modo claro' : 'Ativar modo escuro'}
+            title={theme === 'dark' ? 'Modo claro' : 'Modo escuro'}
+          >
+            {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
+          </button>
+
+          <button
             onClick={onOpenSettings}
             className="w-10 h-10 flex items-center justify-center bg-white/5 rounded-xl border border-white/10 text-slate-400 hover:text-white hover:bg-white/10 transition-all"
           >
@@ -91,7 +105,7 @@ export function AppShellNav({
                   onClick={() => onActiveTabChange(tab.id)}
                   className={`flex flex-col items-center justify-center min-w-[84px] sm:min-w-[109px] h-16 sm:h-[80px] gap-1 px-2 sm:px-4 transition-all duration-2 relative rounded-t-2xl border-x-2 border-t-0 border-transparent ${
                     isActive
-                      ? 'bg-[#F6F7F9] border-blue-500 border-t-2 z-40 -mb-[-3px] h-[70px] sm:h-[85px] shadow-[0_-4px_10px_rgba(0,0,0,0.02)]'
+                      ? 'bg-[var(--app-surface)] border-blue-500 border-t-2 border-b-0 z-40 -mb-[2px] h-[70px] sm:h-[85px] shadow-[0_-4px_10px_rgba(0,0,0,0.02)]'
                       : 'bg-gradient-to-b from-white to-slate-200 border-slate-300 text-slate-500 hover:to-white'
                   }`}
                 >
@@ -104,14 +118,14 @@ export function AppShellNav({
                     {tab.label}
                   </span>
 
-                  {isActive && <div className="absolute -bottom-[3px] left-[-1px] right-[-1px] h-[5px] bg-[#F6F7F9] z-[50]" />}
+                  {isActive && <div className="absolute -bottom-[4px] left-0 right-0 h-[6px] bg-[var(--app-surface)] z-[50]" />}
                 </button>
               );
             })}
           </div>
         </div>
 
-        <div className="bg-[#F6F7F9] border-b-2 border-slate-200 pt-4 sm:pt-10 pb-5 sm:pb-8 px-4 sm:px-10 relative z-10 -mt-[2px]">
+        <div className="bg-[var(--app-surface)] border-b-2 border-slate-200 pt-4 sm:pt-10 pb-5 sm:pb-8 px-4 sm:px-10 relative z-10 -mt-[2px]">
           <div className="max-w-[98%] mx-auto flex flex-col sm:flex-row sm:items-center justify-between gap-4 sm:gap-8">
             <MultiCheckboxFilter
               label="Equipe"

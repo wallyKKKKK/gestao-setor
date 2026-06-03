@@ -60,14 +60,18 @@ function routePriority(originItem: StockItem, destinationItem: StockItem, branch
   const destinationCity = String(destination.city || "").trim().toUpperCase();
 
   if (originGroup && destinationGroup && originGroup === destinationGroup) return 0;
-  if (originCity && destinationCity && originCity === destinationCity) return 10;
-  if (originGroup && destinationGroup) return 50;
+  if (originCity && destinationCity && originCity === destinationCity) return 2;
+  if (originUf && destinationUf && originUf === destinationUf && originGroup && destinationGroup) return 6;
 
   const originNumber = Number(originCode);
   const destinationNumber = Number(destinationCode);
-  return Number.isFinite(originNumber) && Number.isFinite(destinationNumber)
-    ? Math.abs(originNumber - destinationNumber)
-    : 99;
+  if (!Number.isFinite(originNumber) || !Number.isFinite(destinationNumber)) return 10;
+
+  const distance = Math.abs(originNumber - destinationNumber);
+  if (distance <= 2) return 4;
+  if (distance <= 5) return 6;
+  if (distance <= 10) return 8;
+  return 10;
 }
 
 function buildSuggestion(ean: string, origin: SuggestionOrigin, destination: SuggestionDestination, quantity: number, need: number, priority: number, index: number) {
@@ -113,6 +117,8 @@ function calculate(payload: {
     origins?: string[];
     destinations?: string[];
     products?: string[];
+    classifications?: string[];
+    manufacturers?: string[];
   };
   rules?: {
     originMinimumDays?: number;
@@ -254,6 +260,71 @@ async function fetchSnapshotStockItems(snapshotId: string) {
   return rows;
 }
 
+function normalizeTerm(value: unknown) {
+  return String(value || "").trim();
+}
+
+function mergeProductFilters(filters: {
+  products?: string[];
+  classifications?: string[];
+  manufacturers?: string[];
+}, attributeProducts: string[]) {
+  const explicitProducts = new Set((filters.products || []).filter(Boolean).map(String));
+  const hasAttributeFilters = Boolean(filters.classifications?.length || filters.manufacturers?.length);
+
+  if (!hasAttributeFilters) return Array.from(explicitProducts);
+
+  const attributeSet = new Set(attributeProducts.filter(Boolean).map(String));
+  if (explicitProducts.size === 0) return attributeSet.size > 0 ? Array.from(attributeSet) : ["__NO_PRODUCT_MATCH__"];
+
+  const intersection = Array.from(explicitProducts).filter((ean) => attributeSet.has(ean));
+  return intersection.length > 0 ? intersection : ["__NO_PRODUCT_MATCH__"];
+}
+
+async function fetchProductEansByAttributes(filters: {
+  classifications?: string[];
+  manufacturers?: string[];
+}) {
+  const classifications = (filters.classifications || []).map(normalizeTerm).filter(Boolean);
+  const manufacturers = (filters.manufacturers || []).map(normalizeTerm).filter(Boolean);
+
+  if (classifications.length === 0 && manufacturers.length === 0) return [];
+
+  const supabase = getSupabaseAdmin();
+  const rows: Array<{ ean: string | null }> = [];
+  const chunkSize = 1000;
+
+  for (let from = 0; ; from += chunkSize) {
+    const to = from + chunkSize - 1;
+    let query = supabase
+      .from("reallocation_products")
+      .select("ean")
+      .not("ean", "is", null)
+      .range(from, to);
+
+    if (manufacturers.length === 1) {
+      query = query.ilike("manufacturer", `%${manufacturers[0]}%`);
+    } else if (manufacturers.length > 1) {
+      query = query.or(manufacturers.map((term) => `manufacturer.ilike.%${term}%`).join(","));
+    }
+
+    if (classifications.length === 1) {
+      query = query.ilike("classification", `%${classifications[0]}%`);
+    } else if (classifications.length > 1) {
+      query = query.or(classifications.map((term) => `classification.ilike.%${term}%`).join(","));
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    const chunk = (data || []) as Array<{ ean: string | null }>;
+    rows.push(...chunk);
+    if (chunk.length < chunkSize) break;
+  }
+
+  return Array.from(new Set(rows.map((row) => row.ean).filter((ean): ean is string => Boolean(ean))));
+}
+
 async function calculateWithPython(payload: unknown) {
   const { spawn } = await import("node:child_process");
   const pythonBin = process.env.PYTHON_BIN || "python";
@@ -313,7 +384,16 @@ export async function POST(request: Request) {
     const stockItems = payload?.snapshotId
       ? await fetchSnapshotStockItems(String(payload.snapshotId))
       : payload?.stockItems;
-    const calculationPayload = { ...payload, stockItems };
+    const filters = payload?.filters || {};
+    const attributeProducts = await fetchProductEansByAttributes(filters);
+    const calculationPayload = {
+      ...payload,
+      filters: {
+        ...filters,
+        products: mergeProductFilters(filters, attributeProducts),
+      },
+      stockItems,
+    };
 
     try {
       return NextResponse.json(await calculateWithPython(calculationPayload));

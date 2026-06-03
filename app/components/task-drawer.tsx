@@ -92,11 +92,11 @@ export function TaskDrawer({ task, profiles, user, userRole, onTradeNotesChanged
       />
 
       <div
-        className={`absolute top-0 right-0 h-full bg-white w-full md:w-[420px] border-l-2 border-slate-200 shadow-[-10px_0_30px_rgba(0,0,0,0.05)] flex flex-col transition-transform duration-500 ease-in-out transform z-[110]
+        className={`absolute top-0 right-0 h-full bg-[var(--app-surface)] w-full md:w-[420px] border-l-2 border-[var(--app-border)] shadow-[-10px_0_30px_rgba(0,0,0,0.05)] flex flex-col transition-transform duration-500 ease-in-out transform z-[110]
           ${task ? "translate-x-0" : "translate-x-full"}`}
       >
         {task && (
-          <div className="flex flex-col h-full overflow-hidden bg-[#F8FAFC]">
+          <div className="flex flex-col h-full overflow-hidden bg-[var(--app-bg)]">
             <div className={`p-8 border-b-2 border-white/10 ${task.isDoneToday ? "bg-green-600" : "bg-[#232D4A]"} text-white relative`}>
               <div className="flex justify-between items-center mb-6">
                 <span className="bg-white/10 px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest border border-white/10">
@@ -225,7 +225,7 @@ export function TaskDrawer({ task, profiles, user, userRole, onTradeNotesChanged
               )}
             </div>
 
-            <div className="p-6 bg-white border-t border-slate-200 flex gap-3">
+            <div className="p-6 bg-[var(--app-surface)] border-t border-[var(--app-border)] flex gap-3">
               {(userRole === "admin" || userRole === "gerente" || task.assigned_to === user?.id) && (
                 <button
                   onClick={() => onEdit(task)}

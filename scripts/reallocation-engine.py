@@ -33,14 +33,22 @@ def route_priority(origin_item, destination_item, branch_logistics):
     if origin_group and destination_group and origin_group == destination_group:
         return 0
     if origin_city and destination_city and origin_city == destination_city:
-        return 10
-    if origin_group and destination_group:
-        return 50
+        return 2
+    if origin_uf and destination_uf and origin_uf == destination_uf and origin_group and destination_group:
+        return 6
 
     try:
-        return abs(int(origin_code) - int(destination_code))
+        distance = abs(int(origin_code) - int(destination_code))
     except ValueError:
-        return 99
+        return 10
+
+    if distance <= 2:
+        return 4
+    if distance <= 5:
+        return 6
+    if distance <= 10:
+        return 8
+    return 10
 
 
 def build_suggestion(ean, origin, destination, quantity, need, priority, index):

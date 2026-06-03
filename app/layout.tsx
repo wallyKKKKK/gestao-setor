@@ -26,8 +26,23 @@ export default function RootLayout({
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      suppressHydrationWarning
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+try {
+  var storedTheme = localStorage.getItem('wally-theme');
+  var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  var theme = storedTheme || (prefersDark ? 'dark' : 'light');
+  document.documentElement.dataset.theme = theme;
+} catch (_) {}
+            `.trim(),
+          }}
+        />
+        {children}
+      </body>
     </html>
   );
 }

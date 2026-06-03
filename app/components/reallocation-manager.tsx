@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
-import { ChevronDown, ChevronUp, Database, Download, FileSpreadsheet, Filter, PackageSearch, Plus, RefreshCcw, Search, Shuffle, SlidersHorizontal, Trash2, Upload, X } from 'lucide-react';
+import { Database, Download, FileSpreadsheet, Filter, PackageSearch, Plus, RefreshCcw, Shuffle, SlidersHorizontal, Trash2, Upload, X } from 'lucide-react';
 import { countReallocationProducts, fetchLatestReallocationStockSnapshot, fetchPricingBranches, fetchReallocationAttributeOptions, fetchReallocationProducts, fetchReallocationStockItems } from '@/lib/api';
 import { getAuthHeaders } from '@/lib/auth-headers';
 import type { PricingBranch, ReallocationProduct, ReallocationStockItem, ReallocationStockSnapshot } from '@/lib/types';
@@ -21,6 +21,14 @@ function decimal(value: number | null | undefined, minimumFractionDigits = 2) {
 function wholeNumber(value: number | null | undefined) {
   const parsed = Number(value || 0);
   return Math.round(Number.isFinite(parsed) ? parsed : 0).toLocaleString('pt-BR');
+}
+
+function getNetworkErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof TypeError && error.message.toLowerCase().includes('fetch')) {
+    return 'Nao foi possivel conectar ao servidor agora. Tente atualizar novamente em alguns segundos.';
+  }
+  if (error instanceof Error) return error.message;
+  return fallback;
 }
 
 interface QuickFilterItem {
@@ -47,7 +55,7 @@ const SUGGESTION_PROFILES: Record<SuggestionProfile, {
     originMinimumDays: 30,
     needDaysThreshold: 20,
     destinationTargetDays: 30,
-    maxRoutePriority: 10,
+    maxRoutePriority: 2,
   },
   balanced: {
     label: 'Equilibrado',
@@ -55,7 +63,7 @@ const SUGGESTION_PROFILES: Record<SuggestionProfile, {
     originMinimumDays: 20,
     needDaysThreshold: 25,
     destinationTargetDays: 30,
-    maxRoutePriority: 50,
+    maxRoutePriority: 6,
   },
   strong: {
     label: 'Agressivo',
@@ -63,7 +71,7 @@ const SUGGESTION_PROFILES: Record<SuggestionProfile, {
     originMinimumDays: 15,
     needDaysThreshold: 30,
     destinationTargetDays: 35,
-    maxRoutePriority: 99,
+    maxRoutePriority: 10,
   },
 };
 
@@ -197,8 +205,6 @@ export function ReallocationManager() {
   const [totalProducts, setTotalProducts] = useState(0);
   const [stockSnapshot, setStockSnapshot] = useState<ReallocationStockSnapshot | null>(null);
   const [stockItems, setStockItems] = useState<ReallocationStockItem[]>([]);
-  const [stockSearchTerm, setStockSearchTerm] = useState('');
-  const [showStockScenario, setShowStockScenario] = useState(false);
   const [transferSuggestions, setTransferSuggestions] = useState<TransferSuggestion[]>([]);
   const [suggestionMessage, setSuggestionMessage] = useState('');
   const [suggestionDiagnostic, setSuggestionDiagnostic] = useState<SuggestionDiagnostic | null>(null);
@@ -285,7 +291,7 @@ export function ReallocationManager() {
 
   useEffect(() => {
     queueMicrotask(() => {
-      void loadStockSnapshot('');
+      void loadStockSnapshot('', true);
     });
   }, [loadStockSnapshot]);
 
@@ -298,34 +304,30 @@ export function ReallocationManager() {
   }, [classificationFilters, loadProducts, manufacturerFilters, searchTerm]);
 
   useEffect(() => {
-    if (!showStockScenario && !stockSearchTerm.trim()) return;
-    const timeout = window.setTimeout(() => {
-      loadStockSnapshot(stockSearchTerm, showStockScenario);
-    }, 300);
-
-    return () => window.clearTimeout(timeout);
-  }, [loadStockSnapshot, showStockScenario, stockSearchTerm]);
-
-  useEffect(() => {
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
 
       if (showAdvancedRules) {
         setShowAdvancedRules(false);
-        return;
-      }
-      if (showStockScenario) {
-        setShowStockScenario(false);
-        return;
-      }
-      if (stockSearchTerm) {
-        setStockSearchTerm('');
       }
     };
 
     window.addEventListener('keydown', handleEscape);
     return () => window.removeEventListener('keydown', handleEscape);
-  }, [showAdvancedRules, showStockScenario, stockSearchTerm]);
+  }, [showAdvancedRules]);
+
+  useEffect(() => {
+    const handleUnhandledFetchError = (event: PromiseRejectionEvent) => {
+      const reason = event.reason;
+      if (!(reason instanceof TypeError) || !reason.message.toLowerCase().includes('fetch')) return;
+      event.preventDefault();
+      setSuggestionMessage('Nao foi possivel conectar ao servidor agora. Tente atualizar novamente em alguns segundos.');
+      setGeneratingSuggestions(false);
+    };
+
+    window.addEventListener('unhandledrejection', handleUnhandledFetchError);
+    return () => window.removeEventListener('unhandledrejection', handleUnhandledFetchError);
+  }, []);
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -333,7 +335,7 @@ export function ReallocationManager() {
       setSuggestionMessage('');
       setSuggestionDiagnostic(null);
     });
-  }, [stockSnapshot?.id, stockSearchTerm, originFilters, destinationFilters, productFilters, originMinimumDays, needDaysThreshold, destinationTargetDays, maxRoutePriority]);
+  }, [stockSnapshot?.id, originFilters, destinationFilters, productFilters, classificationFilters, manufacturerFilters, originMinimumDays, needDaysThreshold, destinationTargetDays, maxRoutePriority]);
 
   useEffect(() => {
     const handleMouseMove = (event: MouseEvent) => {
@@ -384,11 +386,6 @@ export function ReallocationManager() {
       return true;
     });
   }, [classificationFilters, manufacturerFilters, productFilters, products]);
-  const stockSummary = useMemo(() => ({
-    stores: new Set(stockItems.map((item) => item.store_code)).size,
-    products: new Set(stockItems.map((item) => item.ean)).size,
-    totalStock: stockItems.reduce((sum, item) => sum + Number(item.stock || 0), 0),
-  }), [stockItems]);
   const suggestionExportStats = useMemo(() => {
     const exportable = transferSuggestions.filter((suggestion) => suggestion.erpCode && suggestion.quantity > 0);
     const missingErpCode = transferSuggestions.filter((suggestion) => !suggestion.erpCode && suggestion.quantity > 0);
@@ -420,6 +417,7 @@ export function ReallocationManager() {
   const overAllocatedOrigins = useMemo(() => {
     return Array.from(originAllocationByProduct.values()).filter((allocation) => allocation.allocated > allocation.stock);
   }, [originAllocationByProduct]);
+  const activeSuggestionFilterCount = productFilters.length + originFilters.length + destinationFilters.length + classificationFilters.length + manufacturerFilters.length;
 
   const branchLogisticsByCode = useMemo(() => new Map(branches.map((branch) => [
     branch.code.padStart(2, '0'),
@@ -494,9 +492,9 @@ export function ReallocationManager() {
       }
 
       alert(`${data.imported || 0} linhas de estoque importadas. ${data.matchedProducts || 0} vinculadas ao codigo ERP. ${data.unmatchedProducts || 0} sem vinculo. ${data.skipped || 0} ignoradas.`);
-      await loadStockSnapshot(stockSearchTerm, true);
+      await loadStockSnapshot('', true);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Erro desconhecido';
+      const message = getNetworkErrorMessage(error, 'Erro desconhecido');
       setErrorMessage(message);
     } finally {
       setStockImporting(false);
@@ -581,6 +579,8 @@ export function ReallocationManager() {
       const selectedOrigins = new Set(originFilters.map((item) => item.id.padStart(2, '0')));
       const selectedDestinations = new Set(destinationFilters.map((item) => item.id.padStart(2, '0')));
       const selectedProducts = new Set(productFilters.map((item) => item.source?.ean).filter(Boolean) as string[]);
+      const selectedClassifications = classificationFilters.map((item) => item.columns[0]).filter(Boolean);
+      const selectedManufacturers = manufacturerFilters.map((item) => item.columns[0]).filter(Boolean);
       const response = await fetch('/api/reallocation-suggestions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...await getAuthHeaders() },
@@ -590,6 +590,8 @@ export function ReallocationManager() {
             origins: Array.from(selectedOrigins),
             destinations: Array.from(selectedDestinations),
             products: Array.from(selectedProducts),
+            classifications: selectedClassifications,
+            manufacturers: selectedManufacturers,
           },
           rules: {
             originMinimumDays,
@@ -629,7 +631,7 @@ export function ReallocationManager() {
       setSuggestionMessage(`${data.suggestions.length} sugestoes geradas pelo motor ${data.engine || 'TypeScript'}. Revise as quantidades antes de exportar.`);
     } catch (error) {
       setTransferSuggestions([]);
-      setSuggestionMessage(error instanceof Error ? error.message : 'Nao foi possivel gerar sugestoes.');
+      setSuggestionMessage(getNetworkErrorMessage(error, 'Nao foi possivel gerar sugestoes.'));
     } finally {
       setGeneratingSuggestions(false);
     }
@@ -777,7 +779,7 @@ export function ReallocationManager() {
         }}
         onDragOver={(event) => event.preventDefault()}
         onDrop={() => moveSuggestionColumn(column.key)}
-        className={`relative select-none px-3 py-3 ${alignClass} ${highlightClass}`}
+        className={`relative select-none px-2 py-2 ${alignClass} ${highlightClass}`}
         style={{ width: suggestionColumnWidths[column.key] || column.width }}
         title="Arraste para mover. Puxe a borda direita para ajustar a largura."
       >
@@ -801,7 +803,7 @@ export function ReallocationManager() {
 
   const renderSuggestionCell = (suggestion: TransferSuggestion, suggestionIndex: number, column: SuggestionColumn) => {
     const alignClass = column.align === 'left' ? 'text-left' : column.align === 'center' ? 'text-center' : 'text-right';
-    const baseClass = `border border-slate-200 px-3 py-2 ${alignClass}`;
+    const baseClass = `border border-slate-200 px-2 py-1.5 ${alignClass}`;
 
     switch (column.key) {
       case 'description':
@@ -824,7 +826,7 @@ export function ReallocationManager() {
         const allocation = getOriginAllocation(suggestion);
         const isOverAllocated = isSuggestionOverAllocated(suggestion);
         return (
-          <td key={column.key} className={`border-2 px-3 py-3 text-right ${isOverAllocated ? 'border-red-300 bg-red-50' : isSuggestionManuallyChanged(suggestion) ? 'border-amber-300 bg-amber-50' : 'border-emerald-200 bg-emerald-50'}`}>
+          <td key={column.key} className={`border-2 px-2 py-1.5 text-right ${isOverAllocated ? 'border-red-300 bg-red-50' : isSuggestionManuallyChanged(suggestion) ? 'border-amber-300 bg-amber-50' : 'border-emerald-200 bg-emerald-50'}`}>
             <div className={`mx-auto w-24 border-2 bg-white shadow-inner focus-within:ring-2 ${isOverAllocated ? 'border-red-300 focus-within:border-red-600 focus-within:ring-red-200' : isSuggestionManuallyChanged(suggestion) ? 'border-amber-300 focus-within:border-amber-600 focus-within:ring-amber-200' : 'border-emerald-300 focus-within:border-emerald-600 focus-within:ring-emerald-200'}`}>
               <input
                 data-transfer-index={suggestionIndex}
@@ -854,7 +856,7 @@ export function ReallocationManager() {
                   event.preventDefault();
                   pasteSuggestionQuantities(suggestionIndex, pastedText);
                 }}
-                className={`h-8 w-full bg-transparent px-2 text-right font-black outline-none ${isOverAllocated ? 'text-red-700' : isSuggestionManuallyChanged(suggestion) ? 'text-amber-700' : 'text-emerald-700'}`}
+                className={`h-7 w-full bg-transparent px-2 text-right font-black outline-none ${isOverAllocated ? 'text-red-700' : isSuggestionManuallyChanged(suggestion) ? 'text-amber-700' : 'text-emerald-700'}`}
               />
             </div>
             {(isSuggestionManuallyChanged(suggestion) || isOverAllocated) && (
@@ -885,14 +887,14 @@ export function ReallocationManager() {
       case 'erpCode':
         return <td key={column.key} className={`${baseClass} font-black text-violet-700`}>{suggestion.erpCode}</td>;
       case 'routePriority':
-        return <td key={column.key} className={baseClass}>{suggestion.routePriority === 0 ? 'Mesmo grupo' : suggestion.routePriority === 10 ? 'Mesma cidade' : suggestion.routePriority}</td>;
+        return <td key={column.key} className={baseClass}>{suggestion.routePriority}</td>;
       case 'actions':
         return (
-          <td key={column.key} className="border border-slate-200 px-3 py-3 text-center">
+          <td key={column.key} className="border border-slate-200 px-2 py-1.5 text-center">
             <button
               type="button"
               onClick={() => removeSuggestion(suggestion.id)}
-              className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-red-50 text-red-600"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-red-50 text-red-600"
               title="Remover sugestao"
             >
               <Trash2 size={15} />
@@ -903,7 +905,7 @@ export function ReallocationManager() {
   };
 
   return (
-    <main className="w-full max-w-none px-3 sm:px-5 py-6 sm:py-8 pb-24 md:pb-8">
+    <main className="reallocation-workbench w-full max-w-none px-3 sm:px-5 py-6 sm:py-8 pb-24 md:pb-8">
       <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 mb-6">
         <div className="flex items-center gap-4">
           <div className="w-14 h-14 rounded-2xl bg-violet-600 text-white flex items-center justify-center shadow-md">
@@ -959,190 +961,25 @@ export function ReallocationManager() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
-        <div className="bg-white border-2 border-slate-100 rounded-2xl p-5">
-          <p className="text-[10px] font-black uppercase text-slate-400">Produtos importados</p>
-          <p className="text-2xl font-black">{totalProducts.toLocaleString('pt-BR')}</p>
-        </div>
-        <div className="bg-white border-2 border-slate-100 rounded-2xl p-5">
-          <p className="text-[10px] font-black uppercase text-slate-400">Estoque carregado</p>
-          <p className="text-2xl font-black text-indigo-700">{stockItems.length.toLocaleString('pt-BR')}</p>
-        </div>
-        <div className="bg-white border-2 border-slate-100 rounded-2xl p-5">
-          <p className="text-[10px] font-black uppercase text-slate-400">Sugestoes geradas</p>
-          <p className="text-2xl font-black text-violet-700">{transferSuggestions.length.toLocaleString('pt-BR')}</p>
-        </div>
-      </div>
-
       {errorMessage && (
         <div className="mb-5 rounded-2xl border-2 border-amber-200 bg-amber-50 p-4 text-sm font-bold text-amber-800">
           {errorMessage}
         </div>
       )}
 
-      <section className="mt-6 rounded-[28px] border-2 border-slate-100 bg-white p-4 shadow-sm">
-        <div className={`flex flex-col xl:flex-row xl:items-center justify-between gap-4 ${showStockScenario ? 'mb-4' : ''}`}>
+      <section className="mt-6 overflow-visible rounded-[18px] border border-slate-200 bg-white shadow-sm">
+        <div className="flex items-center justify-between border-b border-slate-200 bg-slate-100 px-3 py-1.5">
           <div>
-            <h2 className="text-lg font-black uppercase text-slate-900">Cenario de estoque</h2>
-            <p className="text-xs font-bold text-slate-500">
-              {stockSnapshot
-                ? `Ultima importacao: ${new Date(stockSnapshot.imported_at).toLocaleString('pt-BR')} - ${stockSnapshot.source_file || 'arquivo sem nome'}`
-                : 'Importe a planilha de estoque/venda media para montar a base de remanejamento.'}
-            </p>
+            <h2 className="text-xs font-black uppercase text-slate-800">Remanejamento</h2>
+            <p className="text-[10px] font-bold text-slate-500">Filtros, sugestoes e exportacao ERP em uma grade compacta.</p>
           </div>
-          <div className="flex w-full flex-col gap-2 sm:flex-row xl:w-auto">
-            {showStockScenario && (
-              <div className="relative w-full xl:w-96">
-                <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input
-                  value={stockSearchTerm}
-                  onChange={(event) => setStockSearchTerm(event.target.value)}
-                  placeholder="BUSCAR LOJA, PRODUTO, EAN OU CURVA..."
-                  className="w-full h-11 rounded-2xl bg-slate-50 border-2 border-slate-100 pl-11 pr-4 text-xs font-bold outline-none focus:border-violet-600"
-                />
-              </div>
-            )}
-            <button
-              type="button"
-              onClick={() => {
-                const nextValue = !showStockScenario;
-                setShowStockScenario(nextValue);
-                if (nextValue && stockSnapshot && stockItems.length === 0) {
-                  loadStockSnapshot(stockSearchTerm, true);
-                }
-              }}
-              className="h-11 shrink-0 rounded-2xl border-2 border-slate-100 bg-slate-50 px-4 text-[10px] font-black uppercase text-slate-700 flex items-center justify-center gap-2 hover:border-violet-200 hover:text-violet-700"
-            >
-              {showStockScenario ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-              {showStockScenario ? 'Ocultar cenario' : 'Mostrar cenario'}
-            </button>
-          </div>
+          <span className="text-[10px] font-black uppercase text-slate-400">
+            {transferSuggestions.length.toLocaleString('pt-BR')} linhas
+          </span>
         </div>
 
-        {showStockScenario && (
-          <>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
-              <div className="rounded-2xl bg-slate-50 border border-slate-100 p-4">
-                <p className="text-[10px] font-black uppercase text-slate-400">Lojas na amostra</p>
-                <p className="text-xl font-black text-slate-900">{stockSummary.stores.toLocaleString('pt-BR')}</p>
-              </div>
-              <div className="rounded-2xl bg-slate-50 border border-slate-100 p-4">
-                <p className="text-[10px] font-black uppercase text-slate-400">Produtos na amostra</p>
-                <p className="text-xl font-black text-slate-900">{stockSummary.products.toLocaleString('pt-BR')}</p>
-              </div>
-              <div className="rounded-2xl bg-slate-50 border border-slate-100 p-4">
-                <p className="text-[10px] font-black uppercase text-slate-400">Estoque total exibido</p>
-                <p className="text-xl font-black text-slate-900">{stockSummary.totalStock.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}</p>
-              </div>
-            </div>
-
-            <div className="max-h-[calc(100vh-260px)] overflow-auto rounded-md border border-slate-300">
-              <table className="w-full min-w-[1280px] border-collapse text-sm">
-                <thead className="bg-indigo-50 text-[10px] uppercase text-slate-600">
-                  <tr>
-                    <th className="border border-slate-300 px-3 py-3 text-left">Loja</th>
-                    <th className="border border-slate-300 px-3 py-3 text-left">Produto</th>
-                    <th className="border border-slate-300 px-3 py-3 text-left">EAN</th>
-                    <th className="border border-slate-300 px-3 py-3 text-left">Cod. ERP</th>
-                    <th className="border border-slate-300 px-3 py-3 text-right">Estoque</th>
-                    <th className="border border-slate-300 px-3 py-3 text-right">Estoque conf.</th>
-                    <th className="border border-slate-300 px-3 py-3 text-right">Media mensal</th>
-                    <th className="border border-slate-300 px-3 py-3 text-right">Dias estoque</th>
-                    <th className="border border-slate-300 px-3 py-3 text-center">Curva</th>
-                    <th className="border border-slate-300 px-3 py-3 text-right">Compra conf.</th>
-                    <th className="border border-slate-300 px-3 py-3 text-right">Transf. conf.</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {stockItems.map((item) => (
-                    <tr key={item.id} className="even:bg-slate-50 hover:bg-indigo-50/70">
-                      <td className="border border-slate-200 px-3 py-3 font-black text-slate-900">{item.store_code} - {item.store_name}</td>
-                      <td className="border border-slate-200 px-3 py-3 font-bold uppercase text-slate-800">{item.product_description}</td>
-                      <td className="border border-slate-200 px-3 py-3 font-mono text-slate-700">{item.ean}</td>
-                      <td className="border border-slate-200 px-3 py-3 font-black text-violet-700">{item.erp_code || '-'}</td>
-                      <td className="border border-slate-200 px-3 py-3 text-right font-bold">{Number(item.stock || 0).toLocaleString('pt-BR', { maximumFractionDigits: 2 })}</td>
-                      <td className="border border-slate-200 px-3 py-3 text-right">{Number(item.confirmed_stock || 0).toLocaleString('pt-BR', { maximumFractionDigits: 2 })}</td>
-                      <td className="border border-slate-200 px-3 py-3 text-right text-blue-700 font-bold">{Number(item.monthly_avg_sales || 0).toLocaleString('pt-BR', { maximumFractionDigits: 2 })}</td>
-                      <td className="border border-slate-200 px-3 py-3 text-right text-orange-600 font-bold">{wholeNumber(item.stock_days)}</td>
-                      <td className="border border-slate-200 px-3 py-3 text-center font-black">{item.curve || '-'}</td>
-                      <td className="border border-slate-200 px-3 py-3 text-right">{Number(item.confirmed_purchase || 0).toLocaleString('pt-BR', { maximumFractionDigits: 2 })}</td>
-                      <td className="border border-slate-200 px-3 py-3 text-right">{Number(item.confirmed_transfer || 0).toLocaleString('pt-BR', { maximumFractionDigits: 2 })}</td>
-                    </tr>
-                  ))}
-                  {!stockLoading && stockItems.length === 0 && (
-                    <tr>
-                      <td colSpan={11} className="border border-slate-200 px-3 py-12 text-center text-[10px] font-black uppercase tracking-widest text-slate-300">
-                        Nenhum estoque importado ainda
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </>
-        )}
-      </section>
-
-      <section className="mt-6 rounded-[28px] border-2 border-violet-100 bg-white p-4 shadow-sm">
-        <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 mb-4">
-          <div>
-            <h2 className="text-lg font-black uppercase text-slate-900">Sugestao de transferencia</h2>
-            <p className="text-xs font-bold text-slate-500">
-              Ajuste os criterios, gere as sugestoes e revise as quantidades antes de exportar para o ERP.
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={generateTransferSuggestions}
-              disabled={!stockSnapshot || stockLoading || generatingSuggestions}
-              className="h-11 px-4 rounded-2xl bg-violet-600 text-white font-black uppercase text-[10px] flex items-center gap-2 disabled:opacity-40"
-            >
-              <Shuffle size={16} /> {stockLoading ? 'Carregando...' : generatingSuggestions ? 'Processando...' : 'Gerar sugestoes'}
-            </button>
-            <button
-              type="button"
-              onClick={exportSuggestionsTxt}
-              disabled={transferSuggestions.length === 0}
-              className="h-11 px-4 rounded-2xl bg-slate-900 text-white font-black uppercase text-[10px] flex items-center gap-2 disabled:opacity-40"
-            >
-              <Download size={16} /> Exportar TXT
-            </button>
-          </div>
-        </div>
-
-        <div className="mb-4 rounded-2xl border border-slate-100 bg-slate-50 p-4">
-          <div className="mb-3 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-            <div>
-              <h3 className="text-sm font-black uppercase text-slate-900">Filtros da sugestao</h3>
-              <p className="text-xs font-bold text-slate-500">Restrinja produto, origem, destino, fabricante ou classificacao antes de gerar a transferencia.</p>
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                setProductFilters([]);
-                setOriginFilters([]);
-                setDestinationFilters([]);
-                setClassificationFilters([]);
-                setManufacturerFilters([]);
-              }}
-              className="h-10 px-4 rounded-2xl bg-white text-slate-600 border border-slate-200 font-black uppercase text-[10px] flex items-center gap-2"
-            >
-              <Trash2 size={15} /> Limpar filtros
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 items-start">
-            <QuickFilterBox
-              title="Produto"
-              columns={['Descricao', 'Codigo ERP', 'EAN', 'Fabricante', 'Classificacao']}
-              placeholder="Informe Cod. de Barras, codigo ERP ou descricao"
-              options={productOptions}
-              selected={productFilters}
-              onChange={setProductFilters}
-              onQuickSearch={searchProductOptions}
-              hideInitialOptions
-            />
+        <div className="relative z-[90] border-b border-slate-300 bg-slate-100/70 px-1.5 py-1.5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-1 items-start">
             <QuickFilterBox
               title="Un. Negocio Origem"
               columns={['Codigo', 'Apelido', 'Cidade']}
@@ -1181,19 +1018,81 @@ export function ReallocationManager() {
               onQuickSearch={searchManufacturerOptions}
               allowManual
             />
+            <QuickFilterBox
+              title="Produto"
+              columns={['Descricao', 'Codigo ERP', 'EAN', 'Fabricante', 'Classificacao']}
+              placeholder="Informe Cod. de Barras, codigo ERP ou descricao"
+              options={productOptions}
+              selected={productFilters}
+              onChange={setProductFilters}
+              onQuickSearch={searchProductOptions}
+              hideInitialOptions
+              alignPopup="right"
+            />
           </div>
         </div>
 
-        <div className="mb-4 rounded-2xl border border-violet-100 bg-violet-50/60 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-white px-3 py-2">
+          <div className="flex flex-wrap items-center gap-3 text-[10px] font-black uppercase">
+            <button
+              type="button"
+              onClick={() => {
+                setProductFilters([]);
+                setOriginFilters([]);
+                setDestinationFilters([]);
+                setClassificationFilters([]);
+                setManufacturerFilters([]);
+              }}
+              className="h-8 rounded-md border border-slate-200 bg-slate-50 px-3 text-slate-700 hover:border-violet-300 hover:text-violet-700"
+            >
+              Limpar filtros
+            </button>
+            <span className={activeSuggestionFilterCount > 0 ? 'text-red-600' : 'text-slate-400'}>
+              {activeSuggestionFilterCount} filtros ativos
+            </span>
+            <span className="hidden sm:inline text-slate-400">Perfil: {SUGGESTION_PROFILES[suggestionProfile].label}</span>
+            <span className="hidden sm:inline text-slate-400">Seguranca: {originMinimumDays} dias</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowAdvancedRules((value) => !value)}
+              className="h-8 rounded-md border border-slate-200 bg-slate-50 px-3 text-[10px] font-black uppercase text-slate-700 hover:border-violet-300 hover:text-violet-700"
+            >
+              <SlidersHorizontal size={13} className="inline-block mr-1" /> Perfil
+            </button>
+            <button
+              type="button"
+              onClick={generateTransferSuggestions}
+              disabled={!stockSnapshot || stockLoading || generatingSuggestions}
+              className="h-8 rounded-md bg-violet-600 px-3 text-[10px] font-black uppercase text-white disabled:opacity-40"
+            >
+              <Shuffle size={13} className="inline-block mr-1" /> {stockLoading ? 'Carregando' : generatingSuggestions ? 'Gerando' : 'Atualizar'}
+            </button>
+            <button
+              type="button"
+              onClick={exportSuggestionsTxt}
+              disabled={transferSuggestions.length === 0}
+              className="h-8 rounded-md bg-slate-900 px-3 text-[10px] font-black uppercase text-white disabled:opacity-40"
+            >
+              <Download size={13} className="inline-block mr-1" /> TXT
+            </button>
+          </div>
+        </div>
+
+        {showAdvancedRules && (
+        <div className="border-b border-slate-200 bg-slate-50 px-3 py-3">
+        <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
           <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 mb-4">
             <div>
-              <p className="text-[10px] font-black uppercase text-violet-500">Como sugerir</p>
-              <p className="text-sm font-bold text-slate-700">Escolha um perfil simples. Lojas de UFs diferentes nao entram na sugestao.</p>
+              <p className="text-[10px] font-black uppercase tracking-widest text-violet-500">Motor de sugestao</p>
+              <p className="text-sm font-bold text-slate-700">Escolha a intensidade do remanejamento e preserve estoque minimo na origem.</p>
+              <p className="mt-1 text-[11px] font-bold text-slate-400">Lojas de UFs diferentes continuam bloqueadas automaticamente.</p>
             </div>
             <button
               type="button"
               onClick={() => setShowAdvancedRules((value) => !value)}
-              className="h-10 px-4 rounded-2xl bg-white border border-violet-100 text-violet-700 font-black uppercase text-[10px] flex items-center gap-2"
+              className="h-10 px-4 rounded-2xl bg-slate-900 border border-slate-900 text-white font-black uppercase text-[10px] flex items-center gap-2 shadow-sm"
             >
               <SlidersHorizontal size={15} /> {showAdvancedRules ? 'Ocultar ajustes' : 'Ajustes avancados'}
             </button>
@@ -1208,36 +1107,36 @@ export function ReallocationManager() {
                   key={profile}
                   type="button"
                   onClick={() => applySuggestionProfile(profile)}
-                  className={`rounded-2xl border-2 p-4 text-left transition ${isSelected ? 'border-violet-600 bg-white shadow-sm' : 'border-white bg-white/70 hover:border-violet-200'}`}
+                  className={`rounded-2xl border-2 p-4 text-left transition-all ${
+                    isSelected
+                      ? 'border-violet-600 bg-violet-50 shadow-[0_10px_24px_rgba(124,58,237,0.12)]'
+                      : 'border-slate-100 bg-slate-50/70 hover:border-slate-300 hover:bg-white'
+                  }`}
                 >
-                  <span className={`block text-sm font-black uppercase ${isSelected ? 'text-violet-700' : 'text-slate-800'}`}>{preset.label}</span>
+                  <span className="mb-3 flex items-center justify-between gap-2">
+                    <span className={`block text-sm font-black uppercase ${isSelected ? 'text-violet-700' : 'text-slate-800'}`}>{preset.label}</span>
+                    <span className={`h-3 w-3 rounded-full border-2 ${isSelected ? 'border-violet-600 bg-violet-600' : 'border-slate-300 bg-white'}`} />
+                  </span>
                   <span className="mt-1 block text-xs font-bold text-slate-500">{preset.description}</span>
                 </button>
               );
             })}
           </div>
 
-          <div className="mt-4 grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-3 items-end">
-            <label className="block">
-              <span className="text-[10px] font-black uppercase text-violet-500">Estoque de seguranca origem</span>
-              <span className="block text-xs font-bold text-slate-500 mt-1">A origem mantem produtos suficientes para esses dias. O que passar disso pode ser transferido.</span>
-              <input
-                type="range"
-                value={originMinimumDays}
-                min={0}
-                max={90}
-                step={1}
-                onChange={(event) => setOriginMinimumDays(Number(event.target.value))}
-                className="mt-3 w-full accent-violet-600"
-              />
-            </label>
-            <div className="rounded-2xl bg-white border border-violet-100 px-5 py-3 text-center">
-              <p className="text-[10px] font-black uppercase text-slate-400">Seguranca</p>
-              <p className="text-2xl font-black text-violet-700">{originMinimumDays} dias</p>
+          <div className="mt-4 grid grid-cols-1 lg:grid-cols-[1fr_260px] gap-3 items-center rounded-2xl border border-slate-100 bg-slate-50/80 p-4">
+            <div>
+              <span className="text-[10px] font-black uppercase tracking-widest text-violet-500">Estoque de seguranca origem</span>
+              <span className="block text-xs font-bold text-slate-500 mt-1">A origem mantem cobertura para esses dias; somente o excedente entra na sugestao.</span>
             </div>
+            <NumberStepper
+              value={originMinimumDays}
+              onChange={setOriginMinimumDays}
+              min={0}
+              max={90}
+              suffix="dias"
+            />
           </div>
 
-          {showAdvancedRules && (
             <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
               <TransferRuleInput
                 label="Destino ate dias"
@@ -1258,11 +1157,12 @@ export function ReallocationManager() {
                 value={maxRoutePriority}
                 onChange={setMaxRoutePriority}
                 min={0}
-                max={99}
+                max={10}
               />
             </div>
-          )}
         </div>
+        </div>
+        )}
 
         {suggestionMessage && (
           <div className="mb-4 rounded-2xl border border-violet-100 bg-violet-50 px-4 py-3 text-sm font-bold text-violet-800">
@@ -1294,56 +1194,38 @@ export function ReallocationManager() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
-          <div className="rounded-2xl bg-violet-50 border border-violet-100 p-4">
-            <p className="text-[10px] font-black uppercase text-violet-400">Transferencias sugeridas</p>
-            <p className="text-xl font-black text-violet-900">{transferSuggestions.length.toLocaleString('pt-BR')}</p>
-          </div>
-          <div className="rounded-2xl bg-violet-50 border border-violet-100 p-4">
-            <p className="text-[10px] font-black uppercase text-violet-400">Unidades sugeridas</p>
-            <p className="text-xl font-black text-violet-900">{transferSuggestions.reduce((sum, item) => sum + item.quantity, 0).toLocaleString('pt-BR')}</p>
-          </div>
-          <div className="rounded-2xl bg-violet-50 border border-violet-100 p-4">
-            <p className="text-[10px] font-black uppercase text-violet-400">Produtos movimentados</p>
-            <p className="text-xl font-black text-violet-900">{new Set(transferSuggestions.map((item) => item.ean)).size.toLocaleString('pt-BR')}</p>
-          </div>
-          <div className="rounded-2xl bg-emerald-50 border border-emerald-100 p-4">
-            <p className="text-[10px] font-black uppercase text-emerald-500">Linhas exportaveis</p>
-            <p className="text-xl font-black text-emerald-900">{suggestionExportStats.exportableLines.toLocaleString('pt-BR')}</p>
-            <p className="mt-1 text-[10px] font-bold text-emerald-700">{suggestionExportStats.exportableUnits.toLocaleString('pt-BR')} unidades com ERP</p>
-          </div>
-          <div className="rounded-2xl bg-amber-50 border border-amber-100 p-4">
-            <p className="text-[10px] font-black uppercase text-amber-500">Pendentes de ERP</p>
-            <p className="text-xl font-black text-amber-900">{suggestionExportStats.missingErpCodeLines.toLocaleString('pt-BR')}</p>
-            <p className="mt-1 text-[10px] font-bold text-amber-700">nao entram no TXT</p>
-          </div>
-          <div className="rounded-2xl bg-red-50 border border-red-100 p-4">
-            <p className="text-[10px] font-black uppercase text-red-500">Origem excedida</p>
-            <p className="text-xl font-black text-red-900">{overAllocatedOrigins.length.toLocaleString('pt-BR')}</p>
-            <p className="mt-1 text-[10px] font-bold text-red-700">bloqueia exportacao</p>
-          </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-9 gap-px border-b border-slate-200 bg-slate-200">
+          <StatusMetric label="Produtos" value={totalProducts.toLocaleString('pt-BR')} />
+          <StatusMetric label="Estoque" value={stockItems.length.toLocaleString('pt-BR')} tone="indigo" />
+          <StatusMetric label="Sugestoes" value={transferSuggestions.length.toLocaleString('pt-BR')} tone="violet" />
+          <StatusMetric label="Unidades" value={transferSuggestions.reduce((sum, item) => sum + item.quantity, 0).toLocaleString('pt-BR')} tone="violet" />
+          <StatusMetric label="Produtos mov." value={new Set(transferSuggestions.map((item) => item.ean)).size.toLocaleString('pt-BR')} tone="violet" />
+          <StatusMetric label="Exportaveis" value={suggestionExportStats.exportableLines.toLocaleString('pt-BR')} helper={`${suggestionExportStats.exportableUnits.toLocaleString('pt-BR')} un.`} tone="emerald" />
+          <StatusMetric label="Sem ERP" value={suggestionExportStats.missingErpCodeLines.toLocaleString('pt-BR')} helper="fora TXT" tone="amber" />
+          <StatusMetric label="Excedidas" value={overAllocatedOrigins.length.toLocaleString('pt-BR')} helper="bloqueia" tone="red" />
+          <StatusMetric label="Filtros" value={activeSuggestionFilterCount.toLocaleString('pt-BR')} />
         </div>
 
         {overAllocatedOrigins.length > 0 && (
-          <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-800">
+          <div className="mx-3 mt-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-800">
             Existem produtos com soma de transferencias maior que o estoque da origem. Ajuste as linhas em vermelho antes de exportar.
           </div>
         )}
 
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2">
           <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">
             Arraste cabeçalhos para ordenar. Puxe a borda direita para ajustar largura.
           </p>
           <button
             type="button"
             onClick={resetSuggestionColumns}
-            className="h-9 rounded-xl bg-slate-100 px-4 text-[10px] font-black uppercase text-slate-600"
+            className="h-8 rounded-md bg-slate-100 px-3 text-[10px] font-black uppercase text-slate-600"
           >
             Restaurar colunas
           </button>
         </div>
 
-        <div className="max-h-[calc(100vh-240px)] overflow-auto rounded-md border border-slate-300">
+        <div className="max-h-[calc(100vh-240px)] overflow-auto">
           <table className="w-full border-collapse text-sm whitespace-nowrap" style={{ minWidth: suggestionTableWidth }}>
             <colgroup>
               {orderedSuggestionColumns.map((column) => (
@@ -1408,7 +1290,7 @@ function TransferRuleInput({
   max: number;
 }) {
   return (
-    <label className="rounded-2xl border border-violet-100 bg-violet-50/60 p-3">
+    <label className="rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
       <span className="block text-[10px] font-black uppercase text-violet-500">{label}</span>
       <input
         type="number"
@@ -1419,19 +1301,93 @@ function TransferRuleInput({
           const nextValue = Math.max(min, Math.min(max, Number(event.target.value) || 0));
           onChange(nextValue);
         }}
-        className="mt-2 h-10 w-full rounded-xl border-2 border-white bg-white px-3 text-sm font-black text-slate-900 outline-none [appearance:textfield] focus:border-violet-500 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+        className="mt-2 h-10 w-full rounded-xl border-2 border-slate-100 bg-slate-50 px-3 text-sm font-black text-slate-900 outline-none [appearance:textfield] focus:border-violet-500 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
       />
     </label>
   );
 }
 
+function NumberStepper({
+  value,
+  onChange,
+  min,
+  max,
+  suffix,
+}: {
+  value: number;
+  onChange: (value: number) => void;
+  min: number;
+  max: number;
+  suffix: string;
+}) {
+  const clamp = (nextValue: number) => Math.max(min, Math.min(max, Math.round(nextValue || 0)));
+
+  return (
+    <div className="flex items-center justify-between gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">
+      <button
+        type="button"
+        onClick={() => onChange(clamp(value - 1))}
+        className="h-10 w-10 rounded-xl bg-slate-100 text-lg font-black text-slate-600 transition hover:bg-slate-200 disabled:opacity-40"
+        disabled={value <= min}
+        aria-label="Diminuir valor"
+      >
+        -
+      </button>
+      <label className="min-w-0 flex-1 text-center">
+        <span className="block text-[9px] font-black uppercase tracking-widest text-slate-400">Seguranca</span>
+        <div className="mt-0.5 flex items-baseline justify-center gap-1">
+          <input
+            type="number"
+            value={value}
+            min={min}
+            max={max}
+            onChange={(event) => onChange(clamp(Number(event.target.value)))}
+            className="w-16 bg-transparent text-center text-3xl font-black leading-none text-violet-700 outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+          />
+          <span className="text-[10px] font-black uppercase text-slate-400">{suffix}</span>
+        </div>
+      </label>
+      <button
+        type="button"
+        onClick={() => onChange(clamp(value + 1))}
+        className="h-10 w-10 rounded-xl bg-violet-600 text-lg font-black text-white transition hover:bg-violet-700 disabled:opacity-40"
+        disabled={value >= max}
+        aria-label="Aumentar valor"
+      >
+        +
+      </button>
+    </div>
+  );
+}
+
 function DiagnosticCard({ label, value, suffix = '', accent = false, warning = false }: { label: string; value: number; suffix?: string; accent?: boolean; warning?: boolean }) {
   return (
-    <div className={`rounded-xl border px-3 py-3 ${warning ? 'border-amber-200 bg-amber-50' : accent ? 'border-violet-200 bg-violet-50' : 'border-slate-100 bg-slate-50'}`}>
+    <div className={`rounded-xl border px-3 py-3 shadow-sm ${warning ? 'border-amber-200 bg-amber-50' : accent ? 'border-violet-200 bg-violet-50' : 'border-slate-100 bg-white'}`}>
       <p className={`text-[9px] font-black uppercase ${warning ? 'text-amber-500' : accent ? 'text-violet-500' : 'text-slate-400'}`}>{label}</p>
       <p className={`text-lg font-black ${warning ? 'text-amber-800' : accent ? 'text-violet-900' : 'text-slate-900'}`}>
         {value.toLocaleString('pt-BR')}{suffix}
       </p>
+    </div>
+  );
+}
+
+function StatusMetric({ label, value, helper, tone = 'slate' }: { label: string; value: string; helper?: string; tone?: 'slate' | 'indigo' | 'violet' | 'emerald' | 'amber' | 'red' }) {
+  const toneClass = {
+    slate: 'bg-white text-slate-900 [&_p:first-child]:text-slate-400',
+    indigo: 'bg-white text-indigo-700 [&_p:first-child]:text-indigo-400',
+    violet: 'bg-white text-violet-800 [&_p:first-child]:text-violet-400',
+    emerald: 'bg-emerald-50 text-emerald-900 [&_p:first-child]:text-emerald-500',
+    amber: 'bg-amber-50 text-amber-900 [&_p:first-child]:text-amber-500',
+    red: 'bg-red-50 text-red-900 [&_p:first-child]:text-red-500',
+  }[tone];
+
+  return (
+    <div className={`min-h-12 px-2.5 py-1.5 ${toneClass}`}>
+      <p className="truncate text-[9px] font-black uppercase leading-tight">{label}</p>
+      <div className="flex items-end gap-1.5">
+        <p className="text-base font-black leading-none">{value}</p>
+        {helper && <p className="truncate pb-[1px] text-[9px] font-bold opacity-80">{helper}</p>}
+      </div>
     </div>
   );
 }
@@ -1477,6 +1433,7 @@ function QuickFilterBox({
   onQuickSearch,
   hideInitialOptions = false,
   allowManual = false,
+  alignPopup = 'left',
 }: {
   title: string;
   columns: string[];
@@ -1487,7 +1444,9 @@ function QuickFilterBox({
   onQuickSearch?: (term: string) => Promise<QuickFilterItem[]>;
   hideInitialOptions?: boolean;
   allowManual?: boolean;
+  alignPopup?: 'left' | 'right';
 }) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [quickValue, setQuickValue] = useState('');
   const [remoteOptions, setRemoteOptions] = useState<QuickFilterItem[]>([]);
@@ -1531,6 +1490,24 @@ function QuickFilterBox({
       window.clearTimeout(timeout);
     };
   }, [onQuickSearch, quickValue]);
+
+  useEffect(() => {
+    if (!expanded) return;
+
+    const handlePointerDown = (event: globalThis.MouseEvent | TouchEvent) => {
+      if (!containerRef.current || containerRef.current.contains(event.target as Node)) return;
+      setExpanded(false);
+      setQuickValue('');
+      setRemoteOptions([]);
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('touchstart', handlePointerDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('touchstart', handlePointerDown);
+    };
+  }, [expanded]);
 
   useEffect(() => {
     const handleEscape = (event: KeyboardEvent) => {
@@ -1585,26 +1562,47 @@ function QuickFilterBox({
   const selectedPreview = selected.slice(0, 2).map((item) => item.columns[0]).join(', ');
 
   return (
-    <div className={`${expanded ? 'md:col-span-2' : ''} overflow-hidden rounded-2xl border-2 ${selected.length ? 'border-violet-200 bg-violet-50/40' : 'border-slate-100 bg-slate-50'} text-slate-950 min-h-[126px] transition-colors`}>
-      <button
-        type="button"
-        onClick={() => setExpanded((value) => !value)}
-        className="w-full h-11 px-4 flex items-center justify-between text-left border-b border-slate-200 bg-white"
-      >
-        <span className="text-[11px] font-black uppercase tracking-widest leading-none text-slate-700">{title}</span>
-        <span className={`w-8 h-8 rounded-xl border flex items-center justify-center ${selected.length ? 'bg-violet-600 border-violet-600 text-white' : 'bg-slate-100 border-slate-200 text-slate-500'}`}>
-          <Filter size={12} />
-        </span>
-      </button>
+    <div ref={containerRef} className={`relative text-slate-950 ${expanded ? 'z-[220]' : 'z-10'}`}>
+      <div className={`overflow-hidden rounded-[6px] border ${selected.length ? 'border-violet-400 bg-violet-50' : 'border-slate-300 bg-white'} min-h-[92px] transition-colors shadow-[0_1px_0_rgba(15,23,42,0.04)]`}>
+        <button
+          type="button"
+          onClick={() => setExpanded((value) => !value)}
+          className="w-full h-7 px-2 flex items-center justify-between text-left border-b border-slate-200 bg-gradient-to-b from-white to-slate-50"
+        >
+          <span className="truncate text-[12px] font-bold leading-none text-slate-950">{title}</span>
+          <span className={`h-5 w-5 rounded-[4px] border flex items-center justify-center ${selected.length ? 'bg-violet-600 border-violet-600 text-white' : 'bg-slate-100 border-slate-300 text-slate-500'}`}>
+            <Filter size={11} />
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setExpanded(true)}
+          className="h-[65px] w-full px-2 text-center transition-colors hover:bg-slate-50"
+        >
+          <span className={`block truncate text-xs font-bold ${selected.length ? 'text-violet-700' : 'text-slate-600'}`}>{summary}</span>
+          {selectedPreview && <span className="mt-1 block max-w-full truncate text-[10px] font-bold text-slate-500">{selectedPreview}</span>}
+        </button>
+      </div>
 
-      {!expanded ? (
-        <div className="h-[82px] flex flex-col items-center justify-center gap-1 px-4 text-center">
-          <span className={`text-sm font-bold ${selected.length ? 'text-violet-700' : 'text-slate-500'}`}>{summary}</span>
-          {selectedPreview && <span className="max-w-full truncate text-[11px] font-bold text-slate-500">{selectedPreview}</span>}
-        </div>
-      ) : (
-        <div className="bg-white">
-          <div className="p-3 grid grid-cols-1 md:grid-cols-[1fr_44px] items-center gap-2 border-b border-slate-200 bg-slate-50">
+      {expanded && (
+        <div className={`absolute top-[calc(100%+4px)] z-[240] w-[min(560px,calc(100vw-2rem))] overflow-hidden rounded-[6px] border border-slate-400 bg-white shadow-[0_18px_38px_rgba(15,23,42,0.22)] ${alignPopup === 'right' ? 'right-0' : 'left-0'}`}>
+          <div className="flex h-7 items-center justify-between border-b border-slate-300 bg-slate-100 px-2">
+            <span className="truncate text-xs font-bold text-slate-900">{title}</span>
+            <button
+              type="button"
+              onClick={() => {
+                setExpanded(false);
+                setQuickValue('');
+                setRemoteOptions([]);
+              }}
+              className="h-5 w-5 rounded border border-slate-300 bg-white text-slate-500 hover:text-red-600"
+              aria-label="Fechar filtro"
+            >
+              <X size={12} className="mx-auto" />
+            </button>
+          </div>
+
+          <div className="p-2 grid grid-cols-1 md:grid-cols-[1fr_36px] items-center gap-2 border-b border-slate-200 bg-slate-50">
             <div className="relative">
               <input
                 value={quickValue}
@@ -1616,7 +1614,7 @@ function QuickFilterBox({
                   }
                 }}
                 placeholder={placeholder}
-                className="h-10 w-full rounded-xl border-2 border-slate-200 bg-white px-3 pr-20 text-sm font-bold outline-none focus:border-violet-500"
+                className="h-8 w-full rounded-md border border-slate-300 bg-white px-2 pr-16 text-xs font-bold outline-none focus:border-violet-500"
               />
               {searching && (
                 <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400">
@@ -1624,22 +1622,22 @@ function QuickFilterBox({
                 </span>
               )}
             </div>
-            <button type="button" onClick={addQuickValue} className="h-10 w-full md:w-11 rounded-xl bg-violet-600 text-white flex items-center justify-center">
+            <button type="button" onClick={addQuickValue} className="h-8 w-full md:w-9 rounded-md bg-violet-600 text-white flex items-center justify-center">
               <Plus size={14} />
             </button>
           </div>
 
-          <div className="max-h-80 overflow-auto border-b border-slate-200 bg-white p-2">
+          <div className="max-h-64 min-h-40 overflow-auto border-b border-slate-200 bg-white p-1.5">
             {visibleOptions.filter((item) => !selected.some((current) => current.id === item.id)).map((item) => (
               <button
                 key={item.id}
                 type="button"
                 onClick={() => addItem(item)}
-                className="mb-1 grid w-full grid-cols-[1fr_auto] gap-3 rounded-xl border border-transparent px-3 py-2 text-left hover:border-violet-200 hover:bg-violet-50"
+                className="mb-1 grid w-full grid-cols-[1fr_auto] gap-2 rounded-md border border-transparent px-2 py-1.5 text-left hover:border-violet-200 hover:bg-violet-50"
               >
                 <span className="min-w-0">
-                  <span className="block truncate text-sm font-black text-slate-900">{item.columns[0] || item.id}</span>
-                  <span className="mt-1 block truncate text-[11px] font-bold text-slate-500">
+                  <span className="block truncate text-xs font-black text-slate-900">{item.columns[0] || item.id}</span>
+                  <span className="mt-0.5 block truncate text-[10px] font-bold text-slate-500">
                     {columns.slice(1).map((column, index) => `${column}: ${item.columns[index + 1] || '-'}`).join(' | ')}
                   </span>
                 </span>
@@ -1647,14 +1645,14 @@ function QuickFilterBox({
               </button>
             ))}
             {visibleOptions.filter((item) => !selected.some((current) => current.id === item.id)).length === 0 && (
-              <div className="flex h-24 items-center justify-center rounded-xl bg-slate-50 px-4 text-center text-xs font-bold text-slate-400">
+              <div className="flex h-20 items-center justify-center rounded-md bg-slate-50 px-3 text-center text-xs font-bold text-slate-400">
                 {searching ? 'Buscando...' : normalizedQuickValue ? (allowManual ? 'Nenhum resultado. Aperte + para usar o texto digitado.' : 'Nenhum resultado direto.') : 'Digite pelo menos 2 caracteres para buscar.'}
               </div>
             )}
           </div>
 
           {selected.length > 0 && (
-            <div className="border-b border-slate-200 bg-violet-50/70 p-3">
+            <div className="border-b border-slate-200 bg-violet-50/70 p-2">
               <p className="mb-2 text-[10px] font-black uppercase text-violet-500">Selecionados</p>
               <div className="flex flex-wrap gap-2">
                 {selected.map((item) => (
@@ -1662,7 +1660,7 @@ function QuickFilterBox({
                     key={item.id}
                     type="button"
                     onClick={() => onChange(selected.filter((current) => current.id !== item.id))}
-                    className="inline-flex max-w-full items-center gap-2 rounded-xl bg-white px-3 py-2 text-xs font-black text-violet-700 shadow-sm"
+                    className="inline-flex max-w-full items-center gap-2 rounded-md bg-white px-2 py-1 text-[10px] font-black text-violet-700 shadow-sm"
                     title="Remover filtro"
                   >
                     <span className="max-w-52 truncate">{item.columns[0]}</span>
@@ -1673,11 +1671,11 @@ function QuickFilterBox({
             </div>
           )}
 
-          <div className="p-3 flex flex-wrap justify-between gap-2 bg-white">
-            <button type="button" onClick={removeLast} disabled={selected.length === 0} className="h-10 px-4 rounded-xl bg-slate-100 text-xs font-black uppercase text-slate-600 disabled:text-slate-300">
+          <div className="p-2 flex flex-wrap justify-between gap-2 bg-white">
+            <button type="button" onClick={removeLast} disabled={selected.length === 0} className="h-8 px-3 rounded-md bg-slate-100 text-[10px] font-black uppercase text-slate-600 disabled:text-slate-300">
               Remover ultimo
             </button>
-            <button type="button" onClick={() => onChange([])} disabled={selected.length === 0} className="h-10 px-4 rounded-xl bg-slate-100 text-xs font-black uppercase text-slate-600 disabled:text-slate-300">
+            <button type="button" onClick={() => onChange([])} disabled={selected.length === 0} className="h-8 px-3 rounded-md bg-slate-100 text-[10px] font-black uppercase text-slate-600 disabled:text-slate-300">
               Limpar
             </button>
           </div>

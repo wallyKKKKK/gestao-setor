@@ -56,6 +56,7 @@ const PaymentTermsManager = dynamic(() => import('@/app/components/payment-terms
 const PricingManager = dynamic(() => import('@/app/components/pricing-manager').then((mod) => mod.PricingManager), { loading: SectionLoader })
 const ReallocationManager = dynamic(() => import('@/app/components/reallocation-manager').then((mod) => mod.ReallocationManager), { loading: SectionLoader })
 const RegistrationsManager = dynamic(() => import('@/app/components/registrations-manager').then((mod) => mod.RegistrationsManager), { loading: SectionLoader })
+const TransportDebtManager = dynamic(() => import('@/app/components/transport-debt-manager').then((mod) => mod.TransportDebtManager), { loading: SectionLoader })
 
 function normalizeSector(value: string) {
   return value
@@ -80,6 +81,12 @@ function isSupremeAdminEmail(email: string | undefined) {
 }
 
 export default function App() {
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    if (typeof window === 'undefined') return 'light';
+    const storedTheme = window.localStorage.getItem('wally-theme');
+    if (storedTheme === 'light' || storedTheme === 'dark') return storedTheme;
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  })
   const [user, setUser] = useState<SupabaseUser | null>(null)
   const [userRole, setUserRole] = useState<UserRole>('membro')
   const [profiles, setProfiles] = useState<Profile[]>([])
@@ -118,6 +125,11 @@ export default function App() {
   const [userSector, setUserSector] = useState('Geral');
   const [showAssignMenu, setShowAssignMenu] = useState(false);
   const [showCategoryMenu, setShowCategoryMenu] = useState(false);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    window.localStorage.setItem('wally-theme', theme);
+  }, [theme]);
 
   // Trava o scroll do fundo quando modais estao abertos
 useEffect(() => {
@@ -581,6 +593,27 @@ const updateMeeting = useCallback(async (task: ProcessedTask, meeting: CreateMee
   }
 }, [addAudit, fetchTasks]);
 
+const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
+  if (!user) return;
+
+  const meetingDate = task.due_date || task.lastOcc;
+  const isCurrentlyDone = task.isDoneToday;
+  const newDate = isCurrentlyDone ? null : meetingDate;
+
+  setTasks(prevTasks => prevTasks.map(t => (
+    t.id === task.id ? { ...t, last_done_date: newDate, status: newDate ? 'concluido' : 'pendente' } : t
+  )));
+
+  try {
+    await updateTaskCompletion(task.id, newDate, task.subtasks || [], false);
+    await addAudit(isCurrentlyDone ? 'task_reopened' : 'task_completed', 'meeting', task.id, task.title, task.sector);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Erro desconhecido';
+    alert('Erro ao salvar reuniao: ' + message);
+    fetchTasks();
+  }
+}, [addAudit, fetchTasks, user]);
+
   async function updateTask() {
   if (!editingTask) return;
 
@@ -639,12 +672,14 @@ const updateMeeting = useCallback(async (task: ProcessedTask, meeting: CreateMee
   const isSupremeAdmin = userRole === 'admin' && isSupremeAdminEmail(user?.email);
   const canAccessPricing = userRole === 'admin' || ['precificacao', 'price'].includes(normalizedSector);
   const canAccessPaymentTerms = userRole === 'admin' || normalizedSector.startsWith('compras');
+  const canAccessTransport = isSupremeAdmin || (normalizedSector.includes('compras') && normalizedSector.includes('perfumaria'));
   const canAccessRegistries = userRole === 'admin' || canAccessPricing || canAccessPaymentTerms;
   const visibleSection =
     (activeSection === 'AUDITORIA' && userRole !== 'admin') ||
     (activeSection === 'CADASTROS' && !canAccessRegistries) ||
     (activeSection === 'PRECIFICACAO' && !canAccessPricing) ||
     (activeSection === 'PRAZOS' && !canAccessPaymentTerms) ||
+    (activeSection === 'TRANSPORTE' && !canAccessTransport) ||
     (activeSection === 'BALACUBACO' && !isSupremeAdmin)
       ? 'TAREFAS'
       : activeSection;
@@ -652,18 +687,20 @@ const updateMeeting = useCallback(async (task: ProcessedTask, meeting: CreateMee
   if (!user) return <Login />
 
   return (
-    <div className="min-h-screen bg-[#E8EEF7] text-slate-900 pb-24 md:pb-20 font-sans overflow-x-hidden w-full">
+    <div className={`min-h-screen bg-[#E8EEF7] text-slate-900 font-sans overflow-x-hidden w-full ${visibleSection === 'TRANSPORTE' || visibleSection === 'REUNIAO' ? 'pb-24 md:pb-0' : 'pb-24 md:pb-20'}`}>
       <AppSidebar
         activeSection={visibleSection}
         userRole={userRole}
         userSector={userSector}
         isSupremeAdmin={isSupremeAdmin}
+        theme={theme}
         onSectionChange={(section) => {
           setActiveSection(section);
           if (section === 'AUDITORIA') {
             fetchAudit();
           }
         }}
+        onThemeToggle={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')}
       />
 
       <div className="md:pl-24">
@@ -677,9 +714,11 @@ const updateMeeting = useCallback(async (task: ProcessedTask, meeting: CreateMee
         filterUsers={filterUsers}
         userSector={userSector}
         searchTerm={searchTerm}
+        theme={theme}
         onActiveTabChange={(tab) => { setActiveTab(tab); setShowCreateBox(false); }}
         onFilterUsersChange={setFilterUsers}
         onSearchTermChange={setSearchTerm}
+        onThemeToggle={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')}
         onOpenProfile={() => setShowProfileModal(true)}
         onOpenSettings={() => setShowSettingsModal(true)}
       />
@@ -776,8 +815,8 @@ const updateMeeting = useCallback(async (task: ProcessedTask, meeting: CreateMee
           profiles={profiles}
           userSector={userSector}
           defaultAssignedTo={user.id}
-          onViewTask={setViewingTask}
           onDeleteTask={deleteTask}
+          onToggleMeeting={toggleMeetingComplete}
           onCreateMeeting={addMeeting}
           onUpdateMeeting={updateMeeting}
         />
@@ -787,6 +826,8 @@ const updateMeeting = useCallback(async (task: ProcessedTask, meeting: CreateMee
         <PricingManager />
       ) : visibleSection === 'PRAZOS' ? (
         <PaymentTermsManager />
+      ) : visibleSection === 'TRANSPORTE' ? (
+        <TransportDebtManager />
       ) : visibleSection === 'BALACUBACO' ? (
         <ReallocationManager />
       ) : (
