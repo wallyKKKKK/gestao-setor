@@ -52,6 +52,7 @@ interface BulkEditForm {
 const STORAGE_KEY = 'transport-debt-control-v1';
 const MANUAL_SHEET_NAME = 'Lancamentos manuais';
 const NO_MONTH_VALUE = '__sem_mes__';
+const TRANSPORT_FEE_RATE = 0.035;
 
 const blankManualForm: ManualDebtForm = {
   debtMonth: '',
@@ -129,6 +130,21 @@ function parseMoney(value: unknown) {
   const parsed = Number(text.replace(/[^0-9.]/g, ''));
   if (!Number.isFinite(parsed)) return null;
   return negative ? -parsed : parsed;
+}
+
+function calculateTransportFee(value: number) {
+  return Number((value * TRANSPORT_FEE_RATE).toFixed(2));
+}
+
+function splitBulkPasteLine(line: string) {
+  const trimmedLine = line.trim();
+  if (!trimmedLine) return [];
+
+  const separator = trimmedLine.includes('\t') ? /\t/ : /;/;
+  return trimmedLine
+    .split(separator)
+    .map((cell) => cell.trim())
+    .filter((cell, cellIndex, allCells) => cell || cellIndex < allCells.length - 1);
 }
 
 function csvValue(value: string | number) {
@@ -258,7 +274,7 @@ function parseWorkbookRows(workbook: { SheetNames: string[]; Sheets: Record<stri
           description,
           invoice,
           value,
-          fee: feeCell ?? Number((value * 0.035).toFixed(2)),
+          fee: feeCell ?? calculateTransportFee(value),
           nature,
           status: 'aberto',
         };
@@ -538,7 +554,7 @@ export function TransportDebtManager() {
       if (field === 'value') {
         const parsedValue = parseMoney(value);
         if (parsedValue !== null && !current.fee) {
-          next.fee = Number((parsedValue * 0.035).toFixed(2)).toLocaleString('pt-BR', {
+          next.fee = calculateTransportFee(parsedValue).toLocaleString('pt-BR', {
             minimumFractionDigits: 2,
             maximumFractionDigits: 2,
           });
@@ -622,7 +638,7 @@ export function TransportDebtManager() {
       description: manualForm.description.trim(),
       invoice,
       value,
-      fee: fee ?? Number((value * 0.035).toFixed(2)),
+      fee: fee ?? calculateTransportFee(value),
       nature: manualForm.nature,
       status: manualForm.status,
     };
@@ -653,10 +669,7 @@ export function TransportDebtManager() {
       .filter(Boolean);
 
     const parsedEntries = rows.flatMap((line, index) => {
-      const cells = line
-        .split(/\t/)
-        .map((cell) => cell.trim())
-        .filter((cell, cellIndex, allCells) => cell || cellIndex < allCells.length - 1);
+      const cells = splitBulkPasteLine(line);
 
       if (cells.length < 4) return [];
 
@@ -678,7 +691,7 @@ export function TransportDebtManager() {
         description: '',
         invoice,
         value,
-        fee: fee ?? Number((value * 0.035).toFixed(2)),
+        fee: fee ?? calculateTransportFee(value),
         nature,
         status: 'aberto' as PaymentStatus,
       }];
