@@ -191,6 +191,29 @@ export interface Announcement {
   } | null;
 }
 
+export interface AppNotification {
+  id: string;
+  title: string;
+  description: string;
+  tone: "blue" | "amber" | "red" | "green" | "slate";
+  createdAt: string;
+  section: "TAREFAS" | "REUNIAO";
+  tab?: string;
+}
+
+export interface AppDbNotification {
+  id: string;
+  title: string;
+  body: string;
+  type: string;
+  actor_id: string | null;
+  recipient_id: string | null;
+  sector: string | null;
+  entity_type: string | null;
+  entity_id: string | null;
+  created_at: string;
+}
+
 export interface TaskItemProps {
   task: ProcessedTask;
   profiles: Profile[];
@@ -202,5 +225,6 @@ export interface TaskItemProps {
   onView: (task: ProcessedTask) => void;
   onToggle: (task: ProcessedTask) => void;
   onDelete: (taskId: string) => void;
+  canDelete: boolean;
   onScheduleOverride: (task: ProcessedTask, action: "advance" | "postpone" | "clear") => void;
 }

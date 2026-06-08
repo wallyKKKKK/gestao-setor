@@ -133,7 +133,7 @@ export function Login() {
             <Image src="/icon.png" alt="WALLY" width={76} height={76} className="w-[76px] h-[76px] rounded-[24px] shadow-lg bg-blue-600 p-1" />
           </div>
 
-          <form onSubmit={processAuth} className="bg-white border border-slate-200 shadow-[12px_12px_0px_0px_rgba(35,45,74,1)] rounded-[32px] p-6 sm:p-8">
+          <form onSubmit={processAuth} className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_24px_70px_rgba(35,45,74,0.16)] sm:p-8">
             <div className="mb-8">
               <p className="text-[10px] font-black uppercase tracking-[0.28em] text-blue-600 mb-3">
                 {isSignUp ? "Novo acesso" : "Entrar"}

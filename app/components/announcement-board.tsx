@@ -52,7 +52,7 @@ export function AnnouncementBoard({
         </div>
       </div>
 
-      <div className="bg-white p-8 rounded-[40px] border-4 border-slate-900 shadow-[12px_12px_0px_0px_rgba(15,23,42,1)] space-y-4 mx-4">
+      <div className="mx-4 space-y-4 rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
         <input
           className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-black text-slate-900 outline-none focus:border-red-500 uppercase"
           placeholder="TÍTULO DO ALERTA..."
@@ -105,10 +105,10 @@ export function AnnouncementBoard({
         {visibleAnnouncements.map((announcement) => (
           <div
             key={announcement.id}
-            className="bg-white border-4 border-slate-900 rounded-[40px] shadow-[12px_12px_0px_0px_rgba(248,113,113,1)] overflow-hidden"
+            className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm"
           >
             {announcement.image_url && (
-              <div className="relative w-full h-64 overflow-hidden border-b-4 border-slate-900 bg-slate-100">
+              <div className="relative h-64 w-full overflow-hidden border-b border-slate-200 bg-slate-100">
                 <Image
                   src={announcement.image_url}
                   alt="Alerta"

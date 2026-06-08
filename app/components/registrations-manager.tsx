@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Building2, Database, PackageSearch, Plus, Save, Search, Trash2, Truck, Upload, X } from 'lucide-react';
+import { Building2, PackageSearch, Plus, Save, Search, Trash2, Truck, Upload, X } from 'lucide-react';
 import {
   countReallocationProducts,
   deletePricingBranch,
@@ -72,7 +72,7 @@ export function RegistrationsManager() {
       setErrorMessage('');
     } catch {
       setProducts([]);
-      setErrorMessage('Nao consegui carregar o cadastro mestre de produtos.');
+      setErrorMessage('Não consegui carregar o cadastro mestre de produtos.');
     } finally {
       setLoading(false);
     }
@@ -183,19 +183,7 @@ export function RegistrationsManager() {
   };
 
   return (
-    <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 pb-24 md:pb-8">
-      <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 mb-6">
-        <div className="flex items-center gap-4">
-          <div className="w-14 h-14 rounded-2xl bg-slate-900 text-white flex items-center justify-center shadow-md">
-            <Database size={28} />
-          </div>
-          <div>
-            <h1 className="text-3xl sm:text-4xl font-black uppercase tracking-tight text-slate-900">Cadastros</h1>
-            <p className="text-sm font-bold text-slate-500">Base central de produtos, lojas e fornecedores usada pelo sistema.</p>
-          </div>
-        </div>
-      </div>
-
+    <main className="max-w-7xl mx-auto px-4 sm:px-6 py-4 sm:py-5 pb-24 md:pb-8">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
         <StatCard label="Produtos mestre" value={totalProducts.toLocaleString('pt-BR')} />
         <StatCard label="Lojas cadastradas" value={branches.length.toLocaleString('pt-BR')} />
@@ -309,7 +297,7 @@ export function RegistrationsManager() {
                 <th className="border border-slate-300 px-3 py-3 text-left">Prazos</th>
                 <th className="border border-slate-300 px-3 py-3 text-left">Categoria</th>
                 <th className="border border-slate-300 px-3 py-3 text-left">Contato</th>
-                <th className="border border-slate-300 px-3 py-3 text-center">Acoes</th>
+                <th className="border border-slate-300 px-3 py-3 text-center">Ações</th>
               </tr>
             </thead>
             <tbody>
@@ -355,7 +343,7 @@ export function RegistrationsManager() {
           <TextInput label="Telefone" value={editingSupplier.phone} onChange={(value) => setEditingSupplier((current) => current ? { ...current, phone: value } : current)} />
           <TextInput label="Email" value={editingSupplier.email} onChange={(value) => setEditingSupplier((current) => current ? { ...current, email: value } : current)} />
           <TextInput label="CNPJ" value={editingSupplier.tax_id} onChange={(value) => setEditingSupplier((current) => current ? { ...current, tax_id: value } : current)} />
-          <TextInput label="Observacoes" value={editingSupplier.condition_notes} onChange={(value) => setEditingSupplier((current) => current ? { ...current, condition_notes: value } : current)} />
+          <TextInput label="Observações" value={editingSupplier.condition_notes} onChange={(value) => setEditingSupplier((current) => current ? { ...current, condition_notes: value } : current)} />
           <ToggleInput label="Fornecedor ativo" checked={editingSupplier.is_active} onChange={(checked) => setEditingSupplier((current) => current ? { ...current, is_active: checked } : current)} />
         </EditorModal>
       )}
@@ -401,16 +389,19 @@ function RegistryCard({ title, subtitle, badge, active, onEdit, onDelete }: { ti
 
 function EditorModal({ title, children, onClose, onSave }: { title: string; children: ReactNode; onClose: () => void; onSave: () => void }) {
   return (
-    <div className="fixed inset-0 z-[90] bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-white w-full max-w-2xl rounded-[28px] p-6 shadow-2xl max-h-[92vh] overflow-y-auto">
-        <div className="flex items-center justify-between mb-5">
-          <h2 className="text-2xl font-black uppercase">{title}</h2>
-          <button onClick={onClose}><X size={22} /></button>
+    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-900/16 p-3 backdrop-blur-sm">
+      <div className="w-full max-w-4xl overflow-visible rounded-[30px] border border-slate-200 bg-white shadow-[0_24px_70px_rgba(15,23,42,0.22)]">
+        <div className="flex items-center justify-between border-b-2 border-slate-100 px-5 py-4">
+          <div>
+            <h2 className="text-xl font-black uppercase italic tracking-tighter">{title}</h2>
+            <p className="text-[10px] font-black uppercase tracking-widest text-blue-600">Cadastro operacional</p>
+          </div>
+          <button onClick={onClose} className="flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-100 text-slate-700 transition hover:bg-slate-200"><X size={21} /></button>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">{children}</div>
-        <div className="mt-6 flex justify-end gap-3">
-          <button onClick={onClose} className="px-5 py-3 rounded-2xl bg-slate-100 font-black uppercase text-xs">Cancelar</button>
-          <button onClick={onSave} className="px-6 py-3 rounded-2xl bg-slate-900 text-white font-black uppercase text-xs flex items-center gap-2">
+        <div className="grid grid-cols-1 gap-3 px-5 py-4 md:grid-cols-2">{children}</div>
+        <div className="flex justify-end gap-3 border-t-2 border-slate-100 px-5 py-4">
+          <button onClick={onClose} className="h-12 min-w-[160px] rounded-2xl bg-slate-100 text-xs font-black uppercase text-slate-500 transition hover:bg-slate-200">Cancelar</button>
+          <button onClick={onSave} className="flex h-12 min-w-[220px] items-center justify-center gap-2 rounded-2xl bg-blue-600 text-xs font-black uppercase text-white transition hover:bg-blue-700">
             <Save size={16} /> Salvar
           </button>
         </div>

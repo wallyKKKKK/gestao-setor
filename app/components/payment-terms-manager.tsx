@@ -1,7 +1,7 @@
 'use client';
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
-import { Download, FileText, Plus, Printer, Save, Search, Trash2, X } from 'lucide-react';
+import { Download, Plus, Printer, Save, Search, Trash2, X } from 'lucide-react';
 import {
   deleteSupplierPaymentTerm,
   fetchSupplierPaymentTerms,
@@ -32,13 +32,13 @@ const COLUMN_OPTIONS = [
   { value: 'category', label: 'Categoria' },
   { value: 'region', label: 'Regiao' },
   { value: 'min_order_value', label: 'Pedido min.' },
-  { value: 'condition_notes', label: 'Condicoes' },
+  { value: 'condition_notes', label: 'Condições' },
   { value: 'contact_name', label: 'Contato' },
   { value: 'phone', label: 'Telefone' },
   { value: 'email', label: 'Email' },
   { value: 'tax_id', label: 'CNPJ' },
   { value: 'status', label: 'Status' },
-  { value: 'actions', label: 'Acoes' },
+  { value: 'actions', label: 'Ações' },
 ];
 
 const DEFAULT_VISIBLE_COLUMNS = [
@@ -94,7 +94,7 @@ export function PaymentTermsManager() {
       setErrorMessage('');
     } catch {
       setTerms([]);
-      setErrorMessage('Tabela de prazos nao encontrada. Rode o SQL de prazos no Supabase para ativar esta area.');
+      setErrorMessage('Tabela de prazos não encontrada. Rode o SQL de prazos no Supabase para ativar esta área.');
     } finally {
       setLoading(false);
     }
@@ -419,18 +419,7 @@ export function PaymentTermsManager() {
         }
       `}</style>
 
-      <div className="payment-print-hidden flex flex-col xl:flex-row xl:items-center justify-between gap-4 mb-6">
-        <div className="flex items-center gap-4">
-          <div className="w-14 h-14 rounded-2xl bg-emerald-600 text-white flex items-center justify-center shadow-md">
-            <FileText size={28} />
-          </div>
-          <div>
-            <h1 className="text-3xl sm:text-4xl font-black uppercase tracking-tight text-slate-900">Prazos</h1>
-            <p className="text-sm font-bold text-slate-500">Tabela de boleto dos fornecedores e regras comerciais.</p>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap gap-2">
+      <div className="payment-print-hidden mb-4 flex flex-wrap justify-end gap-2">
           <button onClick={printTable} className="h-11 px-4 rounded-2xl bg-white border-2 border-slate-100 font-black uppercase text-[10px] flex items-center gap-2">
             <Printer size={16} /> Imprimir PDF
           </button>
@@ -440,7 +429,6 @@ export function PaymentTermsManager() {
           <button onClick={() => setEditingTerm({ ...blankTerm, sort_order: terms.length + 1 })} className="h-11 px-4 rounded-2xl bg-emerald-600 text-white font-black uppercase text-[10px] flex items-center gap-2">
             <Plus size={16} /> Novo Fornecedor
           </button>
-        </div>
       </div>
 
       <div className="payment-print-hidden grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
@@ -535,17 +523,17 @@ export function PaymentTermsManager() {
       </section>
 
       {editingTerm && (
-        <div className="fixed inset-0 z-[85] bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-3xl rounded-[28px] max-h-[92vh] overflow-y-auto p-6 shadow-2xl">
-            <div className="flex items-start justify-between mb-5">
+        <div className="fixed inset-0 z-[85] flex items-center justify-center bg-slate-900/16 p-3 backdrop-blur-sm">
+          <div className="w-full max-w-4xl overflow-visible rounded-[30px] border border-slate-200 bg-white shadow-[0_24px_70px_rgba(15,23,42,0.22)]">
+            <div className="flex items-start justify-between border-b-2 border-slate-100 px-5 py-4">
               <div>
-                <h2 className="text-2xl font-black uppercase">Fornecedor</h2>
-                <p className="text-xs font-bold text-slate-500 mt-1">Cadastre prazos, regras, contatos e dados fiscais.</p>
+                <h2 className="text-xl font-black uppercase italic tracking-tighter">Fornecedor</h2>
+                <p className="text-[10px] font-black uppercase tracking-widest text-blue-600">Prazos, regras, contatos e dados fiscais</p>
               </div>
-              <button onClick={() => setEditingTerm(null)}><X size={22} /></button>
+              <button onClick={() => setEditingTerm(null)} className="flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-100 text-slate-700 transition hover:bg-slate-200"><X size={21} /></button>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-3 px-5 py-4 md:grid-cols-2 lg:grid-cols-4">
               <TermInput label="Fornecedor" value={editingTerm.supplier_name} onChange={(value) => setEditingTerm((current) => current ? { ...current, supplier_name: value } : current)} />
               <TermInput label="Prazos do boleto" value={editingTerm.payment_terms} onChange={(value) => setEditingTerm((current) => current ? { ...current, payment_terms: value } : current)} />
               <TermInput label="Categoria" value={editingTerm.category} onChange={(value) => setEditingTerm((current) => current ? { ...current, category: value } : current)} />
@@ -556,15 +544,15 @@ export function PaymentTermsManager() {
               <TermInput label="Telefone" value={editingTerm.phone} onChange={(value) => setEditingTerm((current) => current ? { ...current, phone: value } : current)} />
               <TermInput label="Email" value={editingTerm.email} onChange={(value) => setEditingTerm((current) => current ? { ...current, email: value } : current)} />
               <TermInput label="Ordem" value={editingTerm.sort_order} numeric onChange={(value) => setEditingTerm((current) => current ? { ...current, sort_order: Number(value) || 0 } : current)} />
-              <label className="md:col-span-2 space-y-1">
-                <span className="text-[10px] font-black uppercase text-slate-400">Condicoes e observacoes</span>
+              <label className="space-y-1 md:col-span-2 lg:col-span-4">
+                <span className="text-[10px] font-black uppercase text-slate-400">Condições e observações</span>
                 <textarea
                   value={editingTerm.condition_notes}
                   onChange={(event) => setEditingTerm((current) => current ? { ...current, condition_notes: event.target.value } : current)}
-                  className="min-h-28 w-full rounded-2xl bg-slate-50 border-2 border-slate-100 p-4 font-bold outline-none focus:border-emerald-600"
+                  className="h-20 w-full resize-none rounded-2xl border-2 border-slate-100 bg-slate-50 px-4 py-3 text-sm font-bold outline-none transition focus:border-blue-600"
                 />
               </label>
-              <label className="md:col-span-2 flex items-center gap-3 rounded-2xl bg-slate-50 border-2 border-slate-100 p-4">
+              <label className="flex h-11 items-center gap-3 rounded-2xl border-2 border-slate-100 bg-slate-50 px-4 md:col-span-2 lg:col-span-4">
                 <input
                   type="checkbox"
                   checked={editingTerm.is_active}
@@ -575,9 +563,9 @@ export function PaymentTermsManager() {
               </label>
             </div>
 
-            <div className="mt-6 flex justify-end gap-3">
-              <button onClick={() => setEditingTerm(null)} className="px-5 py-3 rounded-2xl bg-slate-100 font-black uppercase text-xs">Cancelar</button>
-              <button onClick={saveTerm} disabled={saving} className="px-6 py-3 rounded-2xl bg-emerald-600 text-white font-black uppercase text-xs flex items-center gap-2 disabled:opacity-50">
+            <div className="flex justify-end gap-3 border-t-2 border-slate-100 px-5 py-4">
+              <button onClick={() => setEditingTerm(null)} className="h-12 min-w-[160px] rounded-2xl bg-slate-100 text-xs font-black uppercase text-slate-500 transition hover:bg-slate-200">Cancelar</button>
+              <button onClick={saveTerm} disabled={saving} className="flex h-12 min-w-[220px] items-center justify-center gap-2 rounded-2xl bg-blue-600 text-xs font-black uppercase text-white transition hover:bg-blue-700 disabled:opacity-50">
                 <Save size={16} /> {saving ? 'Salvando...' : 'Salvar'}
               </button>
             </div>
@@ -602,7 +590,7 @@ function TermInput({ label, value, onChange, numeric = false }: {
         type={numeric ? 'number' : 'text'}
         step="0.01"
         onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded-2xl bg-slate-50 border-2 border-slate-100 p-4 font-bold outline-none focus:border-emerald-600"
+        className="h-12 w-full rounded-2xl border-2 border-slate-100 bg-slate-50 px-4 text-sm font-bold outline-none transition focus:border-blue-600"
       />
     </label>
   );

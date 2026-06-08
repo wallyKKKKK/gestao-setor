@@ -1,13 +1,14 @@
-"use client";
+﻿"use client";
 
 import { memo, useRef, useState } from "react";
 import type { PointerEvent, WheelEvent } from "react";
 import { Check, ChevronDown, Edit3, MessageSquare, RotateCcw, Trash2 } from "lucide-react";
 import { addAuditLog, addTaskHistory, updateTaskCompletion } from "@/lib/api";
+import { getPermissionDeniedMessage } from "@/lib/permissions";
 import { formatToBR, getTodayStr } from "@/lib/task-recurrence";
 import type { Profile, Subtask, TaskItemProps } from "@/lib/types";
 
-export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit, userRole, currentUser, onView, onToggle, onDelete, onScheduleOverride }: TaskItemProps) => {
+export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit, userRole, currentUser, onView, onToggle, onDelete, canDelete, onScheduleOverride }: TaskItemProps) => {
   const [expanded, setExpanded] = useState(false);
   const [feedbackOffset, setFeedbackOffset] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
@@ -41,6 +42,24 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
           : `PROXIMA: ${task.nextOcc}`;
   const swipeDistance = 90;
   const dragAction = feedbackOffset <= -swipeDistance ? "advance" : feedbackOffset >= swipeDistance ? "postpone" : null;
+  const manageTaskDeniedMessage = getPermissionDeniedMessage("alterar esta tarefa", "managerOrAdmin")
+    + " O responsavel pela tarefa tambem pode concluir ou editar checklist.";
+  const deleteTaskDeniedMessage = getPermissionDeniedMessage("excluir tarefas", "managerOrAdmin");
+
+  const recordBlockedTaskAttempt = async (action: string) => {
+    if (!currentUser) return;
+    const profile = profiles.find((item: Profile) => item.id === currentUser.id);
+    await addAuditLog({
+      actorId: currentUser.id,
+      actorName: profile?.full_name || currentUser.email || "Usuario",
+      action: "permission_blocked",
+      entityType: "task",
+      entityId: task.id,
+      entityTitle: task.title,
+      sector: task.sector,
+      details: `${action}. ${manageTaskDeniedMessage}`,
+    }).catch((error) => console.error("Erro ao registrar bloqueio de permissao:", error));
+  };
 
   const setVisualOffset = (offset: number) => {
     offsetRef.current = offset;
@@ -137,14 +156,17 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
   };
 
   const toggleSubtask = async (index: number) => {
-    if (!canManage) return alert("Acesso negado.");
+    if (!canManage) {
+      await recordBlockedTaskAttempt("Alterar checklist");
+      return alert(manageTaskDeniedMessage);
+    }
     const newSubtasks = [...subtasks];
     newSubtasks[index].done = !newSubtasks[index].done;
     const allDone = newSubtasks.length > 0 && newSubtasks.every((s: Subtask) => s.done);
     const todayStr = getTodayStr();
 
     if (allDone && !task.isDoneToday) {
-      if (!currentUser) return alert("Acesso negado.");
+      if (!currentUser) return alert("Acao bloqueada: usuario nao identificado. Entre novamente no sistema.");
       const profile = profiles.find((p: Profile) => p.id === currentUser?.id);
       await addTaskHistory({
         taskId: task.id,
@@ -231,8 +253,18 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
       <div className="flex flex-wrap sm:flex-nowrap items-center gap-3 sm:gap-6 p-3 sm:p-4 md:px-8">
         <div className="flex-shrink-0">
           <button
-            onClick={() => canManage ? onToggle(task) : alert("Acesso negado.")}
-            className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full border-4 flex items-center justify-center transition-all
+            type="button"
+            aria-disabled={!canManage}
+            title={canManage ? (task.isDoneToday ? "Reabrir tarefa" : "Concluir tarefa") : manageTaskDeniedMessage}
+            onClick={() => {
+              if (canManage) {
+                onToggle(task);
+                return;
+              }
+              void recordBlockedTaskAttempt("Concluir tarefa");
+              alert(manageTaskDeniedMessage);
+            }}
+            className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full border-4 flex items-center justify-center transition-all ${canManage ? "" : "cursor-not-allowed opacity-50"}
               ${task.isDoneToday ? "bg-green-600 border-green-700 text-white" : "bg-white border-slate-200 text-transparent hover:border-blue-500"}`}
           >
             <Check size={22} className="sm:w-[26px] sm:h-[26px]" strokeWidth={4} />
@@ -297,7 +329,7 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
             <button
               type="button"
               className={`flex items-center gap-3 px-4 py-2 rounded-2xl border-2 transition-all cursor-pointer
-                ${expanded ? "bg-[#232D4A] border-slate-900 text-white shadow-md" : "bg-slate-50 border-slate-100 text-slate-500 hover:border-blue-400 hover:text-blue-600"}`}
+                ${expanded ? "bg-blue-600 border-blue-700 text-white shadow-[0_8px_18px_rgba(37,99,235,0.22)]" : "bg-blue-50 border-blue-100 text-blue-700 hover:border-blue-300 hover:bg-white"}`}
               onPointerDown={(event) => event.stopPropagation()}
               onClick={(event) => {
                 event.stopPropagation();
@@ -307,8 +339,8 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
               aria-label={`${expanded ? "Ocultar" : "Mostrar"} subtarefas`}
             >
               <div className="flex items-center gap-2">
-                <div className={`w-12 sm:w-16 h-1.5 rounded-full overflow-hidden ${expanded ? "bg-white/20" : "bg-slate-200"}`}>
-                  <div className={`${expanded ? "bg-blue-400" : "bg-blue-600"} h-full transition-all duration-500`} style={{ width: `${(subDone / subTotal) * 100}%` }} />
+                <div className={`w-12 sm:w-16 h-1.5 rounded-full overflow-hidden ${expanded ? "bg-white/25" : "bg-blue-100"}`}>
+                  <div className={`${expanded ? "bg-white" : "bg-blue-500"} h-full transition-all duration-500`} style={{ width: `${(subDone / subTotal) * 100}%` }} />
                 </div>
                 <span className="text-[10px] font-black whitespace-nowrap">{subDone}/{subTotal}</span>
               </div>
@@ -318,26 +350,60 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
         </div>
 
         <div className="flex items-center gap-1 border-l-2 pl-3 sm:pl-4 border-slate-100 opacity-100 sm:opacity-0 group-hover:opacity-100 transition-opacity">
-          {canManage && (
-            <>
-              {hasScheduleOverride && (
-                <button
-                  onClick={(e) => { e.stopPropagation(); onScheduleOverride(task, "clear"); }}
-                  className="p-2 text-slate-300 hover:text-slate-900 transition-all"
-                  title="Restaurar agenda original"
-                  aria-label="Restaurar agenda original"
-                >
-                  <RotateCcw size={18}/>
-                </button>
-              )}
-              <button onClick={(e) => { e.stopPropagation(); onEdit(task); }} className="p-2 text-slate-300 hover:text-blue-600 transition-all">
-                <Edit3 size={20}/>
-              </button>
-              <button onClick={(e) => { e.stopPropagation(); onDelete(task.id); }} className="p-2 text-slate-200 hover:text-red-600 transition-all">
-                <Trash2 size={20}/>
-              </button>
-            </>
+          {hasScheduleOverride && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!canManage) {
+                  void recordBlockedTaskAttempt("Restaurar agenda original");
+                  alert(manageTaskDeniedMessage);
+                  return;
+                }
+                onScheduleOverride(task, "clear");
+              }}
+              className={`p-2 transition-all ${canManage ? "text-slate-300 hover:text-slate-900" : "cursor-not-allowed text-slate-200 opacity-50"}`}
+              title={canManage ? "Restaurar agenda original" : manageTaskDeniedMessage}
+              aria-label="Restaurar agenda original"
+              aria-disabled={!canManage}
+            >
+              <RotateCcw size={18}/>
+            </button>
           )}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!canManage) {
+                void recordBlockedTaskAttempt("Editar tarefa");
+                alert(manageTaskDeniedMessage);
+                return;
+              }
+              onEdit(task);
+            }}
+            className={`p-2 transition-all ${canManage ? "text-slate-300 hover:text-blue-600" : "cursor-not-allowed text-slate-200 opacity-50"}`}
+            title={canManage ? "Editar tarefa" : manageTaskDeniedMessage}
+            aria-disabled={!canManage}
+          >
+            <Edit3 size={20}/>
+          </button>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!canDelete) {
+                void recordBlockedTaskAttempt("Excluir tarefa");
+                alert(deleteTaskDeniedMessage);
+                return;
+              }
+              onDelete(task.id);
+            }}
+            className={`p-2 transition-all ${canDelete ? "text-slate-200 hover:text-red-600" : "cursor-not-allowed text-slate-200 opacity-50"}`}
+            title={canDelete ? "Excluir tarefa" : deleteTaskDeniedMessage}
+            aria-disabled={!canDelete}
+          >
+            <Trash2 size={20}/>
+          </button>
         </div>
       </div>
 
@@ -374,3 +440,5 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
 });
 
 TaskItem.displayName = "TaskItem";
+
+

@@ -1,5 +1,5 @@
 import { supabase } from "@/lib/supabase";
-import type { AccountStatus, Announcement, AuditLog, PricingBranch, PricingProduct, Profile, ReallocationProduct, ReallocationStockItem, ReallocationStockSnapshot, Subtask, SupplierPaymentTerm, Task, TaskHistory, TradeTaskNote, UserRole } from "@/lib/types";
+import type { AccountStatus, Announcement, AppDbNotification, AuditLog, PricingBranch, PricingProduct, Profile, ReallocationProduct, ReallocationStockItem, ReallocationStockSnapshot, Subtask, SupplierPaymentTerm, Task, TaskHistory, TradeTaskNote, UserRole } from "@/lib/types";
 
 interface CreateAnnouncementInput {
   title: string;
@@ -70,6 +70,17 @@ interface AuditLogInput {
   entityTitle?: string | null;
   sector: string;
   details?: string | null;
+}
+
+interface CreateAppNotificationInput {
+  title: string;
+  body: string;
+  type: string;
+  actorId: string;
+  recipientId?: string | null;
+  sector?: string | null;
+  entityType?: string | null;
+  entityId?: string | null;
 }
 
 export type PricingProductInput = Omit<PricingProduct, "id" | "created_at" | "updated_at"> & {
@@ -165,7 +176,7 @@ export async function createTradeTaskNote(taskId: string, content: string, creat
 
   if (error) {
     if (error.code === "42P01" || error.code === "PGRST205") {
-      throw new Error("Tabela de notas de Trade ainda nao existe no Supabase. Rode o SQL supabase/trade-task-notes.sql.");
+      throw new Error("Tabela de notas de Trade ainda não existe no Supabase. Rode o SQL supabase/trade-task-notes.sql.");
     }
 
     throw new Error(error.message || "Erro ao salvar nota de Trade.");
@@ -198,6 +209,39 @@ export async function fetchAnnouncements() {
 
   if (error) throw error;
   return (data || []) as Announcement[];
+}
+
+export async function fetchAppNotifications(limit = 80) {
+  const { data, error } = await supabase
+    .from("app_notifications")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    if (error.code === "42P01" || error.code === "PGRST205") return [];
+    throw error;
+  }
+
+  return (data || []) as AppDbNotification[];
+}
+
+export async function createAppNotification(input: CreateAppNotificationInput) {
+  const { error } = await supabase.from("app_notifications").insert([{
+    title: input.title,
+    body: input.body,
+    type: input.type,
+    actor_id: input.actorId,
+    recipient_id: input.recipientId || null,
+    sector: input.sector || null,
+    entity_type: input.entityType || null,
+    entity_id: input.entityId || null,
+  }]);
+
+  if (error) {
+    if (error.code === "42P01" || error.code === "PGRST205") return;
+    throw error;
+  }
 }
 
 export async function fetchPricingProducts() {
@@ -565,7 +609,7 @@ export async function createTask(input: CreateTaskInput) {
 
   if (error) {
     if (error.code === "PGRST204") {
-      throw new Error("Campos de tarefa pontual ainda nao existem no Supabase. Rode o SQL supabase/task-one-off-archive.sql.");
+      throw new Error("Campos de tarefa pontual ainda não existem no Supabase. Rode o SQL supabase/task-one-off-archive.sql.");
     }
 
     throw new Error(error.message || "Erro ao criar tarefa.");
@@ -635,7 +679,7 @@ export async function updateTaskCompletion(taskId: string, lastDoneDate: string 
 
   if (error?.code === "PGRST204") {
     if (archiveCompleted) {
-      throw new Error("Campos de tarefa pontual ainda nao existem no Supabase. Rode o SQL supabase/task-one-off-archive.sql.");
+      throw new Error("Campos de tarefa pontual ainda não existem no Supabase. Rode o SQL supabase/task-one-off-archive.sql.");
     }
 
     const fallback = await supabase.from("tasks").update({
@@ -661,7 +705,7 @@ export async function updateTaskScheduleOverride(
 
   if (error) {
     if (error.code === "PGRST204") {
-      throw new Error("Campos de adiantar/adiar ainda nao existem no Supabase. Rode o SQL supabase/task-schedule-overrides.sql.");
+      throw new Error("Campos de adiantar/adiar ainda não existem no Supabase. Rode o SQL supabase/task-schedule-overrides.sql.");
     }
 
     throw new Error(error.message || "Erro ao salvar ajuste de agenda.");

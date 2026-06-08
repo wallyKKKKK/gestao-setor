@@ -116,7 +116,7 @@ export function MultiCheckboxFilter({
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 right-0 top-full z-50 mt-2 rounded-[24px] border-2 border-slate-900 bg-white p-3 shadow-[8px_8px_0px_0px_rgba(15,23,42,1)]">
+          <div className="absolute left-0 right-0 top-full z-50 mt-2 rounded-2xl border border-slate-200 bg-white p-3 shadow-2xl">
             <div className="mb-2 flex items-center justify-between gap-2">
               <button
                 type="button"

@@ -8,6 +8,33 @@ const WEEK_DAYS: Record<string, number> = {
   sex: 5,
 };
 
+export const MONTHLY_WEEKDAY_ORDINALS = [
+  { value: "1", label: "1a" },
+  { value: "2", label: "2a" },
+  { value: "3", label: "3a" },
+  { value: "4", label: "4a" },
+  { value: "last", label: "Ultima" },
+] as const;
+
+export type MonthlyWeekdayOrdinal = (typeof MONTHLY_WEEKDAY_ORDINALS)[number]["value"];
+
+export function buildMonthlyWeekdayRepeat(ordinal: MonthlyWeekdayOrdinal, weekday: string) {
+  return `mw:${ordinal}:${weekday}`;
+}
+
+export function parseMonthlyWeekdayRepeat(repeatDays: string | null | undefined) {
+  const [prefix, ordinal, weekday] = (repeatDays || "").split(":");
+
+  if (prefix !== "mw") return null;
+  if (!MONTHLY_WEEKDAY_ORDINALS.some((item) => item.value === ordinal)) return null;
+  if (!(weekday in WEEK_DAYS)) return null;
+
+  return {
+    ordinal: ordinal as MonthlyWeekdayOrdinal,
+    weekday,
+  };
+}
+
 export const getTodayStr = () => {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
@@ -26,6 +53,27 @@ export const formatToBR = (dateStr: string) => {
   return `${d}/${m}/${y}`;
 };
 
+function toDateStr(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function getMonthlyWeekdayOccurrence(year: number, monthIndex: number, ordinal: MonthlyWeekdayOrdinal, weekday: string) {
+  const targetDay = WEEK_DAYS[weekday];
+
+  if (ordinal === "last") {
+    const occurrence = new Date(year, monthIndex + 1, 0);
+    const currentDay = occurrence.getDay() === 0 ? 7 : occurrence.getDay();
+    occurrence.setDate(occurrence.getDate() - ((currentDay - targetDay + 7) % 7));
+    return occurrence;
+  }
+
+  const occurrence = new Date(year, monthIndex, 1);
+  const currentDay = occurrence.getDay() === 0 ? 7 : occurrence.getDay();
+  occurrence.setDate(occurrence.getDate() + ((targetDay - currentDay + 7) % 7) + (Number(ordinal) - 1) * 7);
+
+  return occurrence.getMonth() === monthIndex ? occurrence : null;
+}
+
 export const getLastOccurrence = (task: Task) => {
   const todayStr = getTodayStr();
   const createdAtStr = task.created_at.split("T")[0];
@@ -34,6 +82,26 @@ export const getLastOccurrence = (task: Task) => {
 
   let theoreticalLastStr = "1970-01-01";
 
+  const monthlyWeekdayRepeat = parseMonthlyWeekdayRepeat(task.repeat_days);
+  if (monthlyWeekdayRepeat) {
+    const today = new Date();
+    const thisMonthOcc = getMonthlyWeekdayOccurrence(
+      today.getFullYear(),
+      today.getMonth(),
+      monthlyWeekdayRepeat.ordinal,
+      monthlyWeekdayRepeat.weekday,
+    );
+    const previousMonthOcc = getMonthlyWeekdayOccurrence(
+      today.getFullYear(),
+      today.getMonth() - (task.repeat_interval || 1),
+      monthlyWeekdayRepeat.ordinal,
+      monthlyWeekdayRepeat.weekday,
+    );
+
+    const thisMonthOccStr = thisMonthOcc ? toDateStr(thisMonthOcc) : "9999-12-31";
+    const targetDate = thisMonthOccStr <= todayStr ? thisMonthOcc : previousMonthOcc;
+    theoreticalLastStr = targetDate ? toDateStr(targetDate) : "1970-01-01";
+  } else {
   const dayOfMonth = parseInt(task.repeat_days);
   if (!isNaN(dayOfMonth) && !task.repeat_days.includes(",")) {
     const today = new Date();
@@ -64,6 +132,7 @@ export const getLastOccurrence = (task: Task) => {
       if (nextW.toISOString().split("T")[0] > todayStr) break;
     }
   }
+  }
 
   if (theoreticalLastStr < createdAtStr) {
     const nextOccBR = getNextOccurrence(task);
@@ -78,6 +147,22 @@ export const getNextOccurrence = (task: Task) => {
   const today = new Date();
   const todayStr = getTodayStr();
   if (!task.repeat_days || task.repeat_days === "") return task.due_date || "--/--/----";
+
+  const monthlyWeekdayRepeat = parseMonthlyWeekdayRepeat(task.repeat_days);
+  if (monthlyWeekdayRepeat) {
+    for (let monthOffset = 0; monthOffset <= 60; monthOffset += task.repeat_interval || 1) {
+      const occurrence = getMonthlyWeekdayOccurrence(
+        today.getFullYear(),
+        today.getMonth() + monthOffset,
+        monthlyWeekdayRepeat.ordinal,
+        monthlyWeekdayRepeat.weekday,
+      );
+      const occStr = occurrence ? toDateStr(occurrence) : "";
+      if (occStr >= todayStr) return formatToBR(occStr);
+    }
+
+    return "--/--/----";
+  }
 
   const dayOfMonth = parseInt(task.repeat_days);
   if (!isNaN(dayOfMonth) && !task.repeat_days.includes(",")) {

@@ -14,6 +14,10 @@ def store_code(value):
     return str(value or "").zfill(2)
 
 
+def stock_curve(value):
+    return str(value or "").strip().upper()[:1]
+
+
 def route_priority(origin_item, destination_item, branch_logistics):
     origin_code = store_code(origin_item.get("store_code"))
     destination_code = store_code(destination_item.get("store_code"))
@@ -98,6 +102,8 @@ def calculate(payload):
     need_days_threshold = number(rules.get("needDaysThreshold"))
     destination_target_days = number(rules.get("destinationTargetDays"))
     max_route_priority = number(rules.get("maxRoutePriority"))
+    selected_origin_curves = {stock_curve(curve) for curve in rules.get("originCurves") or [] if stock_curve(curve)}
+    selected_destination_curves = {stock_curve(curve) for curve in rules.get("destinationCurves") or [] if stock_curve(curve)}
     grouped = {}
     missing_erp_code = 0
 
@@ -123,6 +129,8 @@ def calculate(payload):
             code = store_code(item.get("store_code"))
             if selected_origins and code not in selected_origins:
                 continue
+            if selected_origin_curves and stock_curve(item.get("curve")) not in selected_origin_curves:
+                continue
             stock = number(item.get("stock"))
             if stock <= 0:
                 continue
@@ -139,6 +147,8 @@ def calculate(payload):
         for item in items:
             code = store_code(item.get("store_code"))
             if selected_destinations and code not in selected_destinations:
+                continue
+            if selected_destination_curves and stock_curve(item.get("curve")) not in selected_destination_curves:
                 continue
             daily_sales = number(item.get("monthly_avg_sales")) / 30
             stock_days = number(item.get("stock_days"))

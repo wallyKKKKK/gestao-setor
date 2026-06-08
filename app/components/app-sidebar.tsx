@@ -1,6 +1,6 @@
 'use client';
 
-import { CalendarDays, ClipboardList, Clock3, Database, ListTodo, Moon, Shuffle, Sun, Tags, Truck } from 'lucide-react';
+import { CalendarDays, ClipboardList, Clock3, Database, ListTodo, Shuffle, Tags, Truck } from 'lucide-react';
 import type { UserRole } from '@/lib/types';
 
 export type AppSection = 'TAREFAS' | 'REUNIAO' | 'CADASTROS' | 'PRECIFICACAO' | 'PRAZOS' | 'TRANSPORTE' | 'BALACUBACO' | 'AUDITORIA';
@@ -10,9 +10,7 @@ interface AppSidebarProps {
   userRole: UserRole;
   userSector: string;
   isSupremeAdmin: boolean;
-  theme: 'light' | 'dark';
   onSectionChange: (section: AppSection) => void;
-  onThemeToggle: () => void;
 }
 
 const items = [
@@ -22,7 +20,7 @@ const items = [
   { id: 'PRECIFICACAO' as const, label: 'Price', icon: Tags, priceOnly: true },
   { id: 'PRAZOS' as const, label: 'Prazos', icon: Clock3, purchaseOnly: true },
   { id: 'TRANSPORTE' as const, label: 'Transporte', icon: Truck, transportOnly: true },
-  { id: 'BALACUBACO' as const, label: 'Balacubaco', icon: Shuffle, transferOnly: true },
+  { id: 'BALACUBACO' as const, label: 'Remanej.', icon: Shuffle, transferOnly: true },
   { id: 'AUDITORIA' as const, label: 'Auditoria', icon: ClipboardList, adminOnly: true },
 ];
 
@@ -38,9 +36,7 @@ export function AppSidebar({
   userRole,
   userSector,
   isSupremeAdmin,
-  theme,
   onSectionChange,
-  onThemeToggle,
 }: AppSidebarProps) {
   const normalizedSector = normalizeSector(userSector);
   const canAccessPricing = userRole === 'admin' || ['precificacao', 'price'].includes(normalizedSector);
@@ -85,16 +81,6 @@ export function AppSidebar({
             );
           })}
         </div>
-
-        <button
-          type="button"
-          onClick={onThemeToggle}
-          className="hidden md:flex mt-auto w-12 h-12 rounded-2xl items-center justify-center border border-white/10 bg-white/5 text-slate-300 hover:bg-white/10 hover:text-white transition-all"
-          aria-label={theme === 'dark' ? 'Ativar modo claro' : 'Ativar modo escuro'}
-          title={theme === 'dark' ? 'Modo claro' : 'Modo escuro'}
-        >
-          {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
-        </button>
       </div>
     </aside>
   );

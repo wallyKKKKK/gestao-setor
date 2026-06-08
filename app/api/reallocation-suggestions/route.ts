@@ -44,6 +44,10 @@ function storeCode(value: unknown) {
   return String(value || "").padStart(2, "0");
 }
 
+function stockCurve(value: unknown) {
+  return String(value || "").trim().toUpperCase().slice(0, 1);
+}
+
 function routePriority(originItem: StockItem, destinationItem: StockItem, branchLogistics: BranchLogistics) {
   const originCode = storeCode(originItem.store_code);
   const destinationCode = storeCode(destinationItem.store_code);
@@ -125,6 +129,8 @@ function calculate(payload: {
     needDaysThreshold?: number;
     destinationTargetDays?: number;
     maxRoutePriority?: number;
+    originCurves?: string[];
+    destinationCurves?: string[];
   };
   branchLogistics?: BranchLogistics;
 }) {
@@ -139,6 +145,8 @@ function calculate(payload: {
   const needDaysThreshold = numberValue(rules.needDaysThreshold);
   const destinationTargetDays = numberValue(rules.destinationTargetDays);
   const maxRoutePriority = numberValue(rules.maxRoutePriority);
+  const selectedOriginCurves = new Set((rules.originCurves || []).map(stockCurve).filter(Boolean));
+  const selectedDestinationCurves = new Set((rules.destinationCurves || []).map(stockCurve).filter(Boolean));
   const grouped = new Map<string, StockItem[]>();
   let missingErpCode = 0;
 
@@ -162,6 +170,7 @@ function calculate(payload: {
     for (const item of items) {
       const code = storeCode(item.store_code);
       if (selectedOrigins.size > 0 && !selectedOrigins.has(code)) continue;
+      if (selectedOriginCurves.size > 0 && !selectedOriginCurves.has(stockCurve(item.curve))) continue;
 
       const stock = numberValue(item.stock);
       if (stock <= 0) continue;
@@ -179,6 +188,7 @@ function calculate(payload: {
     for (const item of items) {
       const code = storeCode(item.store_code);
       if (selectedDestinations.size > 0 && !selectedDestinations.has(code)) continue;
+      if (selectedDestinationCurves.size > 0 && !selectedDestinationCurves.has(stockCurve(item.curve))) continue;
 
       const dailySales = numberValue(item.monthly_avg_sales) / 30;
       const stockDays = numberValue(item.stock_days);
@@ -326,9 +336,10 @@ async function fetchProductEansByAttributes(filters: {
 }
 
 async function calculateWithPython(payload: unknown) {
-  const { spawn } = await import("node:child_process");
+  const runtimeImport = new Function("specifier", "return import(specifier)") as (specifier: string) => Promise<typeof import("node:child_process")>;
+  const { spawn } = await runtimeImport("node:child_process");
   const pythonBin = process.env.PYTHON_BIN || "python";
-  const scriptPath = process.env.REALLOCATION_ENGINE_PATH || "scripts/reallocation-engine.py";
+  const scriptPath = "scripts/reallocation-engine.py";
 
   return await new Promise<Record<string, unknown>>((resolve, reject) => {
     const child = spawn(pythonBin, [scriptPath], {

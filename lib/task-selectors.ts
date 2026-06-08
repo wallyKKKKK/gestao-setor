@@ -28,6 +28,10 @@ export interface SectorStat {
   porcentagem: number;
 }
 
+function isActionableTask(task: ProcessedTask, today: string) {
+  return task.lastOcc !== "1970-01-01" && task.lastOcc <= today;
+}
+
 export function processTasks(tasks: Task[]): ProcessedTask[] {
   const today = getTodayStr();
 
@@ -73,7 +77,9 @@ export function filterTasks({
       activeTab === "Trade" &&
       task.category === "Trade";
 
-    if (userRole !== "admin" && task.sector !== userSector && !canSeeCrossSectorTrade) {
+    const isAssignedToCurrentUser = Boolean(userId && task.assigned_to === userId);
+
+    if (userRole !== "admin" && task.sector !== userSector && !canSeeCrossSectorTrade && !isAssignedToCurrentUser) {
       return false;
     }
 
@@ -99,7 +105,9 @@ export function getTaskStats({ tasks, dashFilter, filterUsers, userRole, userSec
   const taskOnlyItems = tasks.filter((task) => task.category !== "Reunião");
   const visibleTasks = userRole === "admin" ? taskOnlyItems : taskOnlyItems.filter((task) => task.sector === userSector);
   const baseTasks = filterUsers.length === 0 ? visibleTasks : visibleTasks.filter((task) => filterUsers.includes(task.assigned_to));
-  const periodTasks = dashFilter === "HOJE" ? baseTasks.filter((task) => task.lastOcc === today) : baseTasks;
+  const periodTasks = dashFilter === "HOJE"
+    ? baseTasks.filter((task) => task.lastOcc === today)
+    : baseTasks.filter((task) => isActionableTask(task, today));
   const concluidas = periodTasks.filter((task) => task.isDoneToday).length;
   const total = periodTasks.length;
   const porcentagem = total > 0 ? Math.round((concluidas / total) * 100) : 0;
@@ -121,7 +129,9 @@ export function getSectorStats({
   const today = getTodayStr();
   const taskOnlyItems = tasks.filter((task) => task.category !== "Reunião");
   const visibleTasks = userRole === "admin" ? taskOnlyItems : taskOnlyItems.filter((task) => task.sector === userSector);
-  const periodTasks = dashFilter === "HOJE" ? visibleTasks.filter((task) => task.lastOcc === today) : visibleTasks;
+  const periodTasks = dashFilter === "HOJE"
+    ? visibleTasks.filter((task) => task.lastOcc === today)
+    : visibleTasks.filter((task) => isActionableTask(task, today));
   const sectors = Array.from(new Set(periodTasks.map((task) => task.sector || "Geral")));
 
   return sectors

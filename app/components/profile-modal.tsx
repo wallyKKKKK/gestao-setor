@@ -9,11 +9,11 @@ interface ProfileModalProps {
 
 export function ProfileModal({ newName, onNameChange, onSave, onClose }: ProfileModalProps) {
   return (
-    <div className="fixed inset-0 bg-slate-900/90 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
-      <div className="bg-white p-10 rounded-[40px] w-full max-w-sm border-4 border-slate-900 shadow-2xl text-center">
+    <div className="fixed inset-0 bg-slate-900/16 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
+      <div className="w-full max-w-sm rounded-[30px] border border-slate-200 bg-white p-8 text-center shadow-[0_24px_70px_rgba(15,23,42,0.22)]">
         <h2 className="text-2xl font-black uppercase mb-6 tracking-tighter">Meu Perfil</h2>
         <input
-          className="w-full p-4 border-4 border-slate-100 rounded-2xl font-black mb-6 text-slate-900 outline-none focus:border-blue-500 transition-all"
+          className="mb-6 w-full rounded-2xl border-2 border-slate-100 bg-slate-50 p-4 font-black text-slate-900 outline-none transition-all focus:border-blue-500 focus:bg-white"
           placeholder="Nome Completo"
           value={newName}
           onChange={e => onNameChange(e.target.value)}

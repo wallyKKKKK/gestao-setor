@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
-import { Building2, Download, Eye, FileSpreadsheet, PackagePlus, Save, Search, SlidersHorizontal, Trash2, X } from 'lucide-react';
+import { Building2, Download, Eye, FileSpreadsheet, PackagePlus, Save, Search, Trash2, X } from 'lucide-react';
 import {
   deletePricingBranch,
   deletePricingProduct,
@@ -45,7 +45,7 @@ const COLUMN_OPTIONS = [
   { value: 'month_end_price', label: 'Fecha mes' },
   { value: 'branches', label: 'Filiais' },
   { value: 'markup', label: 'Markup' },
-  { value: 'actions', label: 'Acoes' },
+  { value: 'actions', label: 'Ações' },
 ];
 
 const DEFAULT_VISIBLE_COLUMNS = COLUMN_OPTIONS
@@ -744,19 +744,8 @@ export function PricingManager() {
   );
 
   return (
-    <main className="w-full max-w-none px-3 sm:px-5 py-6 sm:py-8 pb-24 md:pb-8">
-      <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 mb-6">
-        <div className="flex items-center gap-4">
-          <div className="w-14 h-14 rounded-2xl bg-blue-600 text-white flex items-center justify-center shadow-md">
-            <SlidersHorizontal size={28} />
-          </div>
-          <div>
-            <h1 className="text-3xl sm:text-4xl font-black uppercase tracking-tight text-slate-900">Negociações</h1>
-            <p className="text-sm font-bold text-slate-500">Controle de custos, ofertas e preços de fraldas por loja.</p>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap gap-2">
+    <main className="w-full max-w-none px-3 sm:px-5 py-4 sm:py-5 pb-24 md:pb-8">
+      <div className="mb-4 flex flex-wrap justify-end gap-2">
           <input
             ref={fileInputRef}
             type="file"
@@ -804,7 +793,6 @@ export function PricingManager() {
           <button onClick={() => setEditingProduct({ ...blankProduct })} className="h-11 px-4 rounded-2xl bg-blue-600 text-white font-black uppercase text-[10px] flex items-center gap-2 shadow-sm">
             <PackagePlus size={16} /> Novo Produto
           </button>
-        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
@@ -932,7 +920,7 @@ export function PricingManager() {
               {renderHeader('Fecha mes', 'month_end_price')}
               {showBranchColumns && tableBranches.map((branch) => renderHeader(branch.name, `branch:${branch.code}`, 'branches'))}
               {renderHeader('Markup', 'markup')}
-              {renderHeader('Acoes', 'actions')}
+              {renderHeader('Ações', 'actions')}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -997,17 +985,17 @@ export function PricingManager() {
       )}
 
       {editingProduct && (
-        <div className="fixed inset-0 z-[80] bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-5xl rounded-[28px] max-h-[92vh] overflow-y-auto border-2 border-slate-200 shadow-2xl">
-            <div className="p-6 flex items-center justify-between border-b border-slate-100">
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/16 p-3 backdrop-blur-sm">
+          <div className="w-full max-w-5xl overflow-hidden rounded-[30px] border border-slate-200 bg-white shadow-[0_24px_70px_rgba(15,23,42,0.22)]">
+            <div className="flex items-center justify-between border-b-2 border-slate-100 px-5 py-4">
               <div>
-                <h2 className="text-2xl font-black uppercase">{editingProduct.id ? 'Editar Produto' : 'Cadastrar Produto'}</h2>
-                <p className="text-xs font-bold text-slate-500 mt-1">Informe EAN, descricao e fabricante antes de ajustar os custos.</p>
+                <h2 className="text-xl font-black uppercase italic tracking-tighter">{editingProduct.id ? 'Editar Produto' : 'Cadastrar Produto'}</h2>
+                <p className="text-[10px] font-black uppercase tracking-widest text-blue-600">EAN, descricao, custos e precos</p>
               </div>
-              <button onClick={() => setEditingProduct(null)}><X size={24} /></button>
+              <button onClick={() => setEditingProduct(null)} className="flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-100 text-slate-700 transition hover:bg-slate-200"><X size={21} /></button>
             </div>
-            <div className="p-6">
-              <div className="rounded-2xl border-2 border-slate-100 bg-slate-50 p-4 mb-5">
+            <div className="max-h-[calc(100vh-220px)] overflow-y-auto px-5 py-4">
+              <div className="rounded-2xl border-2 border-slate-100 bg-slate-50 p-4 mb-4">
                 <h3 className="text-xs font-black uppercase tracking-widest text-slate-500 mb-4">Dados do produto</h3>
                 <div className="grid grid-cols-1 md:grid-cols-[180px_1fr_220px] gap-4">
               <PriceInput label="EAN" value={editingProduct.ean} onChange={(value) => updateEditing('ean', value)} text />
@@ -1029,13 +1017,13 @@ export function PricingManager() {
               <PriceInput label="Fecha mes" value={editingProduct.month_end_price} onChange={(value) => updateEditing('month_end_price', numericValue(value))} />
             </div>
             </div>
-            <div className="px-6 pb-6 grid grid-cols-1 lg:grid-cols-2 gap-5">
+            <div className="px-5 pb-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
               <PriceGroup title="Preços Concorrentes" items={COMPETITORS} values={editingProduct.competitor_prices} onChange={(key, value) => updateNestedPrice('competitor_prices', key, value)} />
               <PriceGroup title="Preços por Filial" items={activeBranches.map((branch) => branch.code)} labels={Object.fromEntries(activeBranches.map((branch) => [branch.code, branch.name]))} values={editingProduct.store_prices} onChange={(key, value) => updateNestedPrice('store_prices', key, value)} />
             </div>
-            <div className="p-6 border-t border-slate-100 flex justify-end gap-3">
-              <button onClick={() => setEditingProduct(null)} className="px-5 py-3 rounded-2xl bg-slate-100 font-black uppercase text-xs">Cancelar</button>
-              <button onClick={saveProduct} disabled={saving} className="px-6 py-3 rounded-2xl bg-blue-600 text-white font-black uppercase text-xs flex items-center gap-2 disabled:opacity-50">
+            <div className="flex justify-end gap-3 border-t-2 border-slate-100 px-5 py-4">
+              <button onClick={() => setEditingProduct(null)} className="h-12 min-w-[160px] rounded-2xl bg-slate-100 text-xs font-black uppercase text-slate-500 transition hover:bg-slate-200">Cancelar</button>
+              <button onClick={saveProduct} disabled={saving} className="flex h-12 min-w-[220px] items-center justify-center gap-2 rounded-2xl bg-blue-600 text-xs font-black uppercase text-white transition hover:bg-blue-700 disabled:opacity-50">
                 <Save size={16} /> {saving ? 'Salvando...' : 'Salvar'}
               </button>
             </div>
@@ -1044,13 +1032,16 @@ export function PricingManager() {
       )}
 
       {editingBranch && (
-        <div className="fixed inset-0 z-[85] bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-lg rounded-[28px] p-6 shadow-2xl">
-            <div className="flex items-center justify-between mb-5">
-              <h2 className="text-2xl font-black uppercase">Filial</h2>
-              <button onClick={() => setEditingBranch(null)}><X size={22} /></button>
+        <div className="fixed inset-0 z-[85] flex items-center justify-center bg-slate-900/16 p-3 backdrop-blur-sm">
+          <div className="w-full max-w-4xl overflow-visible rounded-[30px] border border-slate-200 bg-white shadow-[0_24px_70px_rgba(15,23,42,0.22)]">
+            <div className="flex items-center justify-between border-b-2 border-slate-100 px-5 py-4">
+              <div>
+                <h2 className="text-xl font-black uppercase italic tracking-tighter">Filial</h2>
+                <p className="text-[10px] font-black uppercase tracking-widest text-blue-600">Cadastro de loja</p>
+              </div>
+              <button onClick={() => setEditingBranch(null)} className="flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-100 text-slate-700 transition hover:bg-slate-200"><X size={21} /></button>
             </div>
-            <div className="space-y-4">
+            <div className="grid grid-cols-1 gap-3 px-5 py-4 md:grid-cols-2">
               <PriceInput label="Nome da filial" value={editingBranch.name} onChange={(value) => setEditingBranch((current) => current ? { ...current, name: value } : current)} text />
               <PriceInput label="Código" value={editingBranch.code} onChange={(value) => setEditingBranch((current) => current ? { ...current, code: value } : current)} text />
               <PriceInput label="Cidade" value={editingBranch.city} onChange={(value) => setEditingBranch((current) => current ? { ...current, city: value } : current)} text />
@@ -1068,9 +1059,9 @@ export function PricingManager() {
                 <span className="text-[10px] font-black uppercase text-slate-500">Filial ativa</span>
               </label>
             </div>
-            <div className="mt-6 flex justify-end gap-3">
-              <button onClick={() => setEditingBranch(null)} className="px-5 py-3 rounded-2xl bg-slate-100 font-black uppercase text-xs">Cancelar</button>
-              <button onClick={saveBranch} className="px-6 py-3 rounded-2xl bg-blue-600 text-white font-black uppercase text-xs flex items-center gap-2">
+            <div className="flex justify-end gap-3 border-t-2 border-slate-100 px-5 py-4">
+              <button onClick={() => setEditingBranch(null)} className="h-12 min-w-[160px] rounded-2xl bg-slate-100 text-xs font-black uppercase text-slate-500 transition hover:bg-slate-200">Cancelar</button>
+              <button onClick={saveBranch} className="flex h-12 min-w-[220px] items-center justify-center gap-2 rounded-2xl bg-blue-600 text-xs font-black uppercase text-white transition hover:bg-blue-700">
                 <Save size={16} /> Salvar
               </button>
             </div>
@@ -1079,7 +1070,7 @@ export function PricingManager() {
       )}
 
       {showExportModal && (
-        <div className="fixed inset-0 z-[80] bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[80] bg-slate-900/16 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-xl rounded-[28px] p-6 shadow-2xl">
             <div className="flex items-center justify-between mb-5">
               <h2 className="text-2xl font-black uppercase">Exportar para Excel</h2>

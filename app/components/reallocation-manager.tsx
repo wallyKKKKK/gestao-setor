@@ -1,9 +1,10 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
-import { Database, Download, FileSpreadsheet, Filter, PackageSearch, Plus, RefreshCcw, Shuffle, SlidersHorizontal, Trash2, Upload, X } from 'lucide-react';
+import { Check, Clock, Database, Download, FileSpreadsheet, Filter, Plus, RefreshCcw, RotateCcw, Search, Shuffle, SlidersHorizontal, Trash2, Upload, X } from 'lucide-react';
 import { countReallocationProducts, fetchLatestReallocationStockSnapshot, fetchPricingBranches, fetchReallocationAttributeOptions, fetchReallocationProducts, fetchReallocationStockItems } from '@/lib/api';
 import { getAuthHeaders } from '@/lib/auth-headers';
+import { getPermissionDeniedMessage } from '@/lib/permissions';
 import type { PricingBranch, ReallocationProduct, ReallocationStockItem, ReallocationStockSnapshot } from '@/lib/types';
 
 function txtLine(origin: string, destination: string, erpCode: string, quantity: number) {
@@ -23,9 +24,28 @@ function wholeNumber(value: number | null | undefined) {
   return Math.round(Number.isFinite(parsed) ? parsed : 0).toLocaleString('pt-BR');
 }
 
+function csvValue(value: string | number) {
+  return `"${String(value).replace(/"/g, '""')}"`;
+}
+
+function loadReallocationAuditLog() {
+  if (typeof window === 'undefined') return [];
+
+  const stored = window.localStorage.getItem(REALLOCATION_AUDIT_STORAGE_KEY);
+  if (!stored) return [];
+
+  try {
+    const parsed = JSON.parse(stored) as ReallocationAuditLog[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    window.localStorage.removeItem(REALLOCATION_AUDIT_STORAGE_KEY);
+    return [];
+  }
+}
+
 function getNetworkErrorMessage(error: unknown, fallback: string) {
   if (error instanceof TypeError && error.message.toLowerCase().includes('fetch')) {
-    return 'Nao foi possivel conectar ao servidor agora. Tente atualizar novamente em alguns segundos.';
+    return 'Não foi possível conectar ao servidor agora. Tente atualizar novamente em alguns segundos.';
   }
   if (error instanceof Error) return error.message;
   return fallback;
@@ -40,6 +60,7 @@ interface QuickFilterItem {
 
 type SuggestionProfile = 'safe' | 'balanced' | 'strong';
 const DEFAULT_SUGGESTION_PROFILE: SuggestionProfile = 'balanced';
+const STOCK_CURVES = ['A', 'B', 'C', 'D', 'E'] as const;
 
 const SUGGESTION_PROFILES: Record<SuggestionProfile, {
   label: string;
@@ -67,7 +88,7 @@ const SUGGESTION_PROFILES: Record<SuggestionProfile, {
   },
   strong: {
     label: 'Agressivo',
-    description: 'Gera mais sugestoes e aceita rotas mais abertas.',
+    description: 'Gera mais sugestões e aceita rotas mais abertas.',
     originMinimumDays: 15,
     needDaysThreshold: 30,
     destinationTargetDays: 35,
@@ -118,8 +139,28 @@ interface SuggestionDiagnostic {
   suggestions: number;
 }
 
+interface ExportValidationIssue {
+  id: string;
+  title: string;
+  detail: string;
+  severity: 'block' | 'warn';
+}
+
+interface ReallocationAuditLog {
+  id: string;
+  at: string;
+  action: string;
+  detail: string;
+  count?: number;
+  units?: number;
+}
+
+const REALLOCATION_AUDIT_STORAGE_KEY = 'reallocation-audit-v1';
+const REALLOCATION_PREFERENCES_STORAGE_KEY = 'reallocation-preferences-v1';
+
 const SUGGESTION_COLUMNS = [
   { key: 'description', label: 'Produto', align: 'left', width: 280 },
+  { key: 'ean', label: 'EAN', align: 'left', width: 145 },
   { key: 'originName', label: 'Apelido Un. Neg. Orig.', align: 'left', width: 190 },
   { key: 'originStock', label: 'Estoque Orig.', align: 'right', width: 130 },
   { key: 'originConfirmedStock', label: 'Estoque Conf. Orig.', align: 'right', width: 150 },
@@ -139,7 +180,7 @@ const SUGGESTION_COLUMNS = [
   { key: 'originConfirmedTransfer', label: 'Transf. Conf. Orig.', align: 'right', width: 155 },
   { key: 'erpCode', label: 'Cod. ERP', align: 'left', width: 120 },
   { key: 'routePriority', label: 'Rota', align: 'center', width: 130 },
-  { key: 'actions', label: 'Acoes', align: 'center', width: 95 },
+  { key: 'actions', label: 'Ações', align: 'center', width: 95 },
 ] as const;
 
 type SuggestionColumnKey = typeof SUGGESTION_COLUMNS[number]['key'];
@@ -148,6 +189,134 @@ type SuggestionSort = {
   key: SuggestionColumnKey;
   direction: 'asc' | 'desc';
 } | null;
+
+interface ReallocationPreferences {
+  productFilters: QuickFilterItem[];
+  originFilters: QuickFilterItem[];
+  destinationFilters: QuickFilterItem[];
+  classificationFilters: QuickFilterItem[];
+  manufacturerFilters: QuickFilterItem[];
+  suggestionProfile: SuggestionProfile;
+  showAdvancedRules: boolean;
+  originMinimumDays: number;
+  needDaysThreshold: number;
+  destinationTargetDays: number;
+  maxRoutePriority: number;
+  originCurvePriority: string[];
+  destinationCurvePriority: string[];
+  showOnlyProblemSuggestions: boolean;
+  suggestionTableSearch: string;
+  suggestionColumnOrder: SuggestionColumnKey[];
+  suggestionColumnWidths: Record<SuggestionColumnKey, number>;
+  suggestionSort: SuggestionSort;
+}
+
+function isQuickFilterItem(value: unknown): value is QuickFilterItem {
+  if (!value || typeof value !== 'object') return false;
+  const item = value as Partial<QuickFilterItem>;
+  return typeof item.id === 'string'
+    && Array.isArray(item.columns)
+    && item.columns.every((column) => typeof column === 'string')
+    && typeof item.searchText === 'string';
+}
+
+function readQuickFilterItems(value: unknown) {
+  return Array.isArray(value) ? value.filter(isQuickFilterItem) : [];
+}
+
+function readCurveList(value: unknown) {
+  return Array.isArray(value) ? value.filter((curve): curve is string => STOCK_CURVES.includes(curve as typeof STOCK_CURVES[number])) : [];
+}
+
+function clampPreferenceNumber(value: unknown, fallback: number) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(0, Math.min(9999, Math.round(parsed)));
+}
+
+function defaultSuggestionColumnWidths() {
+  return Object.fromEntries(SUGGESTION_COLUMNS.map((column) => [column.key, column.width])) as Record<SuggestionColumnKey, number>;
+}
+
+function defaultReallocationPreferences(): ReallocationPreferences {
+  const preset = SUGGESTION_PROFILES[DEFAULT_SUGGESTION_PROFILE];
+
+  return {
+    productFilters: [],
+    originFilters: [],
+    destinationFilters: [],
+    classificationFilters: [],
+    manufacturerFilters: [],
+    suggestionProfile: DEFAULT_SUGGESTION_PROFILE,
+    showAdvancedRules: false,
+    originMinimumDays: preset.originMinimumDays,
+    needDaysThreshold: preset.needDaysThreshold,
+    destinationTargetDays: preset.destinationTargetDays,
+    maxRoutePriority: preset.maxRoutePriority,
+    originCurvePriority: [],
+    destinationCurvePriority: [],
+    showOnlyProblemSuggestions: false,
+    suggestionTableSearch: '',
+    suggestionColumnOrder: SUGGESTION_COLUMNS.map((column) => column.key),
+    suggestionColumnWidths: defaultSuggestionColumnWidths(),
+    suggestionSort: null,
+  };
+}
+
+function loadReallocationPreferences() {
+  if (typeof window === 'undefined') return defaultReallocationPreferences();
+
+  try {
+    const stored = window.localStorage.getItem(REALLOCATION_PREFERENCES_STORAGE_KEY);
+    if (!stored) return defaultReallocationPreferences();
+    const parsed = JSON.parse(stored) as Partial<ReallocationPreferences>;
+    const defaults = defaultReallocationPreferences();
+    const validColumnKeys = new Set(SUGGESTION_COLUMNS.map((column) => column.key));
+    const columnOrder = Array.isArray(parsed.suggestionColumnOrder)
+      ? parsed.suggestionColumnOrder.filter((key): key is SuggestionColumnKey => validColumnKeys.has(key as SuggestionColumnKey))
+      : defaults.suggestionColumnOrder;
+    const columnWidths = { ...defaults.suggestionColumnWidths };
+
+    if (parsed.suggestionColumnWidths && typeof parsed.suggestionColumnWidths === 'object') {
+      for (const column of SUGGESTION_COLUMNS) {
+        const width = Number((parsed.suggestionColumnWidths as Partial<Record<SuggestionColumnKey, number>>)[column.key]);
+        if (Number.isFinite(width)) columnWidths[column.key] = Math.max(80, Math.min(520, width));
+      }
+    }
+
+    const profile = parsed.suggestionProfile && parsed.suggestionProfile in SUGGESTION_PROFILES
+      ? parsed.suggestionProfile
+      : DEFAULT_SUGGESTION_PROFILE;
+    const sortKey = parsed.suggestionSort?.key;
+    const suggestionSort = sortKey && validColumnKeys.has(sortKey) && (parsed.suggestionSort?.direction === 'asc' || parsed.suggestionSort?.direction === 'desc')
+      ? parsed.suggestionSort
+      : null;
+
+    return {
+      productFilters: readQuickFilterItems(parsed.productFilters),
+      originFilters: readQuickFilterItems(parsed.originFilters),
+      destinationFilters: readQuickFilterItems(parsed.destinationFilters),
+      classificationFilters: readQuickFilterItems(parsed.classificationFilters),
+      manufacturerFilters: readQuickFilterItems(parsed.manufacturerFilters),
+      suggestionProfile: profile,
+      showAdvancedRules: Boolean(parsed.showAdvancedRules),
+      originMinimumDays: clampPreferenceNumber(parsed.originMinimumDays, defaults.originMinimumDays),
+      needDaysThreshold: clampPreferenceNumber(parsed.needDaysThreshold, defaults.needDaysThreshold),
+      destinationTargetDays: clampPreferenceNumber(parsed.destinationTargetDays, defaults.destinationTargetDays),
+      maxRoutePriority: clampPreferenceNumber(parsed.maxRoutePriority, defaults.maxRoutePriority),
+      originCurvePriority: readCurveList(parsed.originCurvePriority),
+      destinationCurvePriority: readCurveList(parsed.destinationCurvePriority),
+      showOnlyProblemSuggestions: Boolean(parsed.showOnlyProblemSuggestions),
+      suggestionTableSearch: typeof parsed.suggestionTableSearch === 'string' ? parsed.suggestionTableSearch : '',
+      suggestionColumnOrder: columnOrder.length > 0 ? columnOrder : defaults.suggestionColumnOrder,
+      suggestionColumnWidths: columnWidths,
+      suggestionSort,
+    };
+  } catch {
+    window.localStorage.removeItem(REALLOCATION_PREFERENCES_STORAGE_KEY);
+    return defaultReallocationPreferences();
+  }
+}
 
 function getSuggestionSortValue(
   suggestion: TransferSuggestion,
@@ -168,13 +337,31 @@ function getSuggestionSortValue(
 function getAdjustedOriginDays(suggestion: TransferSuggestion) {
   const dailySales = Number(suggestion.originDailySales || 0);
   if (dailySales <= 0) return Number(suggestion.originStockDays || 0);
-  return Math.max(0, (Number(suggestion.originStock || 0) - Number(suggestion.quantity || 0)) / dailySales);
+  const currentCoverageStock = Number(suggestion.originStockDays || 0) * dailySales;
+  return Math.max(0, (currentCoverageStock - Number(suggestion.quantity || 0)) / dailySales);
 }
 
 function getAdjustedDestinationDays(suggestion: TransferSuggestion) {
   const dailySales = Number(suggestion.destinationDailySales || 0);
   if (dailySales <= 0) return Number(suggestion.destinationStockDays || 0);
-  return (Number(suggestion.destinationStock || 0) + Number(suggestion.quantity || 0)) / dailySales;
+  const currentCoverageStock = Number(suggestion.destinationStockDays || 0) * dailySales;
+  return (currentCoverageStock + Number(suggestion.quantity || 0)) / dailySales;
+}
+
+function clampSuggestionQuantity(
+  suggestions: TransferSuggestion[],
+  targetSuggestion: TransferSuggestion,
+  requestedQuantity: number,
+) {
+  const originStockLimit = Math.max(0, Math.floor(Number(targetSuggestion.originStock || 0)));
+  const targetKey = `${targetSuggestion.ean}:${targetSuggestion.originCode}`;
+  const allocatedElsewhere = suggestions.reduce((sum, suggestion) => {
+    if (suggestion.id === targetSuggestion.id) return sum;
+    if (`${suggestion.ean}:${suggestion.originCode}` !== targetKey) return sum;
+    return sum + Math.max(0, Math.floor(Number(suggestion.quantity || 0)));
+  }, 0);
+  const availableForRow = Math.max(0, originStockLimit - allocatedElsewhere);
+  return Math.max(0, Math.min(availableForRow, Math.floor(Number(requestedQuantity) || 0)));
 }
 
 function sortTransferSuggestions(suggestions: TransferSuggestion[], sort: SuggestionSort) {
@@ -193,35 +380,115 @@ function sortTransferSuggestions(suggestions: TransferSuggestion[], sort: Sugges
   });
 }
 
-export function ReallocationManager() {
+function getSuggestionExportIssues(
+  suggestions: TransferSuggestion[],
+  overAllocated: Array<{ allocated: number; stock: number; originCode: string; ean: string; originName: string; description: string }>,
+  maxRoutePriority: number,
+) {
+  const issues: ExportValidationIssue[] = [];
+  const missingErp = suggestions.filter((suggestion) => !suggestion.erpCode && suggestion.quantity > 0);
+  const invalidQuantity = suggestions.filter((suggestion) => suggestion.quantity <= 0 || !Number.isFinite(Number(suggestion.quantity)));
+  const manualChanges = suggestions.filter((suggestion) => suggestion.quantity !== suggestion.maxQuantity);
+  const routeLimit = suggestions.filter((suggestion) => suggestion.routePriority >= maxRoutePriority && suggestion.quantity > 0);
+
+  overAllocated.slice(0, 3).forEach((allocation, index) => {
+    issues.push({
+      id: `over-allocated-${index}`,
+      title: 'Origem excedida',
+      detail: `${allocation.originName}: ${wholeNumber(allocation.allocated)} un. de ${allocation.description}, estoque ${wholeNumber(allocation.stock)}.`,
+      severity: 'block',
+    });
+  });
+
+  if (missingErp.length > 0) {
+    issues.push({
+      id: 'missing-erp',
+      title: 'Produtos sem ERP',
+      detail: `${missingErp.length} linha${missingErp.length === 1 ? '' : 's'} com quantidade não entram no TXT.`,
+      severity: 'block',
+    });
+  }
+
+  if (invalidQuantity.length > 0 && suggestions.some((suggestion) => suggestion.quantity > 0)) {
+    issues.push({
+      id: 'invalid-quantity',
+      title: 'Quantidade zerada',
+      detail: `${invalidQuantity.length} linha${invalidQuantity.length === 1 ? '' : 's'} está${invalidQuantity.length === 1 ? '' : 'o'} sem quantidade para exportar.`,
+      severity: 'warn',
+    });
+  }
+
+  if (manualChanges.length > 0) {
+    issues.push({
+      id: 'manual-changes',
+      title: 'Ajustes manuais',
+      detail: `${manualChanges.length} linha${manualChanges.length === 1 ? '' : 's'} com quantidade alterada manualmente.`,
+      severity: 'warn',
+    });
+  }
+
+  if (routeLimit.length > 0) {
+    issues.push({
+      id: 'route-limit',
+      title: 'Rotas no limite',
+      detail: `${routeLimit.length} linha${routeLimit.length === 1 ? '' : 's'} usando prioridade máxima do perfil.`,
+      severity: 'warn',
+    });
+  }
+
+  return issues;
+}
+
+interface ReallocationManagerProps {
+  canImportData?: boolean;
+  canGenerateSuggestions?: boolean;
+  canExport?: boolean;
+  onPermissionBlocked?: (action: string, details: string) => void;
+}
+
+export function ReallocationManager({
+  canImportData = true,
+  canGenerateSuggestions = true,
+  canExport = true,
+  onPermissionBlocked,
+}: ReallocationManagerProps) {
+  const initialPreferences = useMemo(() => loadReallocationPreferences(), []);
   const [products, setProducts] = useState<ReallocationProduct[]>([]);
   const [branches, setBranches] = useState<PricingBranch[]>([]);
   const searchTerm = '';
-  const [productFilters, setProductFilters] = useState<QuickFilterItem[]>([]);
-  const [originFilters, setOriginFilters] = useState<QuickFilterItem[]>([]);
-  const [destinationFilters, setDestinationFilters] = useState<QuickFilterItem[]>([]);
-  const [classificationFilters, setClassificationFilters] = useState<QuickFilterItem[]>([]);
-  const [manufacturerFilters, setManufacturerFilters] = useState<QuickFilterItem[]>([]);
+  const [productFilters, setProductFilters] = useState<QuickFilterItem[]>(initialPreferences.productFilters);
+  const [originFilters, setOriginFilters] = useState<QuickFilterItem[]>(initialPreferences.originFilters);
+  const [destinationFilters, setDestinationFilters] = useState<QuickFilterItem[]>(initialPreferences.destinationFilters);
+  const [classificationFilters, setClassificationFilters] = useState<QuickFilterItem[]>(initialPreferences.classificationFilters);
+  const [manufacturerFilters, setManufacturerFilters] = useState<QuickFilterItem[]>(initialPreferences.manufacturerFilters);
   const [totalProducts, setTotalProducts] = useState(0);
   const [stockSnapshot, setStockSnapshot] = useState<ReallocationStockSnapshot | null>(null);
   const [stockItems, setStockItems] = useState<ReallocationStockItem[]>([]);
   const [transferSuggestions, setTransferSuggestions] = useState<TransferSuggestion[]>([]);
   const [suggestionMessage, setSuggestionMessage] = useState('');
   const [suggestionDiagnostic, setSuggestionDiagnostic] = useState<SuggestionDiagnostic | null>(null);
-  const [suggestionProfile, setSuggestionProfile] = useState<SuggestionProfile>(DEFAULT_SUGGESTION_PROFILE);
-  const [showAdvancedRules, setShowAdvancedRules] = useState(false);
-  const [originMinimumDays, setOriginMinimumDays] = useState(SUGGESTION_PROFILES[DEFAULT_SUGGESTION_PROFILE].originMinimumDays);
-  const [needDaysThreshold, setNeedDaysThreshold] = useState(SUGGESTION_PROFILES[DEFAULT_SUGGESTION_PROFILE].needDaysThreshold);
-  const [destinationTargetDays, setDestinationTargetDays] = useState(SUGGESTION_PROFILES[DEFAULT_SUGGESTION_PROFILE].destinationTargetDays);
-  const [maxRoutePriority, setMaxRoutePriority] = useState(SUGGESTION_PROFILES[DEFAULT_SUGGESTION_PROFILE].maxRoutePriority);
+  const [suggestionProfile, setSuggestionProfile] = useState<SuggestionProfile>(initialPreferences.suggestionProfile);
+  const [showAdvancedRules, setShowAdvancedRules] = useState(initialPreferences.showAdvancedRules);
+  const [originMinimumDays, setOriginMinimumDays] = useState(initialPreferences.originMinimumDays);
+  const [needDaysThreshold, setNeedDaysThreshold] = useState(initialPreferences.needDaysThreshold);
+  const [destinationTargetDays, setDestinationTargetDays] = useState(initialPreferences.destinationTargetDays);
+  const [maxRoutePriority, setMaxRoutePriority] = useState(initialPreferences.maxRoutePriority);
+  const [originCurvePriority, setOriginCurvePriority] = useState<string[]>(initialPreferences.originCurvePriority);
+  const [destinationCurvePriority, setDestinationCurvePriority] = useState<string[]>(initialPreferences.destinationCurvePriority);
   const [stockLoading, setStockLoading] = useState(true);
   const [generatingSuggestions, setGeneratingSuggestions] = useState(false);
   const [importing, setImporting] = useState(false);
   const [stockImporting, setStockImporting] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
-  const [suggestionColumnOrder, setSuggestionColumnOrder] = useState<SuggestionColumnKey[]>(() => SUGGESTION_COLUMNS.map((column) => column.key));
-  const [suggestionColumnWidths, setSuggestionColumnWidths] = useState<Record<SuggestionColumnKey, number>>(() => Object.fromEntries(SUGGESTION_COLUMNS.map((column) => [column.key, column.width])) as Record<SuggestionColumnKey, number>);
-  const [suggestionSort, setSuggestionSort] = useState<SuggestionSort>(null);
+  const [showOnlyProblemSuggestions, setShowOnlyProblemSuggestions] = useState(initialPreferences.showOnlyProblemSuggestions);
+  const [showExportConfirm, setShowExportConfirm] = useState(false);
+  const [showReallocationHistory, setShowReallocationHistory] = useState(false);
+  const [showDataActions, setShowDataActions] = useState(false);
+  const [reallocationAuditLog, setReallocationAuditLog] = useState<ReallocationAuditLog[]>(loadReallocationAuditLog);
+  const [suggestionTableSearch, setSuggestionTableSearch] = useState(initialPreferences.suggestionTableSearch);
+  const [suggestionColumnOrder, setSuggestionColumnOrder] = useState<SuggestionColumnKey[]>(initialPreferences.suggestionColumnOrder);
+  const [suggestionColumnWidths, setSuggestionColumnWidths] = useState<Record<SuggestionColumnKey, number>>(initialPreferences.suggestionColumnWidths);
+  const [suggestionSort, setSuggestionSort] = useState<SuggestionSort>(initialPreferences.suggestionSort);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const stockInputRef = useRef<HTMLInputElement>(null);
   const resizingSuggestionColumnRef = useRef<{ key: SuggestionColumnKey; startX: number; startWidth: number } | null>(null);
@@ -249,7 +516,7 @@ export function ReallocationManager() {
     } catch {
       setProducts([]);
       setTotalProducts(0);
-      setErrorMessage('Tabela de remanejamento nao encontrada. Rode o SQL de produtos do remanejamento no Supabase.');
+      setErrorMessage('Tabela de remanejamento não encontrada. Rode o SQL de produtos do remanejamento no Supabase.');
     } finally {
     }
   }, [classificationFilters, manufacturerFilters, searchTerm]);
@@ -296,6 +563,73 @@ export function ReallocationManager() {
   }, [loadStockSnapshot]);
 
   useEffect(() => {
+    window.localStorage.setItem(REALLOCATION_AUDIT_STORAGE_KEY, JSON.stringify(reallocationAuditLog));
+  }, [reallocationAuditLog]);
+
+  useEffect(() => {
+    const preferences: ReallocationPreferences = {
+      productFilters,
+      originFilters,
+      destinationFilters,
+      classificationFilters,
+      manufacturerFilters,
+      suggestionProfile,
+      showAdvancedRules,
+      originMinimumDays,
+      needDaysThreshold,
+      destinationTargetDays,
+      maxRoutePriority,
+      originCurvePriority,
+      destinationCurvePriority,
+      showOnlyProblemSuggestions,
+      suggestionTableSearch,
+      suggestionColumnOrder,
+      suggestionColumnWidths,
+      suggestionSort,
+    };
+
+    window.localStorage.setItem(REALLOCATION_PREFERENCES_STORAGE_KEY, JSON.stringify(preferences));
+  }, [
+    classificationFilters,
+    destinationCurvePriority,
+    destinationFilters,
+    destinationTargetDays,
+    manufacturerFilters,
+    maxRoutePriority,
+    needDaysThreshold,
+    originCurvePriority,
+    originFilters,
+    originMinimumDays,
+    productFilters,
+    showAdvancedRules,
+    showOnlyProblemSuggestions,
+    suggestionColumnOrder,
+    suggestionColumnWidths,
+    suggestionProfile,
+    suggestionSort,
+    suggestionTableSearch,
+  ]);
+
+  const addReallocationAuditLog = useCallback((event: Omit<ReallocationAuditLog, 'id' | 'at'>) => {
+    setReallocationAuditLog((current) => [{
+      id: `reallocation-audit|${Date.now()}|${Math.random().toString(36).slice(2)}`,
+      at: new Date().toISOString(),
+      ...event,
+    }, ...current].slice(0, 80));
+  }, []);
+
+  const getBlockedMessage = useCallback((action: string, requirement: Parameters<typeof getPermissionDeniedMessage>[1]) => {
+    const message = getPermissionDeniedMessage(action, requirement);
+    onPermissionBlocked?.(action, message);
+    addReallocationAuditLog({
+      action: 'Acao bloqueada',
+      detail: message,
+      count: 1,
+    });
+    return message;
+  }, [addReallocationAuditLog, onPermissionBlocked]);
+
+  useEffect(() => {
     const timeout = window.setTimeout(() => {
       loadProducts(searchTerm);
     }, 300);
@@ -321,7 +655,7 @@ export function ReallocationManager() {
       const reason = event.reason;
       if (!(reason instanceof TypeError) || !reason.message.toLowerCase().includes('fetch')) return;
       event.preventDefault();
-      setSuggestionMessage('Nao foi possivel conectar ao servidor agora. Tente atualizar novamente em alguns segundos.');
+      setSuggestionMessage('Não foi possível conectar ao servidor agora. Tente atualizar novamente em alguns segundos.');
       setGeneratingSuggestions(false);
     };
 
@@ -335,7 +669,7 @@ export function ReallocationManager() {
       setSuggestionMessage('');
       setSuggestionDiagnostic(null);
     });
-  }, [stockSnapshot?.id, originFilters, destinationFilters, productFilters, classificationFilters, manufacturerFilters, originMinimumDays, needDaysThreshold, destinationTargetDays, maxRoutePriority]);
+  }, [stockSnapshot?.id, originFilters, destinationFilters, productFilters, classificationFilters, manufacturerFilters, originCurvePriority, destinationCurvePriority, originMinimumDays, needDaysThreshold, destinationTargetDays, maxRoutePriority]);
 
   useEffect(() => {
     const handleMouseMove = (event: MouseEvent) => {
@@ -396,13 +730,15 @@ export function ReallocationManager() {
     };
   }, [transferSuggestions]);
   const originAllocationByProduct = useMemo(() => {
-    const allocations = new Map<string, { allocated: number; stock: number; originName: string; description: string }>();
+    const allocations = new Map<string, { allocated: number; stock: number; originCode: string; ean: string; originName: string; description: string }>();
 
     for (const suggestion of transferSuggestions) {
       const key = `${suggestion.ean}:${suggestion.originCode}`;
       const current = allocations.get(key) || {
         allocated: 0,
         stock: Number(suggestion.originStock || 0),
+        originCode: suggestion.originCode,
+        ean: suggestion.ean,
         originName: suggestion.originName,
         description: suggestion.description,
       };
@@ -417,7 +753,50 @@ export function ReallocationManager() {
   const overAllocatedOrigins = useMemo(() => {
     return Array.from(originAllocationByProduct.values()).filter((allocation) => allocation.allocated > allocation.stock);
   }, [originAllocationByProduct]);
-  const activeSuggestionFilterCount = productFilters.length + originFilters.length + destinationFilters.length + classificationFilters.length + manufacturerFilters.length;
+  const suggestionExportIssues = useMemo(() => getSuggestionExportIssues(transferSuggestions, overAllocatedOrigins, maxRoutePriority), [maxRoutePriority, overAllocatedOrigins, transferSuggestions]);
+  const blockingExportIssues = useMemo(() => suggestionExportIssues.filter((issue) => issue.severity === 'block'), [suggestionExportIssues]);
+  const problemSuggestionIds = useMemo(() => {
+    const ids = new Set<string>();
+    const overAllocatedKeys = new Set(overAllocatedOrigins.map((allocation) => `${allocation.ean}:${allocation.originCode}`));
+
+    transferSuggestions.forEach((suggestion) => {
+      const overKey = `${suggestion.ean}:${suggestion.originCode}`;
+      if (!suggestion.erpCode && suggestion.quantity > 0) ids.add(suggestion.id);
+      if (suggestion.quantity <= 0 || !Number.isFinite(Number(suggestion.quantity))) ids.add(suggestion.id);
+      if (suggestion.quantity !== suggestion.maxQuantity) ids.add(suggestion.id);
+      if (suggestion.routePriority >= maxRoutePriority && suggestion.quantity > 0) ids.add(suggestion.id);
+      if (overAllocatedKeys.has(overKey)) ids.add(suggestion.id);
+    });
+
+    return ids;
+  }, [maxRoutePriority, overAllocatedOrigins, transferSuggestions]);
+  const originSummary = useMemo(() => {
+    const map = new Map<string, { originName: string; rows: number; units: number; stock: number; exceeded: number }>();
+
+    transferSuggestions.forEach((suggestion) => {
+      const current = map.get(suggestion.originCode) || {
+        originName: suggestion.originName,
+        rows: 0,
+        units: 0,
+        stock: 0,
+        exceeded: 0,
+      };
+      current.rows += 1;
+      current.units += Number(suggestion.quantity || 0);
+      current.stock += Number(suggestion.originStock || 0);
+      map.set(suggestion.originCode, current);
+    });
+
+    overAllocatedOrigins.forEach((allocation) => {
+      const item = Array.from(map.values()).find((origin) => origin.originName === allocation.originName);
+      if (item) item.exceeded += Math.max(0, allocation.allocated - allocation.stock);
+    });
+
+    return Array.from(map.values())
+      .sort((left, right) => right.units - left.units)
+      .slice(0, 6);
+  }, [overAllocatedOrigins, transferSuggestions]);
+  const activeSuggestionFilterCount = productFilters.length + originFilters.length + destinationFilters.length + classificationFilters.length + manufacturerFilters.length + originCurvePriority.length + destinationCurvePriority.length;
 
   const branchLogisticsByCode = useMemo(() => new Map(branches.map((branch) => [
     branch.code.padStart(2, '0'),
@@ -429,7 +808,10 @@ export function ReallocationManager() {
   ])), [branches]);
   const orderedSuggestionColumns = useMemo(() => {
     const byKey = new Map(SUGGESTION_COLUMNS.map((column) => [column.key, column]));
-    return suggestionColumnOrder.map((key) => byKey.get(key)).filter((column): column is SuggestionColumn => Boolean(column));
+    const currentColumns = suggestionColumnOrder.map((key) => byKey.get(key)).filter((column): column is SuggestionColumn => Boolean(column));
+    const currentKeys = new Set(currentColumns.map((column) => column.key));
+    const newColumns = SUGGESTION_COLUMNS.filter((column) => !currentKeys.has(column.key));
+    return [...currentColumns, ...newColumns];
   }, [suggestionColumnOrder]);
   const suggestionTableWidth = useMemo(() => orderedSuggestionColumns.reduce((sum, column) => sum + (suggestionColumnWidths[column.key] || column.width), 0), [orderedSuggestionColumns, suggestionColumnWidths]);
 
@@ -443,6 +825,10 @@ export function ReallocationManager() {
   };
 
   const importCatalog = async (file: File) => {
+    if (!canImportData) {
+      alert(getBlockedMessage('importar cadastro do remanejamento inteligente', 'supremeAdmin'));
+      return;
+    }
     setImporting(true);
     setErrorMessage('');
 
@@ -462,6 +848,11 @@ export function ReallocationManager() {
       }
 
       alert(`${data.imported || 0} produtos importados. ${data.enriched || 0} produtos enriquecidos. ${data.unmatched || 0} EANs sem vinculo. ${data.skipped || 0} linhas ignoradas/duplicadas.`);
+      addReallocationAuditLog({
+        action: 'Catalogo importado',
+        detail: file.name,
+        count: Number(data.imported || 0),
+      });
       await loadProducts(searchTerm);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Erro desconhecido';
@@ -473,6 +864,10 @@ export function ReallocationManager() {
   };
 
   const importStock = async (file: File) => {
+    if (!canImportData) {
+      alert(getBlockedMessage('importar estoque do remanejamento inteligente', 'supremeAdmin'));
+      return;
+    }
     setStockImporting(true);
     setErrorMessage('');
 
@@ -491,7 +886,12 @@ export function ReallocationManager() {
         throw new Error(data?.error || 'Erro ao importar estoque.');
       }
 
-      alert(`${data.imported || 0} linhas de estoque importadas. ${data.matchedProducts || 0} vinculadas ao codigo ERP. ${data.unmatchedProducts || 0} sem vinculo. ${data.skipped || 0} ignoradas.`);
+      alert(`${data.imported || 0} linhas de estoque importadas. ${data.matchedProducts || 0} vinculadas ao código ERP. ${data.unmatchedProducts || 0} sem vínculo. ${data.skipped || 0} ignoradas.`);
+      addReallocationAuditLog({
+        action: 'Estoque importado',
+        detail: file.name,
+        count: Number(data.imported || 0),
+      });
       await loadStockSnapshot('', true);
     } catch (error) {
       const message = getNetworkErrorMessage(error, 'Erro desconhecido');
@@ -565,6 +965,10 @@ export function ReallocationManager() {
   };
 
   const generateTransferSuggestions = async () => {
+    if (!canGenerateSuggestions) {
+      alert(getBlockedMessage('gerar sugestoes de remanejamento inteligente', 'supremeAdmin'));
+      return;
+    }
     setGeneratingSuggestions(true);
     setSuggestionMessage('');
     setSuggestionDiagnostic(null);
@@ -572,7 +976,7 @@ export function ReallocationManager() {
     try {
       if (!stockSnapshot) {
         setTransferSuggestions([]);
-        setSuggestionMessage('Importe um estoque antes de gerar sugestoes.');
+        setSuggestionMessage('Importe um estoque antes de gerar sugestões.');
         return;
       }
 
@@ -598,6 +1002,8 @@ export function ReallocationManager() {
             needDaysThreshold,
             destinationTargetDays,
             maxRoutePriority,
+            originCurves: originCurvePriority,
+            destinationCurves: destinationCurvePriority,
           },
           branchLogistics: Object.fromEntries(branchLogisticsByCode),
         }),
@@ -605,7 +1011,7 @@ export function ReallocationManager() {
       const data = await response.json().catch(() => null);
 
       if (!response.ok || !Array.isArray(data?.suggestions)) {
-        throw new Error(data?.error || 'Nao foi possivel gerar sugestoes.');
+        throw new Error(data?.error || 'Não foi possível gerar sugestões.');
       }
 
       const suggestionEngine: SuggestionDiagnostic['engine'] = ['python', 'typescript', 'fallback'].includes(data.engine)
@@ -624,14 +1030,20 @@ export function ReallocationManager() {
         suggestions: data.suggestions.length,
       });
       if (data.suggestions.length === 0) {
-        setSuggestionMessage(`Nenhuma sugestao gerada pelo motor ${data.engine || 'TypeScript'}. Origens elegiveis: ${data.eligibleOrigins || 0}. Destinos elegiveis: ${data.eligibleDestinations || 0}. Itens sem codigo ERP: ${data.missingErpCode || 0}.`);
+        setSuggestionMessage(`Nenhuma sugestão gerada pelo motor ${data.engine || 'TypeScript'}. Origens elegíveis: ${data.eligibleOrigins || 0}. Destinos elegíveis: ${data.eligibleDestinations || 0}. Itens sem código ERP: ${data.missingErpCode || 0}.`);
         return;
       }
 
-      setSuggestionMessage(`${data.suggestions.length} sugestoes geradas pelo motor ${data.engine || 'TypeScript'}. Revise as quantidades antes de exportar.`);
+      setSuggestionMessage(`${data.suggestions.length} sugestões geradas pelo motor ${data.engine || 'TypeScript'}. Revise as quantidades antes de exportar.`);
+      addReallocationAuditLog({
+        action: 'Sugestão gerada',
+        detail: `Motor ${data.engine || 'TypeScript'}`,
+        count: data.suggestions.length,
+        units: (data.suggestions as TransferSuggestion[]).reduce((sum, suggestion) => sum + suggestion.quantity, 0),
+      });
     } catch (error) {
       setTransferSuggestions([]);
-      setSuggestionMessage(getNetworkErrorMessage(error, 'Nao foi possivel gerar sugestoes.'));
+      setSuggestionMessage(getNetworkErrorMessage(error, 'Não foi possível gerar sugestões.'));
     } finally {
       setGeneratingSuggestions(false);
     }
@@ -640,8 +1052,7 @@ export function ReallocationManager() {
   const updateSuggestionQuantity = (suggestionId: string, quantity: number) => {
     setTransferSuggestions((current) => current.map((suggestion) => {
       if (suggestion.id !== suggestionId) return suggestion;
-      const originStockLimit = Math.max(0, Math.floor(Number(suggestion.originStock || 0)));
-      const nextQuantity = Math.max(0, Math.min(originStockLimit, Math.floor(quantity || 0)));
+      const nextQuantity = clampSuggestionQuantity(current, suggestion, quantity);
       return { ...suggestion, quantity: nextQuantity };
     }));
   };
@@ -663,14 +1074,28 @@ export function ReallocationManager() {
     if (quantities.length === 0) return;
     const targetIds = sortedTransferSuggestions.slice(startIndex, startIndex + quantities.length).map((suggestion) => suggestion.id);
 
-    setTransferSuggestions((current) => current.map((suggestion, index) => {
-      const pastedIndex = targetIds.length ? targetIds.indexOf(suggestion.id) : index - startIndex;
-      if (pastedIndex < 0 || pastedIndex >= quantities.length) return suggestion;
-      const originStockLimit = Math.max(0, Math.floor(Number(suggestion.originStock || 0)));
-      const nextQuantity = Math.max(0, Math.min(originStockLimit, Math.floor(quantities[pastedIndex] || 0)));
-      return { ...suggestion, quantity: nextQuantity };
-    }));
+    setTransferSuggestions((current) => {
+      const requestedById = new Map(targetIds.map((id, index) => [id, quantities[index]]));
+      let nextSuggestions = current;
 
+      for (const targetId of targetIds) {
+        const target = nextSuggestions.find((suggestion) => suggestion.id === targetId);
+        if (!target) continue;
+        const nextQuantity = clampSuggestionQuantity(nextSuggestions, target, requestedById.get(targetId) || 0);
+        nextSuggestions = nextSuggestions.map((suggestion) => (
+          suggestion.id === targetId ? { ...suggestion, quantity: nextQuantity } : suggestion
+        ));
+      }
+
+      return nextSuggestions;
+    });
+
+    addReallocationAuditLog({
+      action: 'Quantidades coladas',
+      detail: `${quantities.length} linha${quantities.length === 1 ? '' : 's'}`,
+      count: quantities.length,
+      units: quantities.reduce((sum, value) => sum + value, 0),
+    });
     focusSuggestionCell(Math.min(startIndex + quantities.length - 1, transferSuggestions.length - 1));
   };
 
@@ -682,10 +1107,47 @@ export function ReallocationManager() {
     return getAdjustedDestinationDays(suggestion);
   }, []);
 
-  const sortedTransferSuggestions = sortTransferSuggestions(transferSuggestions, suggestionSort);
+  const tableSearchBaseCount = useMemo(() => (
+    showOnlyProblemSuggestions
+      ? transferSuggestions.filter((suggestion) => problemSuggestionIds.has(suggestion.id)).length
+      : transferSuggestions.length
+  ), [problemSuggestionIds, showOnlyProblemSuggestions, transferSuggestions]);
+  const displayedTransferSuggestions = useMemo(() => {
+    const baseSuggestions = showOnlyProblemSuggestions
+      ? transferSuggestions.filter((suggestion) => problemSuggestionIds.has(suggestion.id))
+      : transferSuggestions;
+    const query = normalizeAutocompleteText(suggestionTableSearch);
+    if (!query) return baseSuggestions;
+
+    return baseSuggestions.filter((suggestion) => {
+      const searchable = [
+        suggestion.description,
+        suggestion.ean,
+        suggestion.erpCode,
+        suggestion.originName,
+        suggestion.originCode,
+        suggestion.originCurve,
+        suggestion.destinationName,
+        suggestion.destinationCode,
+        suggestion.destinationCurve,
+        suggestion.quantity,
+        suggestion.routePriority,
+      ].join(' ');
+      return normalizeAutocompleteText(searchable).includes(query);
+    });
+  }, [problemSuggestionIds, showOnlyProblemSuggestions, suggestionTableSearch, transferSuggestions]);
+  const sortedTransferSuggestions = sortTransferSuggestions(displayedTransferSuggestions, suggestionSort);
 
   const removeSuggestion = (suggestionId: string) => {
     setTransferSuggestions((current) => current.filter((suggestion) => suggestion.id !== suggestionId));
+  };
+
+  const restoreSuggestionQuantity = (suggestionId: string) => {
+    setTransferSuggestions((current) => current.map((suggestion) => (
+      suggestion.id === suggestionId
+        ? { ...suggestion, quantity: clampSuggestionQuantity(current, suggestion, suggestion.maxQuantity) }
+        : suggestion
+    )));
   };
 
   const isSuggestionManuallyChanged = (suggestion: TransferSuggestion) => suggestion.quantity !== suggestion.maxQuantity;
@@ -695,10 +1157,14 @@ export function ReallocationManager() {
     return Boolean(allocation && allocation.allocated > allocation.stock);
   };
 
-  const exportSuggestionsTxt = () => {
-    if (overAllocatedOrigins.length > 0) {
-      const first = overAllocatedOrigins[0];
-      alert(`Revise as quantidades: ${first.originName} esta transferindo ${wholeNumber(first.allocated)} un. de "${first.description}", mas o estoque origem e ${wholeNumber(first.stock)}.`);
+  const downloadSuggestionsTxt = () => {
+    if (!canExport) {
+      alert(getBlockedMessage('exportar TXT de remanejamento inteligente', 'supremeAdmin'));
+      return;
+    }
+    if (blockingExportIssues.length > 0) {
+      const first = blockingExportIssues[0];
+      alert(`${first.title}: ${first.detail}`);
       return;
     }
 
@@ -711,8 +1177,8 @@ export function ReallocationManager() {
 
     if (!content) {
       alert(missingCodeCount > 0
-        ? 'As sugestoes foram geradas, mas estao sem codigo ERP. Reimporte/vincule o cadastro de produtos antes de exportar.'
-        : 'Gere uma sugestao de transferencia antes de exportar.');
+        ? 'As sugestões foram geradas, mas estão sem código ERP. Reimporte/vincule o cadastro de produtos antes de exportar.'
+        : 'Gere uma sugestão de transferência antes de exportar.');
       return;
     }
 
@@ -723,6 +1189,78 @@ export function ReallocationManager() {
     link.download = 'sugestao-remanejamento.txt';
     link.click();
     URL.revokeObjectURL(url);
+    setShowExportConfirm(false);
+    addReallocationAuditLog({
+      action: 'TXT exportado',
+      detail: `${exportableSuggestions.length} linhas`,
+      count: exportableSuggestions.length,
+      units: exportableSuggestions.reduce((sum, suggestion) => sum + suggestion.quantity, 0),
+    });
+  };
+
+  const exportSuggestionsTxt = () => {
+    if (!canExport) {
+      alert(getBlockedMessage('exportar TXT de remanejamento inteligente', 'supremeAdmin'));
+      return;
+    }
+    if (blockingExportIssues.length > 0) {
+      const first = blockingExportIssues[0];
+      alert(`${first.title}: ${first.detail}`);
+      return;
+    }
+
+    if (transferSuggestions.filter((suggestion) => suggestion.erpCode && suggestion.quantity > 0).length === 0) {
+      alert('Gere uma sugestão de transferência antes de exportar.');
+      return;
+    }
+
+    setShowExportConfirm(true);
+  };
+
+  const exportConferenceCsv = () => {
+    if (!canExport) {
+      alert(getBlockedMessage('exportar conferencia de remanejamento inteligente', 'supremeAdmin'));
+      return;
+    }
+    const rows = [
+      ['produto', 'origem', 'destino', 'codigo_erp', 'ean', 'quantidade', 'sugestao_original', 'estoque_origem', 'dias_origem_antes', 'dias_origem_depois', 'estoque_destino', 'dias_destino_antes', 'dias_destino_depois', 'rota', 'status'],
+      ...transferSuggestions.map((suggestion) => [
+        suggestion.description,
+        suggestion.originName,
+        suggestion.destinationName,
+        suggestion.erpCode || '',
+        suggestion.ean || '',
+        suggestion.quantity,
+        suggestion.maxQuantity,
+        suggestion.originStock,
+        decimal(suggestion.originStockDays),
+        decimal(getAdjustedOriginDays(suggestion)),
+        suggestion.destinationStock,
+        decimal(suggestion.destinationStockDays),
+        decimal(getAdjustedDestinationDays(suggestion)),
+        suggestion.routePriority,
+        [
+          !suggestion.erpCode && suggestion.quantity > 0 ? 'SEM_ERP' : '',
+          suggestion.quantity !== suggestion.maxQuantity ? 'MANUAL' : '',
+          suggestion.routePriority >= maxRoutePriority && suggestion.quantity > 0 ? 'ROTA_LIMITE' : '',
+          problemSuggestionIds.has(suggestion.id) ? 'REVISAR' : 'OK',
+        ].filter(Boolean).join('|'),
+      ]),
+    ];
+    const csv = rows.map((row) => row.map(csvValue).join(';')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'conferencia-remanejamento.csv';
+    link.click();
+    URL.revokeObjectURL(url);
+    addReallocationAuditLog({
+      action: 'CSV conferencia',
+      detail: `${transferSuggestions.length} linhas exportadas`,
+      count: transferSuggestions.length,
+      units: transferSuggestions.reduce((sum, suggestion) => sum + suggestion.quantity, 0),
+    });
   };
 
   const startSuggestionColumnResize = (event: ReactMouseEvent, key: SuggestionColumnKey) => {
@@ -808,6 +1346,8 @@ export function ReallocationManager() {
     switch (column.key) {
       case 'description':
         return <td key={column.key} className={`${baseClass} font-bold uppercase text-slate-900`}>{suggestion.description}</td>;
+      case 'ean':
+        return <td key={column.key} className={`${baseClass} font-bold text-slate-700`}>{suggestion.ean || ''}</td>;
       case 'originName':
         return <td key={column.key} className={`${baseClass} font-bold text-slate-900`}>{suggestion.originName}</td>;
       case 'originStock':
@@ -826,8 +1366,8 @@ export function ReallocationManager() {
         const allocation = getOriginAllocation(suggestion);
         const isOverAllocated = isSuggestionOverAllocated(suggestion);
         return (
-          <td key={column.key} className={`border-2 px-2 py-1.5 text-right ${isOverAllocated ? 'border-red-300 bg-red-50' : isSuggestionManuallyChanged(suggestion) ? 'border-amber-300 bg-amber-50' : 'border-emerald-200 bg-emerald-50'}`}>
-            <div className={`mx-auto w-24 border-2 bg-white shadow-inner focus-within:ring-2 ${isOverAllocated ? 'border-red-300 focus-within:border-red-600 focus-within:ring-red-200' : isSuggestionManuallyChanged(suggestion) ? 'border-amber-300 focus-within:border-amber-600 focus-within:ring-amber-200' : 'border-emerald-300 focus-within:border-emerald-600 focus-within:ring-emerald-200'}`}>
+          <td key={column.key} className={`border-2 px-2 py-1.5 text-right ${isOverAllocated ? 'border-red-300 bg-red-50' : isSuggestionManuallyChanged(suggestion) ? 'border-violet-400 bg-violet-50' : 'border-emerald-200 bg-emerald-50'}`}>
+            <div className={`mx-auto w-24 border-2 bg-white shadow-inner focus-within:ring-2 ${isOverAllocated ? 'border-red-300 focus-within:border-red-600 focus-within:ring-red-200' : isSuggestionManuallyChanged(suggestion) ? 'border-violet-400 focus-within:border-violet-700 focus-within:ring-violet-200' : 'border-emerald-300 focus-within:border-emerald-600 focus-within:ring-emerald-200'}`}>
               <input
                 data-transfer-index={suggestionIndex}
                 type="text"
@@ -856,11 +1396,11 @@ export function ReallocationManager() {
                   event.preventDefault();
                   pasteSuggestionQuantities(suggestionIndex, pastedText);
                 }}
-                className={`h-7 w-full bg-transparent px-2 text-right font-black outline-none ${isOverAllocated ? 'text-red-700' : isSuggestionManuallyChanged(suggestion) ? 'text-amber-700' : 'text-emerald-700'}`}
+                className={`h-7 w-full bg-transparent px-2 text-right font-black outline-none ${isOverAllocated ? 'text-red-700' : isSuggestionManuallyChanged(suggestion) ? 'text-violet-700' : 'text-emerald-700'}`}
               />
             </div>
             {(isSuggestionManuallyChanged(suggestion) || isOverAllocated) && (
-              <p className={`mt-1 text-[9px] font-black uppercase ${isOverAllocated ? 'text-red-700' : 'text-amber-700'}`}>
+              <p className={`mt-1 text-[9px] font-black uppercase tracking-wide ${isOverAllocated ? 'text-red-700' : 'text-violet-700'}`}>
                 {isOverAllocated ? `Excede ${wholeNumber((allocation?.allocated || 0) - (allocation?.stock || 0))}` : 'Manual'}
               </p>
             )}
@@ -887,79 +1427,77 @@ export function ReallocationManager() {
       case 'erpCode':
         return <td key={column.key} className={`${baseClass} font-black text-violet-700`}>{suggestion.erpCode}</td>;
       case 'routePriority':
-        return <td key={column.key} className={baseClass}>{suggestion.routePriority}</td>;
+        return (
+          <td key={column.key} className={`${baseClass} ${suggestion.routePriority >= maxRoutePriority && suggestion.quantity > 0 ? 'bg-amber-50 font-black text-amber-700' : ''}`}>
+            {suggestion.routePriority}
+          </td>
+        );
       case 'actions':
         return (
           <td key={column.key} className="border border-slate-200 px-2 py-1.5 text-center">
-            <button
-              type="button"
-              onClick={() => removeSuggestion(suggestion.id)}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-red-50 text-red-600"
-              title="Remover sugestao"
-            >
-              <Trash2 size={15} />
-            </button>
+            <div className="flex items-center justify-center gap-1">
+              {isSuggestionManuallyChanged(suggestion) && (
+                <button
+                  type="button"
+                  onClick={() => restoreSuggestionQuantity(suggestion.id)}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-violet-50 text-violet-700"
+                  title="Restaurar sugestão original"
+                >
+                  <RotateCcw size={15} />
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => removeSuggestion(suggestion.id)}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-red-50 text-red-600"
+                title="Remover sugestão"
+              >
+                <Trash2 size={15} />
+              </button>
+            </div>
           </td>
         );
     }
   };
 
-  return (
-    <main className="reallocation-workbench w-full max-w-none px-3 sm:px-5 py-6 sm:py-8 pb-24 md:pb-8">
-      <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 mb-6">
-        <div className="flex items-center gap-4">
-          <div className="w-14 h-14 rounded-2xl bg-violet-600 text-white flex items-center justify-center shadow-md">
-            <Shuffle size={28} />
-          </div>
-          <div>
-            <h1 className="text-3xl sm:text-4xl font-black uppercase tracking-tight text-slate-900">Balacubaco</h1>
-            <p className="text-sm font-bold text-slate-500">Base de produtos e conversao EAN para codigo ERP do remanejamento.</p>
-          </div>
-        </div>
+  const toggleCurvePriority = (
+    curve: string,
+    selectedCurves: string[],
+    setSelectedCurves: (value: string[]) => void,
+  ) => {
+    setSelectedCurves(
+      selectedCurves.includes(curve)
+        ? selectedCurves.filter((item) => item !== curve)
+        : [...selectedCurves, curve],
+    );
+  };
 
-        <div className="flex flex-wrap gap-2">
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".csv"
-            className="hidden"
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              if (file) importCatalog(file);
-            }}
-          />
-          <input
-            ref={stockInputRef}
-            type="file"
-            accept=".csv,.xlsx,.xls"
-            className="hidden"
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              if (file) importStock(file);
-            }}
-          />
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={importing}
-            className="h-11 px-4 rounded-2xl bg-white border-2 border-slate-100 font-black uppercase text-[10px] flex items-center gap-2 disabled:opacity-50"
-          >
-            <Upload size={16} /> {importing ? 'Importando...' : 'Importar CSV'}
-          </button>
-          <button
-            onClick={() => stockInputRef.current?.click()}
-            disabled={stockImporting}
-            className="h-11 px-4 rounded-2xl bg-white border-2 border-slate-100 font-black uppercase text-[10px] flex items-center gap-2 disabled:opacity-50"
-          >
-            <Database size={16} /> {stockImporting ? 'Importando...' : 'Importar estoque'}
-          </button>
-          <button onClick={() => loadProducts(searchTerm)} className="h-11 px-4 rounded-2xl bg-white border-2 border-slate-100 font-black uppercase text-[10px] flex items-center gap-2">
-            <RefreshCcw size={16} /> Atualizar
-          </button>
-          <button onClick={exportExampleTxt} className="h-11 px-4 rounded-2xl bg-violet-600 text-white font-black uppercase text-[10px] flex items-center gap-2">
-            <Download size={16} /> Modelo TXT
-          </button>
-        </div>
-      </div>
+  const dataImportPermissionTitle = canImportData ? undefined : getPermissionDeniedMessage('importar dados do remanejamento inteligente', 'supremeAdmin');
+  const generatePermissionTitle = canGenerateSuggestions ? undefined : getPermissionDeniedMessage('gerar sugestoes de remanejamento inteligente', 'supremeAdmin');
+  const exportPermissionTitle = canExport ? undefined : getPermissionDeniedMessage('exportar remanejamento inteligente', 'supremeAdmin');
+
+  return (
+    <main className="reallocation-workbench flex h-[calc(100dvh-4rem)] w-full max-w-none flex-col overflow-hidden px-2 py-2 sm:px-3 sm:py-2">
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".csv"
+        className="hidden"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          if (file) importCatalog(file);
+        }}
+      />
+      <input
+        ref={stockInputRef}
+        type="file"
+        accept=".csv,.xlsx,.xls"
+        className="hidden"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          if (file) importStock(file);
+        }}
+      />
 
       {errorMessage && (
         <div className="mb-5 rounded-2xl border-2 border-amber-200 bg-amber-50 p-4 text-sm font-bold text-amber-800">
@@ -967,265 +1505,330 @@ export function ReallocationManager() {
         </div>
       )}
 
-      <section className="mt-6 overflow-visible rounded-[18px] border border-slate-200 bg-white shadow-sm">
-        <div className="flex items-center justify-between border-b border-slate-200 bg-slate-100 px-3 py-1.5">
-          <div>
-            <h2 className="text-xs font-black uppercase text-slate-800">Remanejamento</h2>
-            <p className="text-[10px] font-bold text-slate-500">Filtros, sugestoes e exportacao ERP em uma grade compacta.</p>
+      <section className="flex min-h-0 flex-1 flex-col overflow-visible rounded-[12px] border border-slate-200 bg-white shadow-sm">
+        <div className="relative z-[90] grid gap-1.5 border-b border-slate-300 bg-slate-100/80 p-1.5 xl:grid-cols-[minmax(980px,1fr)_420px_150px]">
+          <div className="min-w-0">
+            <div className="grid grid-cols-1 items-start gap-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
+              <QuickFilterBox
+                title="Un. Negocio Origem"
+                columns={['Codigo', 'Apelido', 'Cidade']}
+                placeholder="Informe apelido, código ou CNPJ da loja origem"
+                options={branchOptions}
+                selected={originFilters}
+                onChange={setOriginFilters}
+                hideInitialOptions
+              />
+              <QuickFilterBox
+                title="Un. Negocio Destino"
+                columns={['Codigo', 'Apelido', 'Cidade']}
+                placeholder="Informe apelido, código ou CNPJ da loja destino"
+                options={branchOptions}
+                selected={destinationFilters}
+                onChange={setDestinationFilters}
+                hideInitialOptions
+              />
+              <QuickFilterBox
+                title="Produto"
+                columns={['Descricao', 'Codigo ERP', 'EAN', 'Fabricante', 'Classificacao']}
+                placeholder="Informe Cod. de Barras, código ERP ou descrição"
+                options={productOptions}
+                selected={productFilters}
+                onChange={setProductFilters}
+                onQuickSearch={searchProductOptions}
+                hideInitialOptions
+              />
+              <QuickFilterBox
+                title="Fabricante"
+                columns={['Nome']}
+                placeholder="Informe o nome do fabricante"
+                options={[]}
+                selected={manufacturerFilters}
+                onChange={setManufacturerFilters}
+                onQuickSearch={searchManufacturerOptions}
+                allowManual
+              />
+              <QuickFilterBox
+                title="Classificacao"
+                columns={['Caminho']}
+                placeholder="Informe o nome da classificacao"
+                options={[]}
+                selected={classificationFilters}
+                onChange={setClassificationFilters}
+                onQuickSearch={searchClassificationOptions}
+                allowManual
+                alignPopup="right"
+              />
+              <CurvePriorityBox
+                title="Curva origem"
+                selectedCurves={originCurvePriority}
+                onToggle={(curve) => toggleCurvePriority(curve, originCurvePriority, setOriginCurvePriority)}
+                onClear={() => setOriginCurvePriority([])}
+                tone="violet"
+              />
+              <CurvePriorityBox
+                title="Curva destino"
+                selectedCurves={destinationCurvePriority}
+                onToggle={(curve) => toggleCurvePriority(curve, destinationCurvePriority, setDestinationCurvePriority)}
+                onClear={() => setDestinationCurvePriority([])}
+                tone="emerald"
+              />
+            </div>
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] font-black uppercase">
+              <button
+                type="button"
+                onClick={() => {
+                  setProductFilters([]);
+                  setOriginFilters([]);
+                  setDestinationFilters([]);
+                  setClassificationFilters([]);
+                  setManufacturerFilters([]);
+                  setOriginCurvePriority([]);
+                  setDestinationCurvePriority([]);
+                }}
+                className="h-6 rounded-md border border-slate-200 bg-white px-2 text-[9px] text-violet-700 shadow-sm hover:border-violet-300"
+              >
+                Limpar filtros
+              </button>
+              <span className={activeSuggestionFilterCount > 0 ? 'text-red-600' : 'text-slate-400'}>
+                {activeSuggestionFilterCount} filtros ativos
+              </span>
+              <span className="hidden sm:inline text-slate-400">Perfil: {SUGGESTION_PROFILES[suggestionProfile].label}</span>
+              <span className="hidden sm:inline text-slate-400">Seguranca: {originMinimumDays} dias</span>
+            </div>
           </div>
-          <span className="text-[10px] font-black uppercase text-slate-400">
-            {transferSuggestions.length.toLocaleString('pt-BR')} linhas
-          </span>
-        </div>
 
-        <div className="relative z-[90] border-b border-slate-300 bg-slate-100/70 px-1.5 py-1.5">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-1 items-start">
-            <QuickFilterBox
-              title="Un. Negocio Origem"
-              columns={['Codigo', 'Apelido', 'Cidade']}
-              placeholder="Informe apelido, codigo ou CNPJ da loja origem"
-              options={branchOptions}
-              selected={originFilters}
-              onChange={setOriginFilters}
-              hideInitialOptions
-            />
-            <QuickFilterBox
-              title="Un. Negocio Destino"
-              columns={['Codigo', 'Apelido', 'Cidade']}
-              placeholder="Informe apelido, codigo ou CNPJ da loja destino"
-              options={branchOptions}
-              selected={destinationFilters}
-              onChange={setDestinationFilters}
-              hideInitialOptions
-            />
-            <QuickFilterBox
-              title="Classificacao"
-              columns={['Caminho']}
-              placeholder="Informe o nome da classificacao"
-              options={[]}
-              selected={classificationFilters}
-              onChange={setClassificationFilters}
-              onQuickSearch={searchClassificationOptions}
-              allowManual
-            />
-            <QuickFilterBox
-              title="Fabricante"
-              columns={['Nome']}
-              placeholder="Informe o nome do fabricante"
-              options={[]}
-              selected={manufacturerFilters}
-              onChange={setManufacturerFilters}
-              onQuickSearch={searchManufacturerOptions}
-              allowManual
-            />
-            <QuickFilterBox
-              title="Produto"
-              columns={['Descricao', 'Codigo ERP', 'EAN', 'Fabricante', 'Classificacao']}
-              placeholder="Informe Cod. de Barras, codigo ERP ou descricao"
-              options={productOptions}
-              selected={productFilters}
-              onChange={setProductFilters}
-              onQuickSearch={searchProductOptions}
-              hideInitialOptions
-              alignPopup="right"
-            />
+          <div className="grid grid-cols-2 gap-1 sm:grid-cols-4 xl:grid-cols-4">
+            <StatusMetric label="Exportaveis" value={suggestionExportStats.exportableLines.toLocaleString('pt-BR')} helper={`${suggestionExportStats.exportableUnits.toLocaleString('pt-BR')} un.`} tone="emerald" compact />
+            <StatusMetric label="Sem ERP" value={suggestionExportStats.missingErpCodeLines.toLocaleString('pt-BR')} helper="fora TXT" tone="amber" compact />
+            <StatusMetric label="Excedidas" value={overAllocatedOrigins.length.toLocaleString('pt-BR')} helper="bloqueia" tone="red" compact />
+            <StatusMetric label="Estoque" value={stockItems.length.toLocaleString('pt-BR')} tone="indigo" compact />
+            <StatusMetric label="Sugestões" value={transferSuggestions.length.toLocaleString('pt-BR')} tone="violet" compact />
+            <StatusMetric label="Unidades" value={transferSuggestions.reduce((sum, item) => sum + item.quantity, 0).toLocaleString('pt-BR')} tone="violet" compact />
+            <StatusMetric label="Produtos mov." value={new Set(transferSuggestions.map((item) => item.ean)).size.toLocaleString('pt-BR')} tone="violet" compact />
+            <StatusMetric label="Produtos" value={totalProducts.toLocaleString('pt-BR')} compact />
           </div>
-        </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-white px-3 py-2">
-          <div className="flex flex-wrap items-center gap-3 text-[10px] font-black uppercase">
+          <div className="relative grid grid-cols-2 gap-1">
             <button
               type="button"
-              onClick={() => {
-                setProductFilters([]);
-                setOriginFilters([]);
-                setDestinationFilters([]);
-                setClassificationFilters([]);
-                setManufacturerFilters([]);
-              }}
-              className="h-8 rounded-md border border-slate-200 bg-slate-50 px-3 text-slate-700 hover:border-violet-300 hover:text-violet-700"
+              onClick={() => setShowAdvancedRules(true)}
+              className="h-9 rounded-md border border-slate-200 bg-white px-2 text-[10px] font-black uppercase text-slate-700 shadow-sm hover:border-violet-300 hover:text-violet-700"
             >
-              Limpar filtros
+              <SlidersHorizontal size={13} className="mr-1 inline-block" /> Perfil
             </button>
-            <span className={activeSuggestionFilterCount > 0 ? 'text-red-600' : 'text-slate-400'}>
-              {activeSuggestionFilterCount} filtros ativos
-            </span>
-            <span className="hidden sm:inline text-slate-400">Perfil: {SUGGESTION_PROFILES[suggestionProfile].label}</span>
-            <span className="hidden sm:inline text-slate-400">Seguranca: {originMinimumDays} dias</span>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setShowDataActions((current) => !current)}
+                className="h-9 w-full rounded-md border border-slate-200 bg-white px-2 text-[10px] font-black uppercase text-slate-700 shadow-sm hover:border-violet-300 hover:text-violet-700"
+              >
+                <Database size={13} className="mr-1 inline-block" /> Dados
+              </button>
+              {showDataActions && (
+                <>
+                  <div className="fixed inset-0 z-[95]" onClick={() => setShowDataActions(false)} />
+                  <div className="absolute right-0 top-[calc(100%+6px)] z-[100] w-56 rounded-xl border border-slate-200 bg-white p-1.5 shadow-2xl">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowDataActions(false);
+                        fileInputRef.current?.click();
+                      }}
+                      disabled={importing || !canImportData}
+                      title={dataImportPermissionTitle}
+                      className="flex h-9 w-full items-center gap-2 rounded-lg px-3 text-left text-[10px] font-black uppercase text-slate-700 hover:bg-violet-50 disabled:opacity-50"
+                    >
+                      <Upload size={13} /> {importing ? 'Importando...' : 'Importar CSV'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowDataActions(false);
+                        stockInputRef.current?.click();
+                      }}
+                      disabled={stockImporting || !canImportData}
+                      title={dataImportPermissionTitle}
+                      className="flex h-9 w-full items-center gap-2 rounded-lg px-3 text-left text-[10px] font-black uppercase text-slate-700 hover:bg-violet-50 disabled:opacity-50"
+                    >
+                      <Database size={13} /> {stockImporting ? 'Importando...' : 'Importar estoque'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowDataActions(false);
+                        loadProducts(searchTerm);
+                      }}
+                      className="flex h-9 w-full items-center gap-2 rounded-lg px-3 text-left text-[10px] font-black uppercase text-slate-700 hover:bg-violet-50"
+                    >
+                      <RefreshCcw size={13} /> Atualizar base
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowDataActions(false);
+                        exportExampleTxt();
+                      }}
+                      className="flex h-9 w-full items-center gap-2 rounded-lg px-3 text-left text-[10px] font-black uppercase text-violet-700 hover:bg-violet-50"
+                    >
+                      <Download size={13} /> Modelo TXT
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
             <button
               type="button"
-              onClick={() => setShowAdvancedRules((value) => !value)}
-              className="h-8 rounded-md border border-slate-200 bg-slate-50 px-3 text-[10px] font-black uppercase text-slate-700 hover:border-violet-300 hover:text-violet-700"
+              onClick={exportSuggestionsTxt}
+              disabled={!canExport || transferSuggestions.length === 0 || blockingExportIssues.length > 0}
+              title={!canExport ? exportPermissionTitle : blockingExportIssues.length > 0 ? `${blockingExportIssues[0].title}: ${blockingExportIssues[0].detail}` : 'Exportar TXT'}
+              className="h-9 rounded-md bg-slate-900 px-2 text-[10px] font-black uppercase text-white shadow-sm disabled:opacity-40"
             >
-              <SlidersHorizontal size={13} className="inline-block mr-1" /> Perfil
+              <Download size={13} className="mr-1 inline-block" /> TXT
+            </button>
+            <button
+              type="button"
+              onClick={exportConferenceCsv}
+              disabled={!canExport || transferSuggestions.length === 0}
+              title={exportPermissionTitle}
+              className="h-9 rounded-md border border-slate-200 bg-white px-2 text-[10px] font-black uppercase text-slate-500 shadow-sm hover:border-violet-300 hover:text-violet-700 disabled:opacity-40"
+            >
+              <FileSpreadsheet size={13} className="mr-1 inline-block" /> CSV
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowReallocationHistory(true)}
+              className="h-9 rounded-md border border-slate-200 bg-white px-2 text-[10px] font-black uppercase text-slate-700 shadow-sm hover:border-violet-300 hover:text-violet-700"
+            >
+              <Clock size={13} className="mr-1 inline-block" /> Histórico
             </button>
             <button
               type="button"
               onClick={generateTransferSuggestions}
-              disabled={!stockSnapshot || stockLoading || generatingSuggestions}
-              className="h-8 rounded-md bg-violet-600 px-3 text-[10px] font-black uppercase text-white disabled:opacity-40"
+              disabled={!canGenerateSuggestions || !stockSnapshot || stockLoading || generatingSuggestions}
+              title={generatePermissionTitle}
+              className="col-span-2 h-10 rounded-md bg-violet-600 px-2 text-[10px] font-black uppercase text-white shadow-sm disabled:opacity-40"
             >
-              <Shuffle size={13} className="inline-block mr-1" /> {stockLoading ? 'Carregando' : generatingSuggestions ? 'Gerando' : 'Atualizar'}
-            </button>
-            <button
-              type="button"
-              onClick={exportSuggestionsTxt}
-              disabled={transferSuggestions.length === 0}
-              className="h-8 rounded-md bg-slate-900 px-3 text-[10px] font-black uppercase text-white disabled:opacity-40"
-            >
-              <Download size={13} className="inline-block mr-1" /> TXT
+              <Shuffle size={13} className="mr-1 inline-block" /> {stockLoading ? 'Carregando' : generatingSuggestions ? 'Gerando' : 'Atualizar'}
             </button>
           </div>
         </div>
 
-        {showAdvancedRules && (
-        <div className="border-b border-slate-200 bg-slate-50 px-3 py-3">
-        <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
-          <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 mb-4">
-            <div>
-              <p className="text-[10px] font-black uppercase tracking-widest text-violet-500">Motor de sugestao</p>
-              <p className="text-sm font-bold text-slate-700">Escolha a intensidade do remanejamento e preserve estoque minimo na origem.</p>
-              <p className="mt-1 text-[11px] font-bold text-slate-400">Lojas de UFs diferentes continuam bloqueadas automaticamente.</p>
-            </div>
-            <button
-              type="button"
-              onClick={() => setShowAdvancedRules((value) => !value)}
-              className="h-10 px-4 rounded-2xl bg-slate-900 border border-slate-900 text-white font-black uppercase text-[10px] flex items-center gap-2 shadow-sm"
-            >
-              <SlidersHorizontal size={15} /> {showAdvancedRules ? 'Ocultar ajustes' : 'Ajustes avancados'}
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
-            {(Object.keys(SUGGESTION_PROFILES) as SuggestionProfile[]).map((profile) => {
-              const preset = SUGGESTION_PROFILES[profile];
-              const isSelected = suggestionProfile === profile;
-              return (
-                <button
-                  key={profile}
-                  type="button"
-                  onClick={() => applySuggestionProfile(profile)}
-                  className={`rounded-2xl border-2 p-4 text-left transition-all ${
-                    isSelected
-                      ? 'border-violet-600 bg-violet-50 shadow-[0_10px_24px_rgba(124,58,237,0.12)]'
-                      : 'border-slate-100 bg-slate-50/70 hover:border-slate-300 hover:bg-white'
-                  }`}
-                >
-                  <span className="mb-3 flex items-center justify-between gap-2">
-                    <span className={`block text-sm font-black uppercase ${isSelected ? 'text-violet-700' : 'text-slate-800'}`}>{preset.label}</span>
-                    <span className={`h-3 w-3 rounded-full border-2 ${isSelected ? 'border-violet-600 bg-violet-600' : 'border-slate-300 bg-white'}`} />
-                  </span>
-                  <span className="mt-1 block text-xs font-bold text-slate-500">{preset.description}</span>
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="mt-4 grid grid-cols-1 lg:grid-cols-[1fr_260px] gap-3 items-center rounded-2xl border border-slate-100 bg-slate-50/80 p-4">
-            <div>
-              <span className="text-[10px] font-black uppercase tracking-widest text-violet-500">Estoque de seguranca origem</span>
-              <span className="block text-xs font-bold text-slate-500 mt-1">A origem mantem cobertura para esses dias; somente o excedente entra na sugestao.</span>
-            </div>
-            <NumberStepper
-              value={originMinimumDays}
-              onChange={setOriginMinimumDays}
-              min={0}
-              max={90}
-              suffix="dias"
-            />
-          </div>
-
-            <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
-              <TransferRuleInput
-                label="Destino ate dias"
-                value={needDaysThreshold}
-                onChange={setNeedDaysThreshold}
-                min={0}
-                max={365}
-              />
-              <TransferRuleInput
-                label="Meta destino"
-                value={destinationTargetDays}
-                onChange={setDestinationTargetDays}
-                min={1}
-                max={365}
-              />
-              <TransferRuleInput
-                label="Limite rota"
-                value={maxRoutePriority}
-                onChange={setMaxRoutePriority}
-                min={0}
-                max={10}
-              />
-            </div>
-        </div>
-        </div>
-        )}
-
-        {suggestionMessage && (
-          <div className="mb-4 rounded-2xl border border-violet-100 bg-violet-50 px-4 py-3 text-sm font-bold text-violet-800">
-            {suggestionMessage}
-          </div>
-        )}
-
-        {suggestionDiagnostic && (
-          <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-4">
-            <div className="mb-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-              <div>
-                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Diagnostico do calculo</p>
-                <p className="text-xs font-bold text-slate-500">Motor usado: {suggestionDiagnostic.engine === 'python' ? 'Python' : suggestionDiagnostic.engine === 'fallback' ? 'Fallback local' : 'TypeScript server'}</p>
-              </div>
-              <span className="rounded-full bg-slate-100 px-3 py-1 text-[10px] font-black uppercase text-slate-500">
-                {suggestionDiagnostic.stockRows.toLocaleString('pt-BR')} linhas analisadas
+        {(suggestionMessage || suggestionDiagnostic || originSummary.length > 0) && (
+          <div className="flex flex-wrap items-center gap-1.5 border-b border-slate-200 bg-white px-3 py-1.5 text-[10px] font-black uppercase">
+            {suggestionMessage && (
+              <span className="max-w-full truncate rounded-md border border-violet-100 bg-violet-50 px-2 py-1 text-violet-700">
+                {suggestionMessage}
               </span>
-            </div>
-            <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-2">
-              <DiagnosticCard label="Produtos" value={suggestionDiagnostic.productGroups} />
-              <DiagnosticCard label="Origens ok" value={suggestionDiagnostic.eligibleOrigins} />
-              <DiagnosticCard label="Destinos ok" value={suggestionDiagnostic.eligibleDestinations} />
-              <DiagnosticCard label="Sugestoes" value={suggestionDiagnostic.suggestions} accent />
-              <DiagnosticCard label="Sem ERP" value={suggestionDiagnostic.missingErpCode} warning={suggestionDiagnostic.missingErpCode > 0} />
-              <DiagnosticCard label="UF bloqueada" value={suggestionDiagnostic.blockedDifferentUf} warning={suggestionDiagnostic.blockedDifferentUf > 0} />
-              <DiagnosticCard label="Rota bloqueada" value={suggestionDiagnostic.blockedRoute} warning={suggestionDiagnostic.blockedRoute > 0} />
-              <DiagnosticCard label="Perfil" value={originMinimumDays} suffix=" dias" />
-            </div>
+            )}
+            {suggestionDiagnostic && (
+              <>
+                <span className="rounded-md bg-slate-100 px-2 py-1 text-slate-500">
+                  {suggestionDiagnostic.engine === 'python' ? 'Python' : suggestionDiagnostic.engine === 'fallback' ? 'Fallback' : 'TypeScript'}
+                </span>
+                <span className="rounded-md bg-slate-100 px-2 py-1 text-slate-500">
+                  {suggestionDiagnostic.stockRows.toLocaleString('pt-BR')} linhas
+                </span>
+                <span className="rounded-md bg-slate-100 px-2 py-1 text-slate-500">
+                  {suggestionDiagnostic.productGroups.toLocaleString('pt-BR')} produtos
+                </span>
+                <span className="rounded-md bg-violet-50 px-2 py-1 text-violet-700">
+                  {suggestionDiagnostic.suggestions.toLocaleString('pt-BR')} sugestões
+                </span>
+                {(suggestionDiagnostic.missingErpCode > 0 || suggestionDiagnostic.blockedDifferentUf > 0 || suggestionDiagnostic.blockedRoute > 0) && (
+                  <span className="rounded-md bg-amber-50 px-2 py-1 text-amber-700">
+                    Alertas {(suggestionDiagnostic.missingErpCode + suggestionDiagnostic.blockedDifferentUf + suggestionDiagnostic.blockedRoute).toLocaleString('pt-BR')}
+                  </span>
+                )}
+              </>
+            )}
+            {originSummary.slice(0, 4).map((origin) => (
+              <span key={origin.originName} className={`rounded-md px-2 py-1 ${origin.exceeded > 0 ? 'bg-red-50 text-red-700' : 'bg-slate-50 text-slate-600'}`}>
+                {origin.originName}: {wholeNumber(origin.units)} un.
+              </span>
+            ))}
           </div>
         )}
 
-        <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-9 gap-px border-b border-slate-200 bg-slate-200">
-          <StatusMetric label="Produtos" value={totalProducts.toLocaleString('pt-BR')} />
-          <StatusMetric label="Estoque" value={stockItems.length.toLocaleString('pt-BR')} tone="indigo" />
-          <StatusMetric label="Sugestoes" value={transferSuggestions.length.toLocaleString('pt-BR')} tone="violet" />
-          <StatusMetric label="Unidades" value={transferSuggestions.reduce((sum, item) => sum + item.quantity, 0).toLocaleString('pt-BR')} tone="violet" />
-          <StatusMetric label="Produtos mov." value={new Set(transferSuggestions.map((item) => item.ean)).size.toLocaleString('pt-BR')} tone="violet" />
-          <StatusMetric label="Exportaveis" value={suggestionExportStats.exportableLines.toLocaleString('pt-BR')} helper={`${suggestionExportStats.exportableUnits.toLocaleString('pt-BR')} un.`} tone="emerald" />
-          <StatusMetric label="Sem ERP" value={suggestionExportStats.missingErpCodeLines.toLocaleString('pt-BR')} helper="fora TXT" tone="amber" />
-          <StatusMetric label="Excedidas" value={overAllocatedOrigins.length.toLocaleString('pt-BR')} helper="bloqueia" tone="red" />
-          <StatusMetric label="Filtros" value={activeSuggestionFilterCount.toLocaleString('pt-BR')} />
-        </div>
-
-        {overAllocatedOrigins.length > 0 && (
-          <div className="mx-3 mt-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-800">
-            Existem produtos com soma de transferencias maior que o estoque da origem. Ajuste as linhas em vermelho antes de exportar.
+        {suggestionExportIssues.length > 0 && (
+          <div className={`mx-3 mt-3 rounded-xl border px-4 py-3 ${
+            blockingExportIssues.length > 0 ? 'border-red-200 bg-red-50 text-red-800' : 'border-amber-200 bg-amber-50 text-amber-800'
+          }`}>
+            <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-widest">
+                  {blockingExportIssues.length > 0 ? 'Exportação bloqueada' : 'Revise antes de exportar'}
+                </p>
+                <p className="text-sm font-bold">
+                  {blockingExportIssues.length > 0
+                    ? 'Corrija os bloqueios abaixo para liberar o TXT.'
+                    : 'Ha ajustes manuais ou linhas ignoradas que merecem conferencia.'}
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {suggestionExportIssues.slice(0, 4).map((issue) => (
+                  <div key={issue.id} className="max-w-[320px] rounded-lg border border-current/20 bg-white/70 px-3 py-2">
+                    <p className="text-[10px] font-black uppercase">{issue.title}</p>
+                    <p className="truncate text-xs font-bold opacity-80">{issue.detail}</p>
+                  </div>
+                ))}
+                {suggestionExportIssues.length > 4 && (
+                  <div className="rounded-lg border border-current/20 bg-white/70 px-3 py-2 text-[10px] font-black uppercase">
+                    + {suggestionExportIssues.length - 4}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         )}
 
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2">
-          <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">
-            Arraste cabeçalhos para ordenar. Puxe a borda direita para ajustar largura.
-          </p>
-          <button
-            type="button"
-            onClick={resetSuggestionColumns}
-            className="h-8 rounded-md bg-slate-100 px-3 text-[10px] font-black uppercase text-slate-600"
-          >
-            Restaurar colunas
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowOnlyProblemSuggestions((current) => !current)}
+              disabled={problemSuggestionIds.size === 0}
+              className={`h-8 rounded-md px-3 text-[10px] font-black uppercase disabled:opacity-40 ${showOnlyProblemSuggestions ? 'bg-slate-900 text-white' : 'bg-amber-50 text-amber-700'}`}
+            >
+              {showOnlyProblemSuggestions ? 'Mostrar todos' : 'So problemas'}
+            </button>
+            <button
+              type="button"
+              onClick={resetSuggestionColumns}
+              className="h-8 rounded-md bg-slate-100 px-3 text-[10px] font-black uppercase text-slate-600"
+            >
+              Restaurar colunas
+            </button>
+          </div>
+          <div className="ml-auto flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto">
+            {suggestionTableSearch && (
+              <span className="rounded-md bg-white px-2 py-1 text-[10px] font-black uppercase text-slate-500 shadow-sm">
+                {sortedTransferSuggestions.length.toLocaleString('pt-BR')} de {tableSearchBaseCount.toLocaleString('pt-BR')}
+              </span>
+            )}
+            <div className="relative w-full sm:w-[360px] xl:w-[440px]">
+              <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="search"
+                value={suggestionTableSearch}
+                onChange={(event) => setSuggestionTableSearch(event.target.value)}
+                placeholder="Pesquisar na tabela..."
+                className="h-9 w-full rounded-md border border-slate-200 bg-white px-9 text-xs font-bold text-slate-800 outline-none shadow-sm placeholder:text-slate-400 focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+              />
+              {suggestionTableSearch && (
+                <button
+                  type="button"
+                  onClick={() => setSuggestionTableSearch('')}
+                  className="absolute right-2 top-1/2 inline-flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded bg-slate-100 text-slate-500 hover:text-red-600"
+                  aria-label="Limpar pesquisa da tabela"
+                >
+                  <X size={12} />
+                </button>
+              )}
+            </div>
+          </div>
         </div>
 
-        <div className="max-h-[calc(100vh-240px)] overflow-auto">
+        <div className="min-h-0 flex-1 overflow-auto">
           <table className="w-full border-collapse text-sm whitespace-nowrap" style={{ minWidth: suggestionTableWidth }}>
             <colgroup>
               {orderedSuggestionColumns.map((column) => (
@@ -1239,14 +1842,14 @@ export function ReallocationManager() {
             </thead>
             <tbody>
               {sortedTransferSuggestions.map((suggestion, suggestionIndex) => (
-                <tr key={suggestion.id} className={`${isSuggestionOverAllocated(suggestion) ? 'bg-red-50 hover:bg-red-100' : isSuggestionManuallyChanged(suggestion) ? 'bg-amber-50 hover:bg-amber-100' : 'even:bg-slate-50 hover:bg-yellow-50'}`}>
+                <tr key={suggestion.id} className={`${isSuggestionOverAllocated(suggestion) ? 'bg-red-50 hover:bg-red-100' : isSuggestionManuallyChanged(suggestion) ? 'bg-violet-50 shadow-[inset_4px_0_0_#7c3aed] hover:bg-violet-100' : 'even:bg-slate-50 hover:bg-yellow-50'}`}>
                   {orderedSuggestionColumns.map((column) => renderSuggestionCell(suggestion, suggestionIndex, column))}
                 </tr>
               ))}
-              {transferSuggestions.length === 0 && (
+              {sortedTransferSuggestions.length === 0 && (
                 <tr>
-                  <td colSpan={orderedSuggestionColumns.length} className="border border-slate-200 px-3 py-12 text-center text-[10px] font-black uppercase tracking-widest text-slate-300">
-                    Gere as sugestoes apos importar o estoque
+                  <td colSpan={orderedSuggestionColumns.length} className="h-72 border border-slate-200 px-3 text-center align-middle text-[10px] font-black uppercase tracking-widest text-slate-300">
+                    {suggestionTableSearch ? 'Nenhuma linha encontrada na pesquisa' : showOnlyProblemSuggestions ? 'Nenhuma linha com problema encontrada' : 'Gere as sugestões após importar o estoque'}
                   </td>
                 </tr>
               )}
@@ -1255,23 +1858,215 @@ export function ReallocationManager() {
         </div>
       </section>
 
-      <div className="mt-5 grid grid-cols-1 lg:grid-cols-3 gap-3">
-        <div className="bg-white border-2 border-slate-100 rounded-2xl p-4">
-          <PackageSearch size={18} className="text-violet-600 mb-2" />
-          <p className="text-[10px] font-black uppercase text-slate-400">Proxima etapa</p>
-          <p className="text-sm font-bold text-slate-700 mt-1">Importar estoque por filial, venda media e dias de cobertura.</p>
+      {showAdvancedRules && (
+        <div
+          className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-900/16 p-3 backdrop-blur-sm"
+          onMouseDown={() => setShowAdvancedRules(false)}
+        >
+          <div
+            className="w-full max-w-[900px] overflow-hidden rounded-xl border border-slate-300 bg-white shadow-[0_18px_38px_rgba(15,23,42,0.22)]"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-3">
+              <div>
+                <p className="text-xs font-black uppercase tracking-widest text-violet-600">Motor de sugestão</p>
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                  {SUGGESTION_PROFILES[suggestionProfile].label} · segurança {originMinimumDays} dias
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAdvancedRules(false)}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-white text-slate-500 shadow-sm hover:text-red-600"
+                aria-label="Fechar ajustes"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="p-4">
+              <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+                {(Object.keys(SUGGESTION_PROFILES) as SuggestionProfile[]).map((profile) => {
+                  const preset = SUGGESTION_PROFILES[profile];
+                  const isSelected = suggestionProfile === profile;
+                  return (
+                    <button
+                      key={profile}
+                      type="button"
+                      onClick={() => applySuggestionProfile(profile)}
+                      className={`min-h-[88px] rounded-lg border p-3 text-left transition-all ${
+                        isSelected
+                          ? 'border-violet-600 bg-violet-50 shadow-[0_8px_20px_rgba(124,58,237,0.12)]'
+                          : 'border-slate-200 bg-white hover:border-violet-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      <span className="flex items-center justify-between gap-2">
+                        <span className={`text-sm font-black uppercase ${isSelected ? 'text-violet-700' : 'text-slate-900'}`}>{preset.label}</span>
+                        <span className={`h-3 w-3 rounded-full border-2 ${isSelected ? 'border-violet-600 bg-violet-600' : 'border-slate-300 bg-white'}`} />
+                      </span>
+                      <span className="mt-2 block text-xs font-bold leading-snug text-slate-500">{preset.description}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="mt-3 grid grid-cols-1 gap-2 lg:grid-cols-[1.2fr_1fr_1fr_1fr]">
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <p className="mb-2 text-[10px] font-black uppercase tracking-widest text-violet-500">Segurança origem</p>
+                  <NumberStepper
+                    value={originMinimumDays}
+                    onChange={setOriginMinimumDays}
+                    min={0}
+                    max={9999}
+                    suffix="dias"
+                  />
+                </div>
+                <TransferRuleInput
+                  label="Destino até dias"
+                  value={needDaysThreshold}
+                  onChange={setNeedDaysThreshold}
+                  min={0}
+                  max={9999}
+                />
+                <TransferRuleInput
+                  label="Meta destino"
+                  value={destinationTargetDays}
+                  onChange={setDestinationTargetDays}
+                  min={1}
+                  max={9999}
+                />
+                <TransferRuleInput
+                  label="Limite rota"
+                  value={maxRoutePriority}
+                  onChange={setMaxRoutePriority}
+                  min={0}
+                  max={10}
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 border-t border-slate-200 bg-slate-50 px-4 py-3">
+              <button
+                type="button"
+                onClick={() => setShowAdvancedRules(false)}
+                className="h-9 rounded-md border border-slate-200 bg-white px-4 text-[10px] font-black uppercase text-slate-700 shadow-sm hover:border-violet-300 hover:text-violet-700"
+              >
+                Fechar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAdvancedRules(false);
+                  generateTransferSuggestions();
+                }}
+                disabled={!canGenerateSuggestions || !stockSnapshot || stockLoading || generatingSuggestions}
+                title={generatePermissionTitle}
+                className="h-9 rounded-md bg-violet-600 px-4 text-[10px] font-black uppercase text-white shadow-sm disabled:opacity-40"
+              >
+                Aplicar e atualizar
+              </button>
+            </div>
+          </div>
         </div>
-        <div className="bg-white border-2 border-slate-100 rounded-2xl p-4">
-          <FileSpreadsheet size={18} className="text-violet-600 mb-2" />
-          <p className="text-[10px] font-black uppercase text-slate-400">Motor de calculo</p>
-          <p className="text-sm font-bold text-slate-700 mt-1">Cruzar excesso, demanda e prioridade logistica por rota.</p>
+      )}
+
+      {showExportConfirm && (
+        <div
+          className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-900/16 p-3 backdrop-blur-sm"
+          onMouseDown={() => setShowExportConfirm(false)}
+        >
+          <div
+            className="w-full max-w-[560px] overflow-hidden rounded-xl border border-slate-300 bg-white shadow-[0_18px_38px_rgba(15,23,42,0.22)]"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-3">
+              <div>
+                <p className="text-xs font-black uppercase tracking-widest text-slate-900">Confirmar TXT</p>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Revise antes de enviar ao ERP</p>
+              </div>
+              <button type="button" onClick={() => setShowExportConfirm(false)} className="rounded-md bg-white p-1 text-slate-500">
+                <X size={16} />
+              </button>
+            </div>
+            <div className="p-4">
+              <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+                <DiagnosticCard label="Linhas TXT" value={suggestionExportStats.exportableLines} accent />
+                <DiagnosticCard label="Unidades" value={suggestionExportStats.exportableUnits} />
+                <DiagnosticCard label="Ajustes" value={transferSuggestions.filter(isSuggestionManuallyChanged).length} warning={transferSuggestions.some(isSuggestionManuallyChanged)} />
+                <DiagnosticCard label="Avisos" value={suggestionExportIssues.length} warning={suggestionExportIssues.length > 0} />
+              </div>
+              {suggestionExportIssues.length > 0 && (
+                <div className="mt-3 max-h-40 overflow-auto rounded-lg border border-amber-200 bg-amber-50">
+                  {suggestionExportIssues.map((issue) => (
+                    <div key={issue.id} className="border-b border-amber-100 px-3 py-2 last:border-b-0">
+                      <p className="text-[10px] font-black uppercase text-amber-700">{issue.title}</p>
+                      <p className="text-xs font-bold text-slate-600">{issue.detail}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="mt-4 flex justify-end gap-2 border-t border-slate-200 pt-3">
+                <button type="button" onClick={() => setShowExportConfirm(false)} className="h-9 rounded-md border border-slate-300 bg-white px-4 text-[10px] font-black uppercase text-slate-600">
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={downloadSuggestionsTxt}
+                  disabled={!canExport}
+                  title={exportPermissionTitle}
+                  className="h-9 rounded-md bg-slate-900 px-4 text-[10px] font-black uppercase text-white disabled:opacity-40"
+                >
+                  Baixar TXT
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
-        <div className="bg-white border-2 border-slate-100 rounded-2xl p-4">
-          <Download size={18} className="text-violet-600 mb-2" />
-          <p className="text-[10px] font-black uppercase text-slate-400">Exportacao ERP</p>
-          <p className="text-sm font-bold text-slate-700 mt-1">Gerar TXT no formato loja origem;loja destino;codigo ERP;quantidade.</p>
+      )}
+
+      {showReallocationHistory && (
+        <div
+          className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-900/16 p-3 backdrop-blur-sm"
+          onMouseDown={() => setShowReallocationHistory(false)}
+        >
+          <div
+            className="w-full max-w-[620px] overflow-hidden rounded-xl border border-slate-300 bg-white shadow-[0_18px_38px_rgba(15,23,42,0.22)]"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-3">
+              <div>
+                <p className="text-xs font-black uppercase tracking-widest text-slate-900">Histórico do remanejamento</p>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{reallocationAuditLog.length} eventos recentes</p>
+              </div>
+              <button type="button" onClick={() => setShowReallocationHistory(false)} className="rounded-md bg-white p-1 text-slate-500">
+                <X size={16} />
+              </button>
+            </div>
+            <div className="max-h-[460px] overflow-auto p-3">
+              {reallocationAuditLog.map((event) => (
+                <div key={event.id} className="mb-2 rounded-lg border border-slate-200 bg-slate-50 p-3 last:mb-0">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-xs font-black uppercase text-slate-900">{event.action}</p>
+                      <p className="truncate text-[10px] font-bold uppercase tracking-widest text-slate-400">{event.detail}</p>
+                    </div>
+                    <span className="shrink-0 text-[10px] font-black text-slate-400">{new Date(event.at).toLocaleString('pt-BR')}</span>
+                  </div>
+                  <div className="mt-2 flex gap-2">
+                    {typeof event.count === 'number' && <span className="rounded-full bg-white px-2 py-1 text-[10px] font-black text-slate-600">{event.count.toLocaleString('pt-BR')} linhas</span>}
+                    {typeof event.units === 'number' && <span className="rounded-full bg-white px-2 py-1 text-[10px] font-black text-violet-700">{wholeNumber(event.units)} un.</span>}
+                  </div>
+                </div>
+              ))}
+              {!reallocationAuditLog.length && (
+                <div className="rounded-xl border border-dashed border-slate-300 p-8 text-center text-[10px] font-black uppercase tracking-widest text-slate-400">
+                  Nenhum evento registrado ainda.
+                </div>
+              )}
+            </div>
+          </div>
         </div>
-      </div>
+      )}
     </main>
   );
 }
@@ -1371,7 +2166,7 @@ function DiagnosticCard({ label, value, suffix = '', accent = false, warning = f
   );
 }
 
-function StatusMetric({ label, value, helper, tone = 'slate' }: { label: string; value: string; helper?: string; tone?: 'slate' | 'indigo' | 'violet' | 'emerald' | 'amber' | 'red' }) {
+function StatusMetric({ label, value, helper, tone = 'slate', compact = false }: { label: string; value: string; helper?: string; tone?: 'slate' | 'indigo' | 'violet' | 'emerald' | 'amber' | 'red'; compact?: boolean }) {
   const toneClass = {
     slate: 'bg-white text-slate-900 [&_p:first-child]:text-slate-400',
     indigo: 'bg-white text-indigo-700 [&_p:first-child]:text-indigo-400',
@@ -1382,11 +2177,67 @@ function StatusMetric({ label, value, helper, tone = 'slate' }: { label: string;
   }[tone];
 
   return (
-    <div className={`min-h-12 px-2.5 py-1.5 ${toneClass}`}>
+    <div className={`${compact ? 'min-h-[42px] rounded-md border border-slate-200 px-2 py-1 shadow-sm' : 'min-h-12 px-2.5 py-1.5'} ${toneClass}`}>
       <p className="truncate text-[9px] font-black uppercase leading-tight">{label}</p>
       <div className="flex items-end gap-1.5">
-        <p className="text-base font-black leading-none">{value}</p>
+        <p className={`${compact ? 'text-sm' : 'text-base'} font-black leading-none`}>{value}</p>
         {helper && <p className="truncate pb-[1px] text-[9px] font-bold opacity-80">{helper}</p>}
+      </div>
+    </div>
+  );
+}
+
+function CurvePriorityBox({
+  title,
+  selectedCurves,
+  onToggle,
+  onClear,
+  tone,
+}: {
+  title: string;
+  selectedCurves: string[];
+  onToggle: (curve: string) => void;
+  onClear: () => void;
+  tone: 'violet' | 'emerald';
+}) {
+  const activeClass = tone === 'emerald'
+    ? 'border-emerald-600 bg-emerald-600 text-white'
+    : 'border-violet-600 bg-violet-600 text-white';
+  const hoverClass = tone === 'emerald'
+    ? 'hover:border-emerald-300 hover:text-emerald-700'
+    : 'hover:border-violet-300 hover:text-violet-700';
+  const selectedLabel = selectedCurves.length ? selectedCurves.join(', ') : 'Todas';
+
+  return (
+    <div className={`min-h-[82px] overflow-hidden rounded-[6px] border bg-white shadow-[0_1px_0_rgba(15,23,42,0.04)] ${selectedCurves.length ? (tone === 'emerald' ? 'border-emerald-400' : 'border-violet-400') : 'border-slate-300'}`}>
+      <div className="flex h-7 items-center justify-between border-b border-slate-200 bg-gradient-to-b from-white to-slate-50 px-2">
+        <span className="truncate text-[12px] font-bold leading-none text-slate-950">{title}</span>
+        <button
+          type="button"
+          onClick={onClear}
+          disabled={selectedCurves.length === 0}
+          className="rounded px-1 text-[9px] font-black uppercase text-slate-400 disabled:opacity-40"
+        >
+          Todas
+        </button>
+      </div>
+      <div className="flex h-[55px] flex-col justify-center px-2 py-1.5">
+        <div className="grid grid-cols-5 gap-1">
+          {STOCK_CURVES.map((curve) => {
+            const active = selectedCurves.includes(curve);
+            return (
+              <button
+                key={`${title}-${curve}`}
+                type="button"
+                onClick={() => onToggle(curve)}
+                className={`h-6 rounded-md border text-[11px] font-black ${active ? activeClass : `border-slate-200 bg-white text-slate-600 ${hoverClass}`}`}
+              >
+                {curve}
+              </button>
+            );
+          })}
+        </div>
+        <p className="mt-0.5 truncate text-center text-[9px] font-bold text-slate-500">{selectedLabel}</p>
       </div>
     </div>
   );
@@ -1451,12 +2302,27 @@ function QuickFilterBox({
   const [quickValue, setQuickValue] = useState('');
   const [remoteOptions, setRemoteOptions] = useState<QuickFilterItem[]>([]);
   const [searching, setSearching] = useState(false);
+  const [markedIds, setMarkedIds] = useState<Set<string>>(() => new Set());
   const normalizedQuickValue = normalizeAutocompleteText(quickValue);
   const availableOptions = onQuickSearch && normalizedQuickValue ? remoteOptions : options;
   const visibleOptions = useMemo(() => {
     if (hideInitialOptions && !normalizedQuickValue) return [];
     return rankAutocompleteOptions(availableOptions, normalizedQuickValue, 12);
   }, [availableOptions, hideInitialOptions, normalizedQuickValue]);
+  const selectedIds = useMemo(() => new Set(selected.map((item) => item.id)), [selected]);
+  const listOptions = useMemo(() => {
+    const merged = new Map<string, QuickFilterItem>();
+    selected.forEach((item) => merged.set(item.id, item));
+    visibleOptions.forEach((item) => merged.set(item.id, item));
+    return Array.from(merged.values());
+  }, [selected, visibleOptions]);
+  const visibleSelectedIds = useMemo(() => new Set(listOptions.filter((item) => selectedIds.has(item.id)).map((item) => item.id)), [listOptions, selectedIds]);
+  const visibleMarkedIds = useMemo(() => new Set(listOptions.filter((item) => selectedIds.has(item.id) && markedIds.has(item.id)).map((item) => item.id)), [listOptions, markedIds, selectedIds]);
+  const optionGridTemplate = useMemo(() => {
+    const valueColumnCount = Math.max(columns.length, 1);
+    if (valueColumnCount === 1) return '24px minmax(0, 1fr)';
+    return `24px repeat(${valueColumnCount}, minmax(0, 1fr))`;
+  }, [columns.length]);
 
   useEffect(() => {
     if (!onQuickSearch) return;
@@ -1530,10 +2396,33 @@ function QuickFilterBox({
   }, [expanded, quickValue]);
 
   const addItem = (item: QuickFilterItem) => {
-    if (selected.some((current) => current.id === item.id)) return;
+    if (selectedIds.has(item.id)) return;
     onChange([...selected, item]);
+    setMarkedIds((current) => {
+      if (!current.has(item.id)) return current;
+      const next = new Set(current);
+      next.delete(item.id);
+      return next;
+    });
     setQuickValue('');
     setRemoteOptions([]);
+  };
+
+  const toggleMarkedItem = (item: QuickFilterItem) => {
+    if (!selectedIds.has(item.id)) {
+      addItem(item);
+      return;
+    }
+
+    setMarkedIds((current) => {
+      const next = new Set(current);
+      if (next.has(item.id)) {
+        next.delete(item.id);
+      } else {
+        next.add(item.id);
+      }
+      return next;
+    });
   };
 
   const addQuickValue = () => {
@@ -1552,8 +2441,33 @@ function QuickFilterBox({
     });
   };
 
-  const removeLast = () => {
-    onChange(selected.slice(0, -1));
+  const toggleVisibleMarkedItems = () => {
+    if (visibleSelectedIds.size === 0) return;
+
+    setMarkedIds((current) => {
+      const next = new Set(current);
+      const allVisibleSelectedMarked = Array.from(visibleSelectedIds).every((id) => next.has(id));
+
+      visibleSelectedIds.forEach((id) => {
+        if (allVisibleSelectedMarked) {
+          next.delete(id);
+        } else {
+          next.add(id);
+        }
+      });
+
+      return next;
+    });
+  };
+
+  const removeMarked = () => {
+    if (visibleMarkedIds.size === 0) return;
+    onChange(selected.filter((item) => !visibleMarkedIds.has(item.id)));
+    setMarkedIds((current) => {
+      const next = new Set(current);
+      visibleMarkedIds.forEach((id) => next.delete(id));
+      return next;
+    });
   };
 
   const summary = selected.length === 0
@@ -1563,7 +2477,7 @@ function QuickFilterBox({
 
   return (
     <div ref={containerRef} className={`relative text-slate-950 ${expanded ? 'z-[220]' : 'z-10'}`}>
-      <div className={`overflow-hidden rounded-[6px] border ${selected.length ? 'border-violet-400 bg-violet-50' : 'border-slate-300 bg-white'} min-h-[92px] transition-colors shadow-[0_1px_0_rgba(15,23,42,0.04)]`}>
+      <div className={`overflow-hidden rounded-[6px] border ${selected.length ? 'border-violet-400 bg-violet-50' : 'border-slate-300 bg-white'} min-h-[82px] transition-colors shadow-[0_1px_0_rgba(15,23,42,0.04)]`}>
         <button
           type="button"
           onClick={() => setExpanded((value) => !value)}
@@ -1577,7 +2491,7 @@ function QuickFilterBox({
         <button
           type="button"
           onClick={() => setExpanded(true)}
-          className="h-[65px] w-full px-2 text-center transition-colors hover:bg-slate-50"
+          className="h-[55px] w-full px-2 text-center transition-colors hover:bg-slate-50"
         >
           <span className={`block truncate text-xs font-bold ${selected.length ? 'text-violet-700' : 'text-slate-600'}`}>{summary}</span>
           {selectedPreview && <span className="mt-1 block max-w-full truncate text-[10px] font-bold text-slate-500">{selectedPreview}</span>}
@@ -1627,57 +2541,104 @@ function QuickFilterBox({
             </button>
           </div>
 
-          <div className="max-h-64 min-h-40 overflow-auto border-b border-slate-200 bg-white p-1.5">
-            {visibleOptions.filter((item) => !selected.some((current) => current.id === item.id)).map((item) => (
+          <div className="max-h-64 min-h-40 overflow-auto border-b border-slate-200 bg-white">
+            <div
+              className="sticky top-0 z-10 grid items-center border-b border-slate-300 bg-white text-[11px] font-bold text-slate-900 shadow-[0_1px_0_rgba(15,23,42,0.08)]"
+              style={{ gridTemplateColumns: optionGridTemplate }}
+            >
+              <button
+                type="button"
+                onClick={toggleVisibleMarkedItems}
+                className="flex h-6 items-center justify-center border-r border-slate-200 hover:bg-blue-50"
+                title="Marcar filtrados visíveis para remover"
+              >
+                <span className={`h-3.5 w-3.5 rounded-[2px] border ${visibleMarkedIds.size ? 'border-blue-600 bg-blue-600' : 'border-slate-400 bg-white'}`}>
+                  {visibleMarkedIds.size ? <Check size={10} className="mx-auto mt-[1px] text-white" /> : null}
+                </span>
+              </button>
+              {columns.map((column) => (
+                <span key={column} className="truncate border-r border-slate-200 px-2 last:border-r-0">{column}</span>
+              ))}
+            </div>
+
+            <div className="p-1">
+            {listOptions.map((item) => {
+              const isSelected = selectedIds.has(item.id);
+              const isMarked = markedIds.has(item.id);
+              return (
               <button
                 key={item.id}
                 type="button"
                 onClick={() => addItem(item)}
-                className="mb-1 grid w-full grid-cols-[1fr_auto] gap-2 rounded-md border border-transparent px-2 py-1.5 text-left hover:border-violet-200 hover:bg-violet-50"
+                className={`mb-1 grid w-full items-center rounded-[3px] border px-0 text-left ${
+                  isMarked
+                    ? 'border-blue-600 bg-blue-100 shadow-[inset_0_0_0_1px_rgba(37,99,235,0.35)]'
+                    : isSelected
+                    ? 'border-blue-500 bg-blue-50 shadow-[inset_0_0_0_1px_rgba(37,99,235,0.25)]'
+                    : 'border-transparent hover:border-violet-200 hover:bg-violet-50'
+                }`}
+                style={{ gridTemplateColumns: optionGridTemplate }}
               >
-                <span className="min-w-0">
-                  <span className="block truncate text-xs font-black text-slate-900">{item.columns[0] || item.id}</span>
-                  <span className="mt-0.5 block truncate text-[10px] font-bold text-slate-500">
-                    {columns.slice(1).map((column, index) => `${column}: ${item.columns[index + 1] || '-'}`).join(' | ')}
+                <span
+                  className="flex h-7 items-center justify-center border-r border-slate-200"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    toggleMarkedItem(item);
+                  }}
+                >
+                  <span className={`flex h-4 w-4 items-center justify-center rounded-[2px] border text-[11px] leading-none ${
+                    isMarked ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-300 bg-white text-transparent'
+                  }`}>
+                    <Check size={12} />
                   </span>
                 </span>
-                <Plus size={16} className="mt-1 text-violet-600" />
+                {columns.map((column, index) => (
+                  <span
+                    key={`${item.id}-${column}-${index}`}
+                    className={`h-7 truncate border-r border-slate-200 px-2 py-1.5 text-xs last:border-r-0 ${
+                      index === 0 ? 'font-black text-slate-900' : 'font-bold text-slate-700'
+                    }`}
+                  >
+                    {item.columns[index] || '-'}
+                  </span>
+                ))}
               </button>
-            ))}
-            {visibleOptions.filter((item) => !selected.some((current) => current.id === item.id)).length === 0 && (
+              );
+            })}
+            </div>
+            {listOptions.length === 0 && (
               <div className="flex h-20 items-center justify-center rounded-md bg-slate-50 px-3 text-center text-xs font-bold text-slate-400">
                 {searching ? 'Buscando...' : normalizedQuickValue ? (allowManual ? 'Nenhum resultado. Aperte + para usar o texto digitado.' : 'Nenhum resultado direto.') : 'Digite pelo menos 2 caracteres para buscar.'}
               </div>
             )}
           </div>
 
-          {selected.length > 0 && (
-            <div className="border-b border-slate-200 bg-violet-50/70 p-2">
-              <p className="mb-2 text-[10px] font-black uppercase text-violet-500">Selecionados</p>
-              <div className="flex flex-wrap gap-2">
-                {selected.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => onChange(selected.filter((current) => current.id !== item.id))}
-                    className="inline-flex max-w-full items-center gap-2 rounded-md bg-white px-2 py-1 text-[10px] font-black text-violet-700 shadow-sm"
-                    title="Remover filtro"
-                  >
-                    <span className="max-w-52 truncate">{item.columns[0]}</span>
-                    <X size={13} />
-                  </button>
-                ))}
-              </div>
+          <div className="p-2 flex flex-wrap items-center justify-between gap-2 bg-white">
+            <span className="text-[10px] font-black uppercase text-slate-400">
+              {visibleMarkedIds.size} marcado{visibleMarkedIds.size === 1 ? '' : 's'}
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  onChange([]);
+                  setMarkedIds(new Set());
+                }}
+                disabled={selected.length === 0}
+                className="h-8 px-3 rounded-md bg-slate-100 text-[10px] font-black uppercase text-slate-600 disabled:text-slate-300"
+              >
+                Limpar
+              </button>
+              <button
+                type="button"
+                onClick={removeMarked}
+                disabled={visibleMarkedIds.size === 0}
+                className="h-8 w-9 rounded-md border border-slate-200 bg-white text-sm font-black text-slate-700 shadow-sm hover:border-red-200 hover:bg-red-50 hover:text-red-600 disabled:text-slate-300 disabled:hover:border-slate-200 disabled:hover:bg-white"
+                title="Remover itens marcados"
+              >
+                -
+              </button>
             </div>
-          )}
-
-          <div className="p-2 flex flex-wrap justify-between gap-2 bg-white">
-            <button type="button" onClick={removeLast} disabled={selected.length === 0} className="h-8 px-3 rounded-md bg-slate-100 text-[10px] font-black uppercase text-slate-600 disabled:text-slate-300">
-              Remover ultimo
-            </button>
-            <button type="button" onClick={() => onChange([])} disabled={selected.length === 0} className="h-8 px-3 rounded-md bg-slate-100 text-[10px] font-black uppercase text-slate-600 disabled:text-slate-300">
-              Limpar
-            </button>
           </div>
         </div>
       )}
