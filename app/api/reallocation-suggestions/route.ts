@@ -48,6 +48,29 @@ function stockCurve(value: unknown) {
   return String(value || "").trim().toUpperCase().slice(0, 1);
 }
 
+const ROMAN_STORE_SUFFIXES = new Set(["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"]);
+
+function normalizeRouteText(value: unknown) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Za-z0-9]+/g, " ")
+    .trim()
+    .toUpperCase();
+}
+
+function inferredStoreArea(item: StockItem) {
+  const parts = normalizeRouteText(item.store_name).split(" ").filter(Boolean);
+
+  while (parts.length > 1) {
+    const last = parts[parts.length - 1];
+    if (!/^\d+$/.test(last) && !ROMAN_STORE_SUFFIXES.has(last)) break;
+    parts.pop();
+  }
+
+  return parts.join(" ");
+}
+
 function availableStock(item: StockItem) {
   return Math.max(0, numberValue(item.stock), numberValue(item.confirmed_stock));
 }
@@ -109,6 +132,11 @@ function routePriority(originItem: StockItem, destinationItem: StockItem, branch
 
   if (originGroup && destinationGroup && originGroup === destinationGroup) return 0;
   if (originCity && destinationCity && originCity === destinationCity) return 2;
+
+  const originArea = inferredStoreArea(originItem);
+  const destinationArea = inferredStoreArea(destinationItem);
+  if (originArea && destinationArea && originArea === destinationArea) return 2;
+
   if (originUf && destinationUf && originUf === destinationUf && originGroup && destinationGroup) return 6;
 
   const originNumber = Number(originCode);
@@ -336,6 +364,31 @@ async function fetchSnapshotStockItems(snapshotId: string) {
   return rows;
 }
 
+async function fetchServerBranchLogistics() {
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from("pricing_branches")
+    .select("code,city,logistics_group,uf");
+
+  if (error) return {};
+
+  return Object.fromEntries(((data || []) as Array<{
+    code?: string | null;
+    city?: string | null;
+    logistics_group?: string | null;
+    uf?: string | null;
+  }>)
+    .filter((branch) => branch.code)
+    .map((branch) => [
+      storeCode(branch.code),
+      {
+        city: branch.city || "",
+        group: branch.logistics_group || "",
+        uf: branch.uf || "",
+      },
+    ]));
+}
+
 function normalizeTerm(value: unknown) {
   return String(value || "").trim();
 }
@@ -463,11 +516,16 @@ export async function POST(request: Request) {
       : payload?.stockItems;
     const filters = payload?.filters || {};
     const attributeProducts = await fetchProductEansByAttributes(filters);
+    const serverBranchLogistics = await fetchServerBranchLogistics();
     const calculationPayload = {
       ...payload,
       filters: {
         ...filters,
         products: mergeProductFilters(filters, attributeProducts),
+      },
+      branchLogistics: {
+        ...(payload?.branchLogistics || {}),
+        ...serverBranchLogistics,
       },
       stockItems,
     };

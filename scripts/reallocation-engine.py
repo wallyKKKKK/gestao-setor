@@ -1,6 +1,11 @@
 import json
 import math
 import sys
+import re
+import unicodedata
+
+
+ROMAN_STORE_SUFFIXES = {"I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"}
 
 
 def number(value):
@@ -16,6 +21,22 @@ def store_code(value):
 
 def stock_curve(value):
     return str(value or "").strip().upper()[:1]
+
+
+def normalize_route_text(value):
+    text = unicodedata.normalize("NFD", str(value or ""))
+    text = "".join(char for char in text if unicodedata.category(char) != "Mn")
+    return re.sub(r"[^A-Za-z0-9]+", " ", text).strip().upper()
+
+
+def inferred_store_area(item):
+    parts = [part for part in normalize_route_text(item.get("store_name")).split(" ") if part]
+    while len(parts) > 1:
+        last = parts[-1]
+        if not last.isdigit() and last not in ROMAN_STORE_SUFFIXES:
+            break
+        parts.pop()
+    return " ".join(parts)
 
 
 def available_stock(item):
@@ -88,6 +109,12 @@ def route_priority(origin_item, destination_item, branch_logistics):
         return 0
     if origin_city and destination_city and origin_city == destination_city:
         return 2
+
+    origin_area = inferred_store_area(origin_item)
+    destination_area = inferred_store_area(destination_item)
+    if origin_area and destination_area and origin_area == destination_area:
+        return 2
+
     if origin_uf and destination_uf and origin_uf == destination_uf and origin_group and destination_group:
         return 6
 
