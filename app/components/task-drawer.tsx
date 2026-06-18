@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { CheckCircle2, Edit3, FileText, MessageSquare, Plus, Trash2, X } from "lucide-react";
 import { createTradeTaskNote, deleteTradeTaskNote, fetchTradeTaskNotes } from "@/lib/api";
+import { getRecurrenceLabel, getScheduleDisplayLabel } from "@/lib/task-recurrence";
 import type { ProcessedTask, Profile, Subtask, TradeTaskNote, UserRole } from "@/lib/types";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
 
@@ -133,6 +134,17 @@ export function TaskDrawer({ task, profiles, user, userRole, onTradeNotesChanged
                     <div className="w-2 h-2 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.5)]" />
                     <span className="font-bold text-[11px] text-slate-900 uppercase">{task.sector}</span>
                   </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-2xl border border-blue-100 bg-blue-50/70 p-4 shadow-sm">
+                  <p className="mb-1 text-[8px] font-black uppercase text-blue-400">Agenda</p>
+                  <p className="text-[11px] font-black uppercase leading-snug text-blue-800">{getRecurrenceLabel(task)}</p>
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <p className="mb-1 text-[8px] font-black uppercase text-slate-400">Proxima</p>
+                  <p className="text-[11px] font-black uppercase leading-snug text-slate-900">{getScheduleDisplayLabel(task)}</p>
                 </div>
               </div>
 

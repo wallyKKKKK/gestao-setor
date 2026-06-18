@@ -12,8 +12,8 @@ interface EditTaskModalProps {
   profiles: Profile[];
   userRole: UserRole;
   userSector: string;
-  editMode: string;
-  setEditMode: (mode: string) => void;
+  editMode: "pontual" | "semanal" | "mensal";
+  setEditMode: (mode: "pontual" | "semanal" | "mensal") => void;
   editDisplayDate: string;
   setEditDisplayDate: (date: string) => void;
   editDateInputRef: RefObject<HTMLInputElement | null>;
@@ -46,6 +46,7 @@ export function EditTaskModal({
   onSave,
 }: EditTaskModalProps) {
   const monthlyWeekdayRepeat = parseMonthlyWeekdayRepeat(task.repeat_days);
+  const isOneOff = editMode === "pontual";
   const isMonthlyWeekday = editMode === "mensal" && Boolean(monthlyWeekdayRepeat);
   const selectedMonthlyOrdinal = monthlyWeekdayRepeat?.ordinal || "1";
   const selectedMonthlyWeekday = monthlyWeekdayRepeat?.weekday || "seg";
@@ -54,7 +55,7 @@ export function EditTaskModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/16 p-3 backdrop-blur-sm animate-in zoom-in-95 duration-300">
+    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-slate-900/16 p-3 backdrop-blur-sm animate-in zoom-in-95 duration-300">
       <div className="relative flex w-full max-w-4xl flex-col overflow-visible rounded-[30px] border border-slate-200 bg-white shadow-[0_24px_70px_rgba(15,23,42,0.22)]">
         <div className="hidden absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-blue-600 to-indigo-600"></div>
 
@@ -137,11 +138,42 @@ export function EditTaskModal({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
             <div className="space-y-3 bg-white p-4 rounded-[24px] border-2 border-slate-100 shadow-sm">
               <div className="flex bg-slate-100 p-1 rounded-xl border-2 border-slate-200">
-                <button type="button" onClick={() => { setEditMode("semanal"); setTask({ ...task, repeat_days: "" }); }} className={`flex-1 py-1.5 rounded-lg font-black text-[10px] uppercase transition-all ${editMode === "semanal" ? "bg-white text-blue-600 shadow-sm" : "text-slate-400"}`}>Semanal</button>
-                <button type="button" onClick={() => { setEditMode("mensal"); setTask({ ...task, repeat_days: "1" }); }} className={`flex-1 py-1.5 rounded-lg font-black text-[10px] uppercase transition-all ${editMode === "mensal" ? "bg-white text-blue-600 shadow-sm" : "text-slate-400"}`}>Mensal</button>
+                <button type="button" onClick={() => {
+                  const dateValue = task.due_date || new Date().toISOString().slice(0, 10);
+                  const [year, month, day] = dateValue.split("-");
+                  setEditMode("pontual");
+                  setEditDisplayDate(`${day}/${month}/${year}`);
+                  setTask({ ...task, repeat_days: "", due_date: dateValue, is_one_off: true });
+                }} className={`flex-1 py-1.5 rounded-lg font-black text-[10px] uppercase transition-all ${editMode === "pontual" ? "bg-white text-blue-600 shadow-sm" : "text-slate-400"}`}>Pontual</button>
+                <button type="button" onClick={() => { setEditMode("semanal"); setTask({ ...task, repeat_days: "", due_date: null, is_one_off: false }); }} className={`flex-1 py-1.5 rounded-lg font-black text-[10px] uppercase transition-all ${editMode === "semanal" ? "bg-white text-blue-600 shadow-sm" : "text-slate-400"}`}>Semanal</button>
+                <button type="button" onClick={() => { setEditMode("mensal"); setTask({ ...task, repeat_days: "1", due_date: null, is_one_off: false }); }} className={`flex-1 py-1.5 rounded-lg font-black text-[10px] uppercase transition-all ${editMode === "mensal" ? "bg-white text-blue-600 shadow-sm" : "text-slate-400"}`}>Mensal</button>
               </div>
 
-              {editMode === "mensal" ? (
+              {isOneOff ? (
+                <div className="space-y-2">
+                  <label className="text-[9px] font-black uppercase text-slate-400 ml-2 italic">Data de execucao</label>
+                  <div className="relative h-[50px] group cursor-pointer" onClick={() => editDateInputRef.current?.showPicker()}>
+                    <div className="absolute inset-0 flex items-center justify-center bg-slate-50 rounded-xl border-2 border-slate-100 font-black text-slate-700 text-base pointer-events-none uppercase transition-all group-hover:border-blue-500">
+                      {editDisplayDate}
+                      <Calendar size={16} className="absolute right-4 text-blue-500" />
+                    </div>
+                    <input
+                      ref={editDateInputRef}
+                      type="date"
+                      value={task.due_date || ""}
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                      onChange={e => {
+                        const dVal = e.target.value;
+                        if (dVal) {
+                          const [year, month, day] = dVal.split("-");
+                          setEditDisplayDate(`${day}/${month}/${year}`);
+                          setTask({ ...task, due_date: dVal, repeat_days: "", is_one_off: true });
+                        }
+                      }}
+                    />
+                  </div>
+                </div>
+              ) : editMode === "mensal" ? (
                 <div className="space-y-2">
                   <div className="grid grid-cols-2 gap-2 rounded-xl border-2 border-slate-100 bg-slate-50 p-1">
                     <button type="button" onClick={() => setTask({ ...task, repeat_days: "1" })} className={`rounded-lg py-2 text-[9px] font-black uppercase transition ${!isMonthlyWeekday ? "bg-white text-blue-600 shadow-sm" : "text-slate-400"}`}>Dia fixo</button>
@@ -197,10 +229,10 @@ export function EditTaskModal({
                   ))}
                 </div>
               )}
-              <div className="flex items-center justify-between gap-4 px-2">
+              {!isOneOff && <div className="flex items-center justify-between gap-4 px-2">
                 <label className="text-[8px] font-black uppercase text-slate-400 italic">Intervalo</label>
                 <input type="number" min="1" className="w-16 p-1.5 bg-slate-50 rounded-lg font-black border-2 border-slate-100 text-slate-900 text-center text-xs" value={task.repeat_interval} onChange={e => setTask({ ...task, repeat_interval: parseInt(e.target.value) || 1 })} />
-              </div>
+              </div>}
             </div>
 
             <div className="space-y-4">

@@ -831,7 +831,7 @@ export function MeetingCalendarView({
       )}
 
       {showCreateModal && (
-        <div className="fixed inset-0 bg-slate-900/16 z-[70] flex items-center justify-center p-3 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-slate-900/16 p-3 backdrop-blur-sm">
           <div className="w-full max-w-4xl overflow-visible rounded-[30px] border border-slate-200 bg-white shadow-[0_24px_70px_rgba(15,23,42,0.22)]">
             <div className="flex items-center justify-between border-b-2 border-slate-100 px-5 py-4">
               <div>

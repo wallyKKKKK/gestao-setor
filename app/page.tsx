@@ -37,12 +37,12 @@ import {
 } from '@/lib/api'
 import { getAuthHeaders } from '@/lib/auth-headers'
 import { supabase } from '@/lib/supabase'
-import { getAppPermissions, getPermissionDeniedMessage } from '@/lib/permissions'
+import { getAppPermissions, getPermissionDeniedMessage, isPerfumePurchasingSector } from '@/lib/permissions'
 import type { RealtimeChannel, User as SupabaseUser } from '@supabase/supabase-js'
 import { addDaysToDateStr, getTodayStr, parseMonthlyWeekdayRepeat } from '@/lib/task-recurrence'
 import { filterTasks, getSectorStats, getTaskStats, processTasks } from '@/lib/task-selectors'
 import type { CreateMeetingInput } from '@/lib/api'
-import type { Announcement, AppDbNotification, AppNotification, AuditLog, ProcessedTask, Profile, Subtask, Task, TaskHistory, UserRole } from '@/lib/types'
+import type { Announcement, AppDbNotification, AppNotification, AuditLog, NotificationPreferences, ProcessedTask, Profile, Subtask, Task, TaskHistory, UserRole } from '@/lib/types'
 import { ArrowRight, Plus, Search, X } from 'lucide-react'
 
 const SectionLoader = () => (
@@ -122,8 +122,17 @@ const SECTION_LABELS: Record<AppSection, string> = {
 };
 
 const APP_PREFERENCES_KEY_PREFIX = 'wally-app-preferences';
+const NOTIFICATION_PREFERENCES_KEY_PREFIX = 'wally-notification-preferences';
 const APP_SECTIONS: AppSection[] = ['TAREFAS', 'REUNIAO', 'CADASTROS', 'PRECIFICACAO', 'PRAZOS', 'TRANSPORTE', 'BALACUBACO', 'AUDITORIA'];
 const TASK_TABS = NAV_CATEGORIES.map((category) => category.id);
+
+const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
+  morningBriefing: true,
+  closingSummary: true,
+  meetingReminders: true,
+  oneOffTasks: true,
+  teamCompletions: true,
+};
 
 interface UserAppPreferences {
   activeSection?: AppSection;
@@ -164,6 +173,26 @@ function readUserAppPreferences(userId: string): UserAppPreferences {
   }
 }
 
+function readNotificationPreferences(userId: string): NotificationPreferences {
+  if (typeof window === 'undefined') return DEFAULT_NOTIFICATION_PREFERENCES;
+
+  try {
+    const stored = window.localStorage.getItem(`${NOTIFICATION_PREFERENCES_KEY_PREFIX}:${userId}`);
+    if (!stored) return DEFAULT_NOTIFICATION_PREFERENCES;
+    const parsed = JSON.parse(stored) as Partial<NotificationPreferences>;
+
+    return {
+      morningBriefing: typeof parsed.morningBriefing === 'boolean' ? parsed.morningBriefing : DEFAULT_NOTIFICATION_PREFERENCES.morningBriefing,
+      closingSummary: typeof parsed.closingSummary === 'boolean' ? parsed.closingSummary : DEFAULT_NOTIFICATION_PREFERENCES.closingSummary,
+      meetingReminders: typeof parsed.meetingReminders === 'boolean' ? parsed.meetingReminders : DEFAULT_NOTIFICATION_PREFERENCES.meetingReminders,
+      oneOffTasks: typeof parsed.oneOffTasks === 'boolean' ? parsed.oneOffTasks : DEFAULT_NOTIFICATION_PREFERENCES.oneOffTasks,
+      teamCompletions: typeof parsed.teamCompletions === 'boolean' ? parsed.teamCompletions : DEFAULT_NOTIFICATION_PREFERENCES.teamCompletions,
+    };
+  } catch {
+    return DEFAULT_NOTIFICATION_PREFERENCES;
+  }
+}
+
 export default function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     if (typeof window === 'undefined') return 'light';
@@ -181,6 +210,7 @@ export default function App() {
   const [appNotifications, setAppNotifications] = useState<AppDbNotification[]>([])
   const [readNotificationIds, setReadNotificationIds] = useState<string[]>([])
   const [browserNotificationPermission, setBrowserNotificationPermission] = useState<NotificationPermission | 'unsupported'>('unsupported')
+  const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences>(DEFAULT_NOTIFICATION_PREFERENCES)
   const [notificationDispatchTick, setNotificationDispatchTick] = useState(0)
   const [clockMinute, setClockMinute] = useState('')
   const browserNotifiedIdsRef = useRef<Set<string>>(new Set())
@@ -213,7 +243,7 @@ export default function App() {
   const dateInputRef = useRef<HTMLInputElement>(null);
   const [editDisplayDate, setEditDisplayDate] = useState('DD/MM/YYYY');
   const editDateInputRef = useRef<HTMLInputElement>(null);
-  const [editMode, setEditMode] = useState('semanal');
+  const [editMode, setEditMode] = useState<'pontual' | 'semanal' | 'mensal'>('semanal');
   const [searchTerm, setSearchTerm] = useState('');
   const [userSector, setUserSector] = useState('Geral');
   const [showAssignMenu, setShowAssignMenu] = useState(false);
@@ -249,6 +279,21 @@ export default function App() {
 
     window.localStorage.setItem(`${APP_PREFERENCES_KEY_PREFIX}:${user.id}`, JSON.stringify(preferences));
   }, [activeSection, activeTab, dashFilter, filterUsers, preferencesReady, searchTerm, user?.id]);
+
+  useEffect(() => {
+    if (!user?.id) {
+      queueMicrotask(() => setNotificationPreferences(DEFAULT_NOTIFICATION_PREFERENCES));
+      return;
+    }
+
+    const preferences = readNotificationPreferences(user.id);
+    queueMicrotask(() => setNotificationPreferences(preferences));
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    window.localStorage.setItem(`${NOTIFICATION_PREFERENCES_KEY_PREFIX}:${user.id}`, JSON.stringify(notificationPreferences));
+  }, [notificationPreferences, user?.id]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -342,11 +387,15 @@ useEffect(() => {
       return;
     }
     if (showEditModal) {
+      setShowAssignMenu(false);
+      setShowCategoryMenu(false);
       setShowEditModal(false);
       setEditingTask(null);
       return;
     }
     if (showCreateBox) {
+      setShowAssignMenu(false);
+      setShowCategoryMenu(false);
       setShowCreateBox(false);
       return;
     }
@@ -551,8 +600,15 @@ useEffect(() => {
     setEditingTask(task);
     const isMonthlyWeekday = Boolean(parseMonthlyWeekdayRepeat(task.repeat_days));
     const isMonthly = isMonthlyWeekday || Boolean(task.repeat_days && !task.repeat_days.includes(',') && !isNaN(parseInt(task.repeat_days)));
-    setEditMode(isMonthly ? 'mensal' : 'semanal');
-    setEditDisplayDate(isMonthly && !isMonthlyWeekday ? `DIA ${task.repeat_days} (MANTIDO)` : 'DD/MM/YYYY');
+    const isOneOff = Boolean(task.is_one_off);
+    setEditMode(isOneOff ? 'pontual' : isMonthly ? 'mensal' : 'semanal');
+    if (isOneOff) {
+      const dateValue = task.due_date || task.lastOcc || getTodayStr();
+      const [year, month, day] = dateValue.split('-');
+      setEditDisplayDate(year && month && day ? `${day}/${month}/${year}` : 'DD/MM/YYYY');
+    } else {
+      setEditDisplayDate(isMonthly && !isMonthlyWeekday ? `DIA ${task.repeat_days} (MANTIDO)` : 'DD/MM/YYYY');
+    }
     setShowEditModal(true);
   }, []);
 
@@ -607,7 +663,22 @@ const toggleDayInEdit = (day: string) => {
   }, [addAudit, userSector]);
 
   async function addTask() {
-  if (!taskTitle) return;
+  const cleanTitle = taskTitle.trim();
+  const cleanNotes = notes.trim();
+  const cleanSubtasks = tempSubtasks
+    .map((subtask) => ({ ...subtask, title: subtask.title.trim() }))
+    .filter((subtask) => subtask.title.length > 0);
+
+  if (!cleanTitle) {
+    alert('Informe o titulo da tarefa.');
+    return;
+  }
+
+  if (!assignedTo) {
+    alert('Selecione um responsavel pela tarefa.');
+    return;
+  }
+
   if (taskScheduleMode === 'semanal' && selectedDays.length === 0) {
     alert('Selecione ao menos um dia da semana ou use o modo Pontual.');
     return;
@@ -625,18 +696,18 @@ const toggleDayInEdit = (day: string) => {
 
   try {
     await createTask({
-      title: taskTitle,
+      title: cleanTitle,
       assignedTo,
       category,
-      notes,
+      notes: cleanNotes,
       repeatDays,
       repeatInterval: isOneOff ? 1 : repeatInterval,
-      subtasks: tempSubtasks,
+      subtasks: cleanSubtasks,
       dueDate: isOneOff ? oneOffDate : null,
       sector: taskSector,
       isOneOff,
     });
-    await addAudit('task_created', 'task', null, taskTitle, taskSector, `Categoria: ${category}`);
+    await addAudit('task_created', 'task', null, cleanTitle, taskSector, `Categoria: ${category}`);
     setTaskTitle('');
     setDisplayDate('DD/MM/YYYY'); 
     setNotes(''); 
@@ -644,6 +715,8 @@ const toggleDayInEdit = (day: string) => {
     setTaskScheduleMode('semanal');
     setOneOffDate(getTodayStr());
     setTempSubtasks([]); 
+    setShowAssignMenu(false);
+    setShowCategoryMenu(false);
     setShowCreateBox(false); 
     fetchTasks(); 
   } catch (error) {
@@ -854,7 +927,29 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
   async function updateTask() {
   if (!editingTask) return;
 
-  console.log("Tentando atualizar tarefa:", editingTask.id);
+  const cleanTitle = editingTask.title.trim();
+  const cleanNotes = (editingTask.notes || '').trim();
+  const cleanSubtasks = (editingTask.subtasks || [])
+    .map((subtask) => ({ ...subtask, title: subtask.title.trim() }))
+    .filter((subtask) => subtask.title.length > 0);
+  const isOneOff = editMode === 'pontual';
+  const repeatDays = isOneOff ? '' : editingTask.repeat_days;
+  const dueDate = isOneOff ? editingTask.due_date || getTodayStr() : null;
+
+  if (!cleanTitle) {
+    alert('Informe o titulo da tarefa.');
+    return;
+  }
+
+  if (!editingTask.assigned_to) {
+    alert('Selecione um responsavel pela tarefa.');
+    return;
+  }
+
+  if (!isOneOff && !repeatDays) {
+    alert('Selecione ao menos um dia para a recorrencia.');
+    return;
+  }
 
   try {
     const assignedProfile = profiles.find((profile) => profile.id === editingTask.assigned_to);
@@ -862,19 +957,23 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
 
     await updateTaskApi({
       id: editingTask.id,
-      title: editingTask.title,
-      notes: editingTask.notes,
+      title: cleanTitle,
+      notes: cleanNotes,
       assignedTo: editingTask.assigned_to,
       category: editingTask.category,
-      repeatDays: editingTask.repeat_days,
-      repeatInterval: editingTask.repeat_interval,
-      subtasks: editingTask.subtasks,
+      repeatDays,
+      repeatInterval: isOneOff ? 1 : editingTask.repeat_interval,
+      subtasks: cleanSubtasks,
+      dueDate,
+      isOneOff,
       sector: taskSector,
     });
     setShowEditModal(false); 
+    setShowAssignMenu(false);
+    setShowCategoryMenu(false);
     setEditingTask(null); 
     fetchTasks(); 
-    await addAudit('task_updated', 'task', editingTask.id, editingTask.title, taskSector, `Categoria: ${editingTask.category}`);
+    await addAudit('task_updated', 'task', editingTask.id, cleanTitle, taskSector, `Categoria: ${editingTask.category}`);
     alert("Tarefa atualizada com sucesso!");
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Erro desconhecido';
@@ -893,13 +992,13 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
   }), [processedTasks, activeTab, filterUsers, userRole, userSector, user?.id, searchTerm]);
 
   const stats = useMemo(
-    () => getTaskStats({ tasks: processedTasks, dashFilter, filterUsers, userRole, userSector }),
-    [processedTasks, dashFilter, filterUsers, userRole, userSector],
+    () => getTaskStats({ tasks: processedTasks, dashFilter, filterUsers, userRole, userSector, userId: user?.id }),
+    [processedTasks, dashFilter, filterUsers, userRole, userSector, user?.id],
   );
 
   const sectorStats = useMemo(
-    () => getSectorStats({ tasks: processedTasks, dashFilter, userRole, userSector }),
-    [processedTasks, dashFilter, userRole, userSector],
+    () => getSectorStats({ tasks: processedTasks, dashFilter, userRole, userSector, userId: user?.id }),
+    [processedTasks, dashFilter, userRole, userSector, user?.id],
   );
 
   const meetingTasks = useMemo(() => {
@@ -949,7 +1048,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
     const userFirstName = (profiles.find((profile) => profile.id === user.id)?.full_name || user.email || 'time').split(' ')[0];
     const scheduledNotifications: AppNotification[] = [];
 
-    if (currentHour >= 8) {
+    if (notificationPreferences.morningBriefing && currentHour >= 8) {
       scheduledNotifications.push({
         id: `daily-morning:${user.id}:${today}`,
         title: `Bom dia, ${userFirstName}`,
@@ -963,20 +1062,22 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
       });
     }
 
-    pendingOneOffTasks.forEach((task) => {
-      const isLateOneOff = task.lastOcc < today;
-      scheduledNotifications.push({
-        id: `one-off-task:${user.id}:${task.id}:${task.lastOcc}`,
-        title: isLateOneOff ? 'Tarefa pontual vencida' : 'Tarefa pontual para hoje',
-        description: task.title,
-        tone: isLateOneOff ? 'red' : 'blue',
-        createdAt: `${task.lastOcc}T08:10:00`,
-        section: 'TAREFAS',
-        tab: isLateOneOff ? 'ATRASADOS' : 'HOJE',
+    if (notificationPreferences.oneOffTasks) {
+      pendingOneOffTasks.forEach((task) => {
+        const isLateOneOff = task.lastOcc < today;
+        scheduledNotifications.push({
+          id: `one-off-task:${user.id}:${task.id}:${task.lastOcc}`,
+          title: isLateOneOff ? 'Tarefa pontual vencida' : 'Tarefa pontual para hoje',
+          description: task.title,
+          tone: isLateOneOff ? 'red' : 'blue',
+          createdAt: `${task.lastOcc}T08:10:00`,
+          section: 'TAREFAS',
+          tab: isLateOneOff ? 'ATRASADOS' : 'HOJE',
+        });
       });
-    });
+    }
 
-    if (currentHour >= 8 && todayMeetings.length > 0) {
+    if (notificationPreferences.meetingReminders && currentHour >= 8 && todayMeetings.length > 0) {
       const firstMeetingTime = getMeetingTimeFromNotes(todayMeetings[0]?.notes);
 
       scheduledNotifications.push({
@@ -991,23 +1092,25 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
       });
     }
 
-    todayMeetings.forEach((meeting) => {
-      const meetingTime = getMeetingTimeFromNotes(meeting.notes);
-      const meetingMinuteOfDay = timeToMinutes(meetingTime);
-      if (meetingMinuteOfDay === null) return;
-      if (currentMinuteOfDay < meetingMinuteOfDay - 15) return;
+    if (notificationPreferences.meetingReminders) {
+      todayMeetings.forEach((meeting) => {
+        const meetingTime = getMeetingTimeFromNotes(meeting.notes);
+        const meetingMinuteOfDay = timeToMinutes(meetingTime);
+        if (meetingMinuteOfDay === null) return;
+        if (currentMinuteOfDay < meetingMinuteOfDay - 15) return;
 
-      scheduledNotifications.push({
-        id: `meeting-reminder:${user.id}:${meeting.id}:${today}`,
-        title: `Reunião às ${meetingTime}`,
-        description: meeting.title,
-        tone: 'amber',
-        createdAt: `${today}T${meetingTime}:00`,
-        section: 'REUNIAO',
+        scheduledNotifications.push({
+          id: `meeting-reminder:${user.id}:${meeting.id}:${today}`,
+          title: `Reunião às ${meetingTime}`,
+          description: meeting.title,
+          tone: 'amber',
+          createdAt: `${today}T${meetingTime}:00`,
+          section: 'REUNIAO',
+        });
       });
-    });
+    }
 
-    if (currentHour >= 17 && pendingWorkTasks.length > 0) {
+    if (notificationPreferences.closingSummary && currentHour >= 17 && pendingWorkTasks.length > 0) {
       scheduledNotifications.push({
         id: `daily-closing:${user.id}:${today}`,
         title: `${userFirstName}, você tem ${pendingWorkTasks.length} pendente${pendingWorkTasks.length === 1 ? '' : 's'}`,
@@ -1035,21 +1138,23 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
         tab: 'COMUNICADOS',
       }));
 
-    const internalNotifications = appNotifications.map<AppNotification>((notification) => ({
-      id: `internal:${notification.id}`,
-      title: notification.title,
-      description: notification.body,
-      tone: notification.type === 'task_completed' ? 'green' : 'slate',
-      createdAt: notification.created_at,
-      section: 'TAREFAS',
-      tab: notification.type === 'task_completed' ? 'HOJE' : 'COMUNICADOS',
-    }));
+    const internalNotifications = appNotifications
+      .filter((notification) => notification.type !== 'task_completed' || notificationPreferences.teamCompletions)
+      .map<AppNotification>((notification) => ({
+        id: `internal:${notification.id}`,
+        title: notification.title,
+        description: notification.body,
+        tone: notification.type === 'task_completed' ? 'green' : 'slate',
+        createdAt: notification.created_at,
+        section: 'TAREFAS',
+        tab: notification.type === 'task_completed' ? 'HOJE' : 'COMUNICADOS',
+      }));
 
     return [...scheduledNotifications, ...recentAnnouncements, ...internalNotifications]
       .filter((notification) => !isLegacyNoisyNotificationId(notification.id))
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
       .slice(0, 20);
-  }, [announcements, appNotifications, clockMinute, processedTasks, profiles, user, userRole, userSector]);
+  }, [announcements, appNotifications, clockMinute, notificationPreferences, processedTasks, profiles, user, userRole, userSector]);
 
   const unreadNotificationIds = useMemo(() => {
     const readSet = new Set(readNotificationIds);
@@ -1062,6 +1167,8 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
         todayTasks: 0,
         overdueTasks: 0,
         oneOffTasks: 0,
+        futureTasks: 0,
+        completedToday: 0,
         meetingsToday: 0,
         nextMeetingTitle: '',
         nextMeetingTime: '',
@@ -1082,6 +1189,8 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
     const todayPending = taskItems.filter((task) => !task.isDoneToday && task.lastOcc === today);
     const overduePending = taskItems.filter((task) => !task.isDoneToday && task.lastOcc < today && task.lastOcc !== '1970-01-01');
     const oneOffPending = taskItems.filter((task) => task.is_one_off && !task.isDoneToday && task.lastOcc <= today && task.lastOcc !== '1970-01-01');
+    const futurePending = taskItems.filter((task) => !task.isDoneToday && task.lastOcc > today);
+    const completedToday = taskItems.filter((task) => task.isDoneToday && task.last_done_date === today).length;
     const todayMeetings = visibleTasks
       .filter((task) => {
         if (task.category !== 'Reunião') return false;
@@ -1116,6 +1225,8 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
       todayTasks: todayPending.length,
       overdueTasks: overduePending.length,
       oneOffTasks: oneOffPending.length,
+      futureTasks: futurePending.length,
+      completedToday,
       meetingsToday: todayMeetings.length,
       nextMeetingTitle: todayMeetings[0]?.title || '',
       nextMeetingTime: getMeetingTimeFromNotes(todayMeetings[0]?.notes) || '',
@@ -1163,6 +1274,13 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
     }
   }, []);
 
+  const updateNotificationPreference = useCallback((key: keyof NotificationPreferences, value: boolean) => {
+    setNotificationPreferences((current) => ({
+      ...current,
+      [key]: value,
+    }));
+  }, []);
+
   useEffect(() => {
     if (!user?.id || browserNotificationPermission !== 'granted') return;
     if (document.visibilityState === 'visible' && document.hasFocus()) return;
@@ -1197,7 +1315,9 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
 
   const canAccessPricing = userRole === 'admin' || ['precificacao', 'price'].includes(normalizedSector);
   const canAccessPaymentTerms = userRole === 'admin' || normalizedSector.startsWith('compras');
-  const canAccessTransport = isSupremeAdmin || (normalizedSector.includes('compras') && normalizedSector.includes('perfumaria'));
+  const isPerfumePurchasing = isPerfumePurchasingSector(userSector);
+  const canAccessTransport = isSupremeAdmin || isPerfumePurchasing;
+  const canAccessReallocation = isSupremeAdmin || isPerfumePurchasing;
   const canAccessRegistries = userRole === 'admin' || canAccessPricing || canAccessPaymentTerms;
   const visibleSection =
     (activeSection === 'AUDITORIA' && userRole !== 'admin') ||
@@ -1205,7 +1325,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
     (activeSection === 'PRECIFICACAO' && !canAccessPricing) ||
     (activeSection === 'PRAZOS' && !canAccessPaymentTerms) ||
     (activeSection === 'TRANSPORTE' && !canAccessTransport) ||
-    (activeSection === 'BALACUBACO' && !isSupremeAdmin)
+    (activeSection === 'BALACUBACO' && !canAccessReallocation)
       ? 'TAREFAS'
       : activeSection;
   const globalSearchItems = useMemo<GlobalSearchItem[]>(() => {
@@ -1227,7 +1347,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
     if (canAccessPricing) items.push({ id: 'module:PRECIFICACAO', title: 'Price', description: 'Negociações, custos e preços', section: 'PRECIFICACAO', type: 'Modulo', keywords: 'price precificacao negociacoes custos ofertas precos' });
     if (canAccessPaymentTerms) items.push({ id: 'module:PRAZOS', title: 'Prazos', description: 'Prazos de boleto e regras comerciais', section: 'PRAZOS', type: 'Modulo', keywords: 'prazos fornecedores boleto regras comerciais' });
     if (canAccessTransport) items.push({ id: 'module:TRANSPORTE', title: 'Transporte', description: 'Controle de dívidas de transporte', section: 'TRANSPORTE', type: 'Modulo', keywords: 'transporte dividas cobranca fornecedores credito debito' });
-    if (isSupremeAdmin) items.push({ id: 'module:BALACUBACO', title: 'Remanejamento Inteligente', description: 'Sugestões e exportação ERP', section: 'BALACUBACO', type: 'Modulo', keywords: 'remanejamento inteligente sugestoes estoque transferencia balacubaco' });
+    if (canAccessReallocation) items.push({ id: 'module:BALACUBACO', title: 'Remanejamento Inteligente', description: 'Sugestões e exportação ERP', section: 'BALACUBACO', type: 'Modulo', keywords: 'remanejamento inteligente sugestoes estoque transferencia balacubaco' });
     if (userRole === 'admin') items.push({ id: 'module:AUDITORIA', title: 'Auditoria', description: 'Histórico de alterações do sistema', section: 'AUDITORIA', type: 'Modulo', keywords: 'auditoria historico logs alteracoes' });
 
     processedTasks.filter(canSeeTask).forEach((task) => {
@@ -1281,7 +1401,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
     });
 
     return items;
-  }, [announcements, canAccessPaymentTerms, canAccessPricing, canAccessRegistries, canAccessTransport, isSupremeAdmin, processedTasks, profiles, user, userRole, userSector]);
+  }, [announcements, canAccessPaymentTerms, canAccessPricing, canAccessRegistries, canAccessReallocation, canAccessTransport, processedTasks, profiles, user, userRole, userSector]);
 
   const globalSearchResults = useMemo(() => {
     const query = globalSearchTerm.trim().toLowerCase();
@@ -1299,7 +1419,13 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
     setShowCreateBox(false);
     setShowGlobalSearch(false);
     setGlobalSearchTerm('');
-  }, []);
+
+    const [itemType, itemId] = item.id.split(':');
+    if ((itemType === 'task' || itemType === 'meeting') && itemId) {
+      const task = processedTasks.find((candidate) => candidate.id === itemId);
+      if (task) setViewingTask(task);
+    }
+  }, [processedTasks]);
 
   if (!user) return <Login />
 
@@ -1354,9 +1480,11 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
         notifications={notifications}
         unreadNotificationIds={unreadNotificationIds}
         browserNotificationPermission={browserNotificationPermission}
+        notificationPreferences={notificationPreferences}
         onNotificationSelect={selectNotification}
         onMarkAllNotificationsRead={markAllNotificationsRead}
         onRequestBrowserNotifications={requestBrowserNotifications}
+        onNotificationPreferenceChange={updateNotificationPreference}
       />
 
       {showGlobalSearch && (
@@ -1492,7 +1620,11 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
     showCategoryMenu={showCategoryMenu}
     setShowCategoryMenu={setShowCategoryMenu}
     onToggleDay={toggleDay}
-    onClose={() => setShowCreateBox(false)}
+    onClose={() => {
+      setShowAssignMenu(false);
+      setShowCategoryMenu(false);
+      setShowCreateBox(false);
+    }}
     onSave={addTask}
   />
 )}
@@ -1591,7 +1723,12 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
     showCategoryMenu={showCategoryMenu}
     setShowCategoryMenu={setShowCategoryMenu}
     onToggleDay={toggleDayInEdit}
-    onClose={() => setShowEditModal(false)}
+    onClose={() => {
+      setShowAssignMenu(false);
+      setShowCategoryMenu(false);
+      setShowEditModal(false);
+      setEditingTask(null);
+    }}
     onSave={updateTask}
   />
       )}<TaskDrawer

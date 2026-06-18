@@ -35,11 +35,16 @@ export function getPermissionDeniedMessage(action: string, requirement: Permissi
   return `Acao bloqueada: ${action}. Permissao necessaria: ${PERMISSION_REQUIREMENT_TEXT[requirement]}`;
 }
 
-function normalizePermissionSector(value: string) {
+export function normalizePermissionSector(value: string) {
   return value
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase();
+}
+
+export function isPerfumePurchasingSector(value: string) {
+  const normalizedSector = normalizePermissionSector(value);
+  return normalizedSector.includes('compras') && normalizedSector.includes('perfumaria');
 }
 
 export function getAppPermissions({
@@ -51,10 +56,9 @@ export function getAppPermissions({
   sector: string;
   isSupremeAdmin: boolean;
 }): AppPermissions {
-  const normalizedSector = normalizePermissionSector(sector);
   const isAdmin = role === 'admin';
   const isManager = role === 'gerente';
-  const isPerfumePurchasing = normalizedSector.includes('compras') && normalizedSector.includes('perfumaria');
+  const isPerfumePurchasing = isPerfumePurchasingSector(sector);
 
   return {
     canDeleteTasks: isAdmin || isManager,
@@ -65,8 +69,8 @@ export function getAppPermissions({
     canExportTransport: isSupremeAdmin || isPerfumePurchasing,
     canBulkEditTransport: isSupremeAdmin || isManager || isPerfumePurchasing,
     canDeleteTransportEntries: isSupremeAdmin || isManager,
-    canImportReallocationData: isSupremeAdmin,
-    canGenerateReallocationSuggestions: isSupremeAdmin,
-    canExportReallocation: isSupremeAdmin,
+    canImportReallocationData: isSupremeAdmin || isPerfumePurchasing,
+    canGenerateReallocationSuggestions: isSupremeAdmin || isPerfumePurchasing,
+    canExportReallocation: isSupremeAdmin || isPerfumePurchasing,
   };
 }

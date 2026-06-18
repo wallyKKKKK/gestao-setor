@@ -1,6 +1,7 @@
 'use client';
 
 import { CalendarDays, ClipboardList, Clock3, Database, ListTodo, Shuffle, Tags, Truck } from 'lucide-react';
+import { isPerfumePurchasingSector } from '@/lib/permissions';
 import type { UserRole } from '@/lib/types';
 
 export type AppSection = 'TAREFAS' | 'REUNIAO' | 'CADASTROS' | 'PRECIFICACAO' | 'PRAZOS' | 'TRANSPORTE' | 'BALACUBACO' | 'AUDITORIA';
@@ -41,7 +42,9 @@ export function AppSidebar({
   const normalizedSector = normalizeSector(userSector);
   const canAccessPricing = userRole === 'admin' || ['precificacao', 'price'].includes(normalizedSector);
   const canAccessPaymentTerms = userRole === 'admin' || normalizedSector.startsWith('compras');
-  const canAccessTransport = isSupremeAdmin || (normalizedSector.includes('compras') && normalizedSector.includes('perfumaria'));
+  const isPerfumePurchasing = isPerfumePurchasingSector(userSector);
+  const canAccessTransport = isSupremeAdmin || isPerfumePurchasing;
+  const canAccessTransfer = isSupremeAdmin || isPerfumePurchasing;
   const canAccessRegistries = userRole === 'admin' || canAccessPricing || canAccessPaymentTerms;
   const visibleItems = items.filter((item) => {
     if (item.adminOnly && userRole !== 'admin') return false;
@@ -49,7 +52,7 @@ export function AppSidebar({
     if (item.priceOnly && !canAccessPricing) return false;
     if (item.purchaseOnly && !canAccessPaymentTerms) return false;
     if (item.transportOnly && !canAccessTransport) return false;
-    if (item.transferOnly && !isSupremeAdmin) return false;
+    if (item.transferOnly && !canAccessTransfer) return false;
     return true;
   });
 

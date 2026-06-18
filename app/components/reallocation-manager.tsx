@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
-import { Check, Clock, Database, Download, FileSpreadsheet, Filter, Plus, RefreshCcw, RotateCcw, Search, Shuffle, SlidersHorizontal, Trash2, Upload, X } from 'lucide-react';
+import { Check, Clock, Database, Download, FileSpreadsheet, Filter, Loader2, Plus, RefreshCcw, RotateCcw, Search, Shuffle, SlidersHorizontal, Trash2, Upload, X } from 'lucide-react';
 import { countReallocationProducts, fetchLatestReallocationStockSnapshot, fetchPricingBranches, fetchReallocationAttributeOptions, fetchReallocationProducts, fetchReallocationStockItems } from '@/lib/api';
 import { getAuthHeaders } from '@/lib/auth-headers';
 import { getPermissionDeniedMessage } from '@/lib/permissions';
@@ -26,6 +26,21 @@ function wholeNumber(value: number | null | undefined) {
 
 function csvValue(value: string | number) {
   return `"${String(value).replace(/"/g, '""')}"`;
+}
+
+function downloadTimestamp(date = new Date()) {
+  const pad = (value: number, size = 2) => String(value).padStart(size, '0');
+  return [
+    date.getFullYear(),
+    pad(date.getMonth() + 1),
+    pad(date.getDate()),
+    '-',
+    pad(date.getHours()),
+    pad(date.getMinutes()),
+    pad(date.getSeconds()),
+    '-',
+    pad(date.getMilliseconds(), 3),
+  ].join('');
 }
 
 function loadReallocationAuditLog() {
@@ -66,7 +81,6 @@ const SUGGESTION_PROFILES: Record<SuggestionProfile, {
   label: string;
   description: string;
   originMinimumDays: number;
-  needDaysThreshold: number;
   destinationTargetDays: number;
   maxRoutePriority: number;
 }> = {
@@ -74,7 +88,6 @@ const SUGGESTION_PROFILES: Record<SuggestionProfile, {
     label: 'Conservador',
     description: 'Poucas transferencias, preserva mais estoque na origem.',
     originMinimumDays: 30,
-    needDaysThreshold: 20,
     destinationTargetDays: 30,
     maxRoutePriority: 2,
   },
@@ -82,7 +95,6 @@ const SUGGESTION_PROFILES: Record<SuggestionProfile, {
     label: 'Equilibrado',
     description: 'Bom padrao para rotina: reduz excesso sem forcar tanto a logistica.',
     originMinimumDays: 20,
-    needDaysThreshold: 25,
     destinationTargetDays: 30,
     maxRoutePriority: 6,
   },
@@ -90,7 +102,6 @@ const SUGGESTION_PROFILES: Record<SuggestionProfile, {
     label: 'Agressivo',
     description: 'Gera mais sugestões e aceita rotas mais abertas.',
     originMinimumDays: 15,
-    needDaysThreshold: 30,
     destinationTargetDays: 35,
     maxRoutePriority: 10,
   },
@@ -159,6 +170,7 @@ const REALLOCATION_AUDIT_STORAGE_KEY = 'reallocation-audit-v1';
 const REALLOCATION_PREFERENCES_STORAGE_KEY = 'reallocation-preferences-v1';
 
 const SUGGESTION_COLUMNS = [
+  { key: 'selection', label: '', align: 'center', width: 52 },
   { key: 'description', label: 'Produto', align: 'left', width: 280 },
   { key: 'ean', label: 'EAN', align: 'left', width: 145 },
   { key: 'originName', label: 'Apelido Un. Neg. Orig.', align: 'left', width: 190 },
@@ -185,6 +197,7 @@ const SUGGESTION_COLUMNS = [
 
 type SuggestionColumnKey = typeof SUGGESTION_COLUMNS[number]['key'];
 type SuggestionColumn = typeof SUGGESTION_COLUMNS[number];
+type SuggestionView = 'draft' | 'confirmed';
 type SuggestionSort = {
   key: SuggestionColumnKey;
   direction: 'asc' | 'desc';
@@ -199,7 +212,6 @@ interface ReallocationPreferences {
   suggestionProfile: SuggestionProfile;
   showAdvancedRules: boolean;
   originMinimumDays: number;
-  needDaysThreshold: number;
   destinationTargetDays: number;
   maxRoutePriority: number;
   originCurvePriority: string[];
@@ -250,7 +262,6 @@ function defaultReallocationPreferences(): ReallocationPreferences {
     suggestionProfile: DEFAULT_SUGGESTION_PROFILE,
     showAdvancedRules: false,
     originMinimumDays: preset.originMinimumDays,
-    needDaysThreshold: preset.needDaysThreshold,
     destinationTargetDays: preset.destinationTargetDays,
     maxRoutePriority: preset.maxRoutePriority,
     originCurvePriority: [],
@@ -301,7 +312,6 @@ function loadReallocationPreferences() {
       suggestionProfile: profile,
       showAdvancedRules: Boolean(parsed.showAdvancedRules),
       originMinimumDays: clampPreferenceNumber(parsed.originMinimumDays, defaults.originMinimumDays),
-      needDaysThreshold: clampPreferenceNumber(parsed.needDaysThreshold, defaults.needDaysThreshold),
       destinationTargetDays: clampPreferenceNumber(parsed.destinationTargetDays, defaults.destinationTargetDays),
       maxRoutePriority: clampPreferenceNumber(parsed.maxRoutePriority, defaults.maxRoutePriority),
       originCurvePriority: readCurveList(parsed.originCurvePriority),
@@ -327,6 +337,7 @@ function getSuggestionSortValue(
       return getAdjustedOriginDays(suggestion);
     case 'adjustedDestinationDays':
       return getAdjustedDestinationDays(suggestion);
+    case 'selection':
     case 'actions':
       return '';
     default:
@@ -334,18 +345,27 @@ function getSuggestionSortValue(
   }
 }
 
-function getAdjustedOriginDays(suggestion: TransferSuggestion) {
+function getAdjustedOriginDays(suggestion: TransferSuggestion, allocatedQuantity = Number(suggestion.quantity || 0)) {
   const dailySales = Number(suggestion.originDailySales || 0);
   if (dailySales <= 0) return Number(suggestion.originStockDays || 0);
   const currentCoverageStock = Number(suggestion.originStockDays || 0) * dailySales;
-  return Math.max(0, (currentCoverageStock - Number(suggestion.quantity || 0)) / dailySales);
+  return Math.max(0, (currentCoverageStock - allocatedQuantity) / dailySales);
 }
 
-function getAdjustedDestinationDays(suggestion: TransferSuggestion) {
+function getAdjustedDestinationDays(suggestion: TransferSuggestion, allocatedQuantity = Number(suggestion.quantity || 0)) {
   const dailySales = Number(suggestion.destinationDailySales || 0);
   if (dailySales <= 0) return Number(suggestion.destinationStockDays || 0);
   const currentCoverageStock = Number(suggestion.destinationStockDays || 0) * dailySales;
-  return (currentCoverageStock + Number(suggestion.quantity || 0)) / dailySales;
+  return (currentCoverageStock + allocatedQuantity) / dailySales;
+}
+
+function suggestionIdentityKey(suggestion: TransferSuggestion) {
+  return [
+    suggestion.ean,
+    suggestion.erpCode,
+    suggestion.originCode,
+    suggestion.destinationCode,
+  ].map((part) => String(part || '').trim().toUpperCase()).join('|');
 }
 
 function clampSuggestionQuantity(
@@ -353,7 +373,10 @@ function clampSuggestionQuantity(
   targetSuggestion: TransferSuggestion,
   requestedQuantity: number,
 ) {
-  const originStockLimit = Math.max(0, Math.floor(Number(targetSuggestion.originStock || 0)));
+  const originStockLimit = Math.max(
+    0,
+    Math.floor(Number(targetSuggestion.originStock || 0)),
+  );
   const targetKey = `${targetSuggestion.ean}:${targetSuggestion.originCode}`;
   const allocatedElsewhere = suggestions.reduce((sum, suggestion) => {
     if (suggestion.id === targetSuggestion.id) return sum;
@@ -362,22 +385,6 @@ function clampSuggestionQuantity(
   }, 0);
   const availableForRow = Math.max(0, originStockLimit - allocatedElsewhere);
   return Math.max(0, Math.min(availableForRow, Math.floor(Number(requestedQuantity) || 0)));
-}
-
-function sortTransferSuggestions(suggestions: TransferSuggestion[], sort: SuggestionSort) {
-  if (!sort || sort.key === 'actions' || sort.key === 'quantity') return suggestions;
-
-  const directionFactor = sort.direction === 'asc' ? 1 : -1;
-  return [...suggestions].sort((left, right) => {
-    const leftValue = getSuggestionSortValue(left, sort.key);
-    const rightValue = getSuggestionSortValue(right, sort.key);
-
-    if (typeof leftValue === 'number' && typeof rightValue === 'number') {
-      return (leftValue - rightValue) * directionFactor;
-    }
-
-    return String(leftValue).localeCompare(String(rightValue), 'pt-BR', { numeric: true, sensitivity: 'base' }) * directionFactor;
-  });
 }
 
 function getSuggestionExportIssues(
@@ -465,12 +472,15 @@ export function ReallocationManager({
   const [stockSnapshot, setStockSnapshot] = useState<ReallocationStockSnapshot | null>(null);
   const [stockItems, setStockItems] = useState<ReallocationStockItem[]>([]);
   const [transferSuggestions, setTransferSuggestions] = useState<TransferSuggestion[]>([]);
+  const [confirmedSuggestions, setConfirmedSuggestions] = useState<TransferSuggestion[]>([]);
+  const [suggestionView, setSuggestionView] = useState<SuggestionView>('draft');
+  const [selectedSuggestionIds, setSelectedSuggestionIds] = useState<string[]>([]);
   const [suggestionMessage, setSuggestionMessage] = useState('');
   const [suggestionDiagnostic, setSuggestionDiagnostic] = useState<SuggestionDiagnostic | null>(null);
+  const [appliedSuggestionSignature, setAppliedSuggestionSignature] = useState('');
   const [suggestionProfile, setSuggestionProfile] = useState<SuggestionProfile>(initialPreferences.suggestionProfile);
   const [showAdvancedRules, setShowAdvancedRules] = useState(initialPreferences.showAdvancedRules);
   const [originMinimumDays, setOriginMinimumDays] = useState(initialPreferences.originMinimumDays);
-  const [needDaysThreshold, setNeedDaysThreshold] = useState(initialPreferences.needDaysThreshold);
   const [destinationTargetDays, setDestinationTargetDays] = useState(initialPreferences.destinationTargetDays);
   const [maxRoutePriority, setMaxRoutePriority] = useState(initialPreferences.maxRoutePriority);
   const [originCurvePriority, setOriginCurvePriority] = useState<string[]>(initialPreferences.originCurvePriority);
@@ -482,8 +492,10 @@ export function ReallocationManager({
   const [errorMessage, setErrorMessage] = useState('');
   const [showOnlyProblemSuggestions, setShowOnlyProblemSuggestions] = useState(initialPreferences.showOnlyProblemSuggestions);
   const [showExportConfirm, setShowExportConfirm] = useState(false);
+  const [showRecalculateConfirm, setShowRecalculateConfirm] = useState(false);
   const [showReallocationHistory, setShowReallocationHistory] = useState(false);
   const [showDataActions, setShowDataActions] = useState(false);
+  const [showTopPanel, setShowTopPanel] = useState(true);
   const [reallocationAuditLog, setReallocationAuditLog] = useState<ReallocationAuditLog[]>(loadReallocationAuditLog);
   const [suggestionTableSearch, setSuggestionTableSearch] = useState(initialPreferences.suggestionTableSearch);
   const [suggestionColumnOrder, setSuggestionColumnOrder] = useState<SuggestionColumnKey[]>(initialPreferences.suggestionColumnOrder);
@@ -576,7 +588,6 @@ export function ReallocationManager({
       suggestionProfile,
       showAdvancedRules,
       originMinimumDays,
-      needDaysThreshold,
       destinationTargetDays,
       maxRoutePriority,
       originCurvePriority,
@@ -596,7 +607,6 @@ export function ReallocationManager({
     destinationTargetDays,
     manufacturerFilters,
     maxRoutePriority,
-    needDaysThreshold,
     originCurvePriority,
     originFilters,
     originMinimumDays,
@@ -666,10 +676,14 @@ export function ReallocationManager({
   useEffect(() => {
     queueMicrotask(() => {
       setTransferSuggestions([]);
+      setConfirmedSuggestions([]);
+      setSelectedSuggestionIds([]);
+      setSuggestionView('draft');
       setSuggestionMessage('');
       setSuggestionDiagnostic(null);
+      setAppliedSuggestionSignature('');
     });
-  }, [stockSnapshot?.id, originFilters, destinationFilters, productFilters, classificationFilters, manufacturerFilters, originCurvePriority, destinationCurvePriority, originMinimumDays, needDaysThreshold, destinationTargetDays, maxRoutePriority]);
+  }, [stockSnapshot?.id]);
 
   useEffect(() => {
     const handleMouseMove = (event: MouseEvent) => {
@@ -706,6 +720,8 @@ export function ReallocationManager({
     columns: [branch.code, branch.name, branch.city || '-'],
     searchText: `${branch.code} ${branch.name} ${branch.city} ${branch.cnpj}`.toLowerCase(),
   })), [branches]);
+  const activeSuggestionRows = suggestionView === 'confirmed' ? confirmedSuggestions : transferSuggestions;
+  const selectedSuggestionIdSet = useMemo(() => new Set(selectedSuggestionIds), [selectedSuggestionIds]);
   const filteredProducts = useMemo(() => {
     const baseProducts = productFilters.length > 0
       ? productFilters
@@ -721,45 +737,105 @@ export function ReallocationManager({
     });
   }, [classificationFilters, manufacturerFilters, productFilters, products]);
   const suggestionExportStats = useMemo(() => {
-    const exportable = transferSuggestions.filter((suggestion) => suggestion.erpCode && suggestion.quantity > 0);
-    const missingErpCode = transferSuggestions.filter((suggestion) => !suggestion.erpCode && suggestion.quantity > 0);
+    const exportable = activeSuggestionRows.filter((suggestion) => suggestion.erpCode && suggestion.quantity > 0);
+    const missingErpCode = activeSuggestionRows.filter((suggestion) => !suggestion.erpCode && suggestion.quantity > 0);
     return {
       exportableLines: exportable.length,
       exportableUnits: exportable.reduce((sum, suggestion) => sum + suggestion.quantity, 0),
       missingErpCodeLines: missingErpCode.length,
     };
-  }, [transferSuggestions]);
+  }, [activeSuggestionRows]);
+  const confirmedExportStats = useMemo(() => {
+    const exportable = confirmedSuggestions.filter((suggestion) => suggestion.erpCode && suggestion.quantity > 0);
+    const missingErpCode = confirmedSuggestions.filter((suggestion) => !suggestion.erpCode && suggestion.quantity > 0);
+    return {
+      exportableLines: exportable.length,
+      exportableUnits: exportable.reduce((sum, suggestion) => sum + suggestion.quantity, 0),
+      missingErpCodeLines: missingErpCode.length,
+    };
+  }, [confirmedSuggestions]);
   const originAllocationByProduct = useMemo(() => {
-    const allocations = new Map<string, { allocated: number; stock: number; originCode: string; ean: string; originName: string; description: string }>();
+    const allocations = new Map<string, { allocated: number; stock: number; originCode: string; ean: string; originName: string; description: string; destinationCodes: Set<string> }>();
 
-    for (const suggestion of transferSuggestions) {
+    for (const suggestion of activeSuggestionRows) {
       const key = `${suggestion.ean}:${suggestion.originCode}`;
+      const originStockLimit = Math.max(0, Number(suggestion.originStock || 0));
       const current = allocations.get(key) || {
         allocated: 0,
-        stock: Number(suggestion.originStock || 0),
+        stock: originStockLimit,
         originCode: suggestion.originCode,
         ean: suggestion.ean,
         originName: suggestion.originName,
         description: suggestion.description,
+        destinationCodes: new Set<string>(),
       };
 
       current.allocated += Number(suggestion.quantity || 0);
-      current.stock = Math.max(current.stock, Number(suggestion.originStock || 0));
+      current.stock = Math.max(current.stock, originStockLimit);
+      current.destinationCodes.add(suggestion.destinationCode);
       allocations.set(key, current);
     }
 
     return allocations;
-  }, [transferSuggestions]);
+  }, [activeSuggestionRows]);
+  const destinationAllocationByProduct = useMemo(() => {
+    const allocations = new Map<string, { allocated: number; destinationCode: string; ean: string; destinationName: string; description: string; originCodes: Set<string> }>();
+
+    for (const suggestion of activeSuggestionRows) {
+      const key = `${suggestion.ean}:${suggestion.destinationCode}`;
+      const current = allocations.get(key) || {
+        allocated: 0,
+        destinationCode: suggestion.destinationCode,
+        ean: suggestion.ean,
+        destinationName: suggestion.destinationName,
+        description: suggestion.description,
+        originCodes: new Set<string>(),
+      };
+
+      current.allocated += Number(suggestion.quantity || 0);
+      current.originCodes.add(suggestion.originCode);
+      allocations.set(key, current);
+    }
+
+    return allocations;
+  }, [activeSuggestionRows]);
+  const confirmedOriginAllocationByProduct = useMemo(() => {
+    const allocations = new Map<string, { allocated: number; stock: number; originCode: string; ean: string; originName: string; description: string; destinationCodes: Set<string> }>();
+
+    for (const suggestion of confirmedSuggestions) {
+      const key = `${suggestion.ean}:${suggestion.originCode}`;
+      const originStockLimit = Math.max(0, Number(suggestion.originStock || 0));
+      const current = allocations.get(key) || {
+        allocated: 0,
+        stock: originStockLimit,
+        originCode: suggestion.originCode,
+        ean: suggestion.ean,
+        originName: suggestion.originName,
+        description: suggestion.description,
+        destinationCodes: new Set<string>(),
+      };
+
+      current.allocated += Number(suggestion.quantity || 0);
+      current.stock = Math.max(current.stock, originStockLimit);
+      current.destinationCodes.add(suggestion.destinationCode);
+      allocations.set(key, current);
+    }
+
+    return allocations;
+  }, [confirmedSuggestions]);
   const overAllocatedOrigins = useMemo(() => {
     return Array.from(originAllocationByProduct.values()).filter((allocation) => allocation.allocated > allocation.stock);
   }, [originAllocationByProduct]);
-  const suggestionExportIssues = useMemo(() => getSuggestionExportIssues(transferSuggestions, overAllocatedOrigins, maxRoutePriority), [maxRoutePriority, overAllocatedOrigins, transferSuggestions]);
-  const blockingExportIssues = useMemo(() => suggestionExportIssues.filter((issue) => issue.severity === 'block'), [suggestionExportIssues]);
+  const confirmedOverAllocatedOrigins = useMemo(() => {
+    return Array.from(confirmedOriginAllocationByProduct.values()).filter((allocation) => allocation.allocated > allocation.stock);
+  }, [confirmedOriginAllocationByProduct]);
+  const confirmedExportIssues = useMemo(() => getSuggestionExportIssues(confirmedSuggestions, confirmedOverAllocatedOrigins, maxRoutePriority), [confirmedOverAllocatedOrigins, confirmedSuggestions, maxRoutePriority]);
+  const confirmedBlockingExportIssues = useMemo(() => confirmedExportIssues.filter((issue) => issue.severity === 'block'), [confirmedExportIssues]);
   const problemSuggestionIds = useMemo(() => {
     const ids = new Set<string>();
     const overAllocatedKeys = new Set(overAllocatedOrigins.map((allocation) => `${allocation.ean}:${allocation.originCode}`));
 
-    transferSuggestions.forEach((suggestion) => {
+    activeSuggestionRows.forEach((suggestion) => {
       const overKey = `${suggestion.ean}:${suggestion.originCode}`;
       if (!suggestion.erpCode && suggestion.quantity > 0) ids.add(suggestion.id);
       if (suggestion.quantity <= 0 || !Number.isFinite(Number(suggestion.quantity))) ids.add(suggestion.id);
@@ -769,11 +845,11 @@ export function ReallocationManager({
     });
 
     return ids;
-  }, [maxRoutePriority, overAllocatedOrigins, transferSuggestions]);
+  }, [activeSuggestionRows, maxRoutePriority, overAllocatedOrigins]);
   const originSummary = useMemo(() => {
     const map = new Map<string, { originName: string; rows: number; units: number; stock: number; exceeded: number }>();
 
-    transferSuggestions.forEach((suggestion) => {
+    activeSuggestionRows.forEach((suggestion) => {
       const current = map.get(suggestion.originCode) || {
         originName: suggestion.originName,
         rows: 0,
@@ -795,8 +871,34 @@ export function ReallocationManager({
     return Array.from(map.values())
       .sort((left, right) => right.units - left.units)
       .slice(0, 6);
-  }, [overAllocatedOrigins, transferSuggestions]);
+  }, [activeSuggestionRows, overAllocatedOrigins]);
   const activeSuggestionFilterCount = productFilters.length + originFilters.length + destinationFilters.length + classificationFilters.length + manufacturerFilters.length + originCurvePriority.length + destinationCurvePriority.length;
+  const suggestionSettingsSignature = useMemo(() => JSON.stringify({
+    snapshotId: stockSnapshot?.id || '',
+    products: productFilters.map((item) => item.id),
+    origins: originFilters.map((item) => item.id),
+    destinations: destinationFilters.map((item) => item.id),
+    classifications: classificationFilters.map((item) => item.id),
+    manufacturers: manufacturerFilters.map((item) => item.id),
+    originCurves: originCurvePriority,
+    destinationCurves: destinationCurvePriority,
+    originMinimumDays,
+    destinationTargetDays,
+    maxRoutePriority,
+  }), [
+    classificationFilters,
+    destinationCurvePriority,
+    destinationFilters,
+    destinationTargetDays,
+    manufacturerFilters,
+    maxRoutePriority,
+    originCurvePriority,
+    originFilters,
+    originMinimumDays,
+    productFilters,
+    stockSnapshot?.id,
+  ]);
+  const hasPendingSuggestionSettings = Boolean(appliedSuggestionSignature && suggestionSettingsSignature !== appliedSuggestionSignature);
 
   const branchLogisticsByCode = useMemo(() => new Map(branches.map((branch) => [
     branch.code.padStart(2, '0'),
@@ -808,10 +910,13 @@ export function ReallocationManager({
   ])), [branches]);
   const orderedSuggestionColumns = useMemo(() => {
     const byKey = new Map(SUGGESTION_COLUMNS.map((column) => [column.key, column]));
-    const currentColumns = suggestionColumnOrder.map((key) => byKey.get(key)).filter((column): column is SuggestionColumn => Boolean(column));
+    const selectionColumn = byKey.get('selection');
+    const currentColumns = suggestionColumnOrder
+      .map((key) => byKey.get(key))
+      .filter((column): column is SuggestionColumn => column !== undefined && column.key !== 'selection');
     const currentKeys = new Set(currentColumns.map((column) => column.key));
-    const newColumns = SUGGESTION_COLUMNS.filter((column) => !currentKeys.has(column.key));
-    return [...currentColumns, ...newColumns];
+    const newColumns = SUGGESTION_COLUMNS.filter((column) => column.key !== 'selection' && !currentKeys.has(column.key));
+    return selectionColumn ? [selectionColumn, ...currentColumns, ...newColumns] : [...currentColumns, ...newColumns];
   }, [suggestionColumnOrder]);
   const suggestionTableWidth = useMemo(() => orderedSuggestionColumns.reduce((sum, column) => sum + (suggestionColumnWidths[column.key] || column.width), 0), [orderedSuggestionColumns, suggestionColumnWidths]);
 
@@ -819,14 +924,13 @@ export function ReallocationManager({
     const preset = SUGGESTION_PROFILES[profile];
     setSuggestionProfile(profile);
     setOriginMinimumDays(preset.originMinimumDays);
-    setNeedDaysThreshold(preset.needDaysThreshold);
     setDestinationTargetDays(preset.destinationTargetDays);
     setMaxRoutePriority(preset.maxRoutePriority);
   };
 
   const importCatalog = async (file: File) => {
     if (!canImportData) {
-      alert(getBlockedMessage('importar cadastro do remanejamento inteligente', 'supremeAdmin'));
+      alert(getBlockedMessage('importar cadastro do remanejamento inteligente', 'perfumePurchasingOrSupreme'));
       return;
     }
     setImporting(true);
@@ -865,7 +969,7 @@ export function ReallocationManager({
 
   const importStock = async (file: File) => {
     if (!canImportData) {
-      alert(getBlockedMessage('importar estoque do remanejamento inteligente', 'supremeAdmin'));
+      alert(getBlockedMessage('importar estoque do remanejamento inteligente', 'perfumePurchasingOrSupreme'));
       return;
     }
     setStockImporting(true);
@@ -964,11 +1068,19 @@ export function ReallocationManager({
     URL.revokeObjectURL(url);
   };
 
-  const generateTransferSuggestions = async () => {
+  const generateTransferSuggestions = async ({ preserveManualChanges = false }: { preserveManualChanges?: boolean } = {}) => {
     if (!canGenerateSuggestions) {
-      alert(getBlockedMessage('gerar sugestoes de remanejamento inteligente', 'supremeAdmin'));
+      alert(getBlockedMessage('gerar sugestoes de remanejamento inteligente', 'perfumePurchasingOrSupreme'));
       return;
     }
+    const manualQuantityByKey = preserveManualChanges
+      ? new Map(
+        transferSuggestions
+          .filter((suggestion) => suggestion.quantity !== suggestion.maxQuantity)
+          .map((suggestion) => [suggestionIdentityKey(suggestion), suggestion.quantity]),
+      )
+      : new Map<string, number>();
+
     setGeneratingSuggestions(true);
     setSuggestionMessage('');
     setSuggestionDiagnostic(null);
@@ -976,6 +1088,7 @@ export function ReallocationManager({
     try {
       if (!stockSnapshot) {
         setTransferSuggestions([]);
+        setAppliedSuggestionSignature('');
         setSuggestionMessage('Importe um estoque antes de gerar sugestões.');
         return;
       }
@@ -999,7 +1112,6 @@ export function ReallocationManager({
           },
           rules: {
             originMinimumDays,
-            needDaysThreshold,
             destinationTargetDays,
             maxRoutePriority,
             originCurves: originCurvePriority,
@@ -1017,7 +1129,27 @@ export function ReallocationManager({
       const suggestionEngine: SuggestionDiagnostic['engine'] = ['python', 'typescript', 'fallback'].includes(data.engine)
         ? data.engine
         : 'typescript';
-      setTransferSuggestions(data.suggestions as TransferSuggestion[]);
+      let nextSuggestions = data.suggestions as TransferSuggestion[];
+      if (manualQuantityByKey.size > 0) {
+        nextSuggestions = nextSuggestions.map((suggestion) => {
+          const manualQuantity = manualQuantityByKey.get(suggestionIdentityKey(suggestion));
+          if (manualQuantity === undefined) return suggestion;
+
+          return { ...suggestion, quantity: manualQuantity };
+        });
+
+        nextSuggestions = nextSuggestions.map((suggestion) => {
+          const manualQuantity = manualQuantityByKey.get(suggestionIdentityKey(suggestion));
+          if (manualQuantity === undefined) return suggestion;
+
+          return { ...suggestion, quantity: clampSuggestionQuantity(nextSuggestions, suggestion, manualQuantity) };
+        });
+      }
+
+      setTransferSuggestions(nextSuggestions);
+      setSuggestionView('draft');
+      setSelectedSuggestionIds([]);
+      setAppliedSuggestionSignature(suggestionSettingsSignature);
       setSuggestionDiagnostic({
         engine: suggestionEngine,
         stockRows: Number(data.stockRows || stockItems.length),
@@ -1027,30 +1159,41 @@ export function ReallocationManager({
         missingErpCode: Number(data.missingErpCode || 0),
         blockedDifferentUf: Number(data.blockedDifferentUf || 0),
         blockedRoute: Number(data.blockedRoute || 0),
-        suggestions: data.suggestions.length,
+        suggestions: nextSuggestions.length,
       });
-      if (data.suggestions.length === 0) {
+      if (nextSuggestions.length === 0) {
         setSuggestionMessage(`Nenhuma sugestão gerada pelo motor ${data.engine || 'TypeScript'}. Origens elegíveis: ${data.eligibleOrigins || 0}. Destinos elegíveis: ${data.eligibleDestinations || 0}. Itens sem código ERP: ${data.missingErpCode || 0}.`);
         return;
       }
 
-      setSuggestionMessage(`${data.suggestions.length} sugestões geradas pelo motor ${data.engine || 'TypeScript'}. Revise as quantidades antes de exportar.`);
+      const keptManualCount = nextSuggestions.filter((suggestion) => manualQuantityByKey.has(suggestionIdentityKey(suggestion)) && suggestion.quantity !== suggestion.maxQuantity).length;
+      setSuggestionMessage(`${nextSuggestions.length} sugestões geradas pelo motor ${data.engine || 'TypeScript'}.${keptManualCount > 0 ? ` ${keptManualCount} ajustes manuais mantidos.` : ''} Revise as quantidades antes de exportar.`);
       addReallocationAuditLog({
         action: 'Sugestão gerada',
         detail: `Motor ${data.engine || 'TypeScript'}`,
-        count: data.suggestions.length,
-        units: (data.suggestions as TransferSuggestion[]).reduce((sum, suggestion) => sum + suggestion.quantity, 0),
+        count: nextSuggestions.length,
+        units: nextSuggestions.reduce((sum, suggestion) => sum + suggestion.quantity, 0),
       });
     } catch (error) {
       setTransferSuggestions([]);
+      setAppliedSuggestionSignature('');
       setSuggestionMessage(getNetworkErrorMessage(error, 'Não foi possível gerar sugestões.'));
     } finally {
       setGeneratingSuggestions(false);
     }
   };
 
+  const updateActiveSuggestions = (updater: (current: TransferSuggestion[]) => TransferSuggestion[]) => {
+    if (suggestionView === 'confirmed') {
+      setConfirmedSuggestions(updater);
+      return;
+    }
+
+    setTransferSuggestions(updater);
+  };
+
   const updateSuggestionQuantity = (suggestionId: string, quantity: number) => {
-    setTransferSuggestions((current) => current.map((suggestion) => {
+    updateActiveSuggestions((current) => current.map((suggestion) => {
       if (suggestion.id !== suggestionId) return suggestion;
       const nextQuantity = clampSuggestionQuantity(current, suggestion, quantity);
       return { ...suggestion, quantity: nextQuantity };
@@ -1074,7 +1217,7 @@ export function ReallocationManager({
     if (quantities.length === 0) return;
     const targetIds = sortedTransferSuggestions.slice(startIndex, startIndex + quantities.length).map((suggestion) => suggestion.id);
 
-    setTransferSuggestions((current) => {
+    updateActiveSuggestions((current) => {
       const requestedById = new Map(targetIds.map((id, index) => [id, quantities[index]]));
       let nextSuggestions = current;
 
@@ -1096,26 +1239,28 @@ export function ReallocationManager({
       count: quantities.length,
       units: quantities.reduce((sum, value) => sum + value, 0),
     });
-    focusSuggestionCell(Math.min(startIndex + quantities.length - 1, transferSuggestions.length - 1));
+    focusSuggestionCell(Math.min(startIndex + quantities.length - 1, sortedTransferSuggestions.length - 1));
   };
 
   const adjustedOriginDays = useCallback((suggestion: TransferSuggestion) => {
-    return getAdjustedOriginDays(suggestion);
-  }, []);
+    const allocation = originAllocationByProduct.get(`${suggestion.ean}:${suggestion.originCode}`);
+    return getAdjustedOriginDays(suggestion, allocation?.allocated);
+  }, [originAllocationByProduct]);
 
   const adjustedDestinationDays = useCallback((suggestion: TransferSuggestion) => {
-    return getAdjustedDestinationDays(suggestion);
-  }, []);
+    const allocation = destinationAllocationByProduct.get(`${suggestion.ean}:${suggestion.destinationCode}`);
+    return getAdjustedDestinationDays(suggestion, allocation?.allocated);
+  }, [destinationAllocationByProduct]);
 
   const tableSearchBaseCount = useMemo(() => (
     showOnlyProblemSuggestions
-      ? transferSuggestions.filter((suggestion) => problemSuggestionIds.has(suggestion.id)).length
-      : transferSuggestions.length
-  ), [problemSuggestionIds, showOnlyProblemSuggestions, transferSuggestions]);
+      ? activeSuggestionRows.filter((suggestion) => problemSuggestionIds.has(suggestion.id)).length
+      : activeSuggestionRows.length
+  ), [activeSuggestionRows, problemSuggestionIds, showOnlyProblemSuggestions]);
   const displayedTransferSuggestions = useMemo(() => {
     const baseSuggestions = showOnlyProblemSuggestions
-      ? transferSuggestions.filter((suggestion) => problemSuggestionIds.has(suggestion.id))
-      : transferSuggestions;
+      ? activeSuggestionRows.filter((suggestion) => problemSuggestionIds.has(suggestion.id))
+      : activeSuggestionRows;
     const query = normalizeAutocompleteText(suggestionTableSearch);
     if (!query) return baseSuggestions;
 
@@ -1135,15 +1280,98 @@ export function ReallocationManager({
       ].join(' ');
       return normalizeAutocompleteText(searchable).includes(query);
     });
-  }, [problemSuggestionIds, showOnlyProblemSuggestions, suggestionTableSearch, transferSuggestions]);
-  const sortedTransferSuggestions = sortTransferSuggestions(displayedTransferSuggestions, suggestionSort);
+  }, [activeSuggestionRows, problemSuggestionIds, showOnlyProblemSuggestions, suggestionTableSearch]);
+  const sortedTransferSuggestions = [...displayedTransferSuggestions];
+  if (suggestionSort && suggestionSort.key !== 'actions' && suggestionSort.key !== 'quantity') {
+    const directionFactor = suggestionSort.direction === 'asc' ? 1 : -1;
+    sortedTransferSuggestions.sort((left, right) => {
+      const leftValue = getSuggestionSortValue(left, suggestionSort.key);
+      const rightValue = getSuggestionSortValue(right, suggestionSort.key);
+
+      if (typeof leftValue === 'number' && typeof rightValue === 'number') {
+        return (leftValue - rightValue) * directionFactor;
+      }
+
+      return String(leftValue).localeCompare(String(rightValue), 'pt-BR', { numeric: true, sensitivity: 'base' }) * directionFactor;
+    });
+  }
+  const visibleSuggestionIds = sortedTransferSuggestions.map((suggestion) => suggestion.id);
+  const selectedVisibleSuggestionCount = visibleSuggestionIds.filter((id) => selectedSuggestionIdSet.has(id)).length;
+  const allVisibleSuggestionsSelected = visibleSuggestionIds.length > 0 && selectedVisibleSuggestionCount === visibleSuggestionIds.length;
+
+  const changeSuggestionView = (view: SuggestionView) => {
+    setSuggestionView(view);
+    setSelectedSuggestionIds([]);
+  };
+
+  const toggleSuggestionSelection = (suggestionId: string) => {
+    setSelectedSuggestionIds((current) => (
+      current.includes(suggestionId)
+        ? current.filter((id) => id !== suggestionId)
+        : [...current, suggestionId]
+    ));
+  };
+
+  const toggleVisibleSuggestionSelection = () => {
+    setSelectedSuggestionIds((current) => {
+      const currentSet = new Set(current);
+      const visibleSet = new Set(visibleSuggestionIds);
+
+      if (allVisibleSuggestionsSelected) {
+        return current.filter((id) => !visibleSet.has(id));
+      }
+
+      visibleSuggestionIds.forEach((id) => currentSet.add(id));
+      return Array.from(currentSet);
+    });
+  };
+
+  const confirmSelectedSuggestions = () => {
+    const selectedRows = transferSuggestions.filter((suggestion) => selectedSuggestionIdSet.has(suggestion.id));
+    if (selectedRows.length === 0) {
+      alert('Selecione ao menos uma sugestão para confirmar.');
+      return;
+    }
+
+    setConfirmedSuggestions((current) => {
+      const byIdentity = new Map(current.map((suggestion) => [suggestionIdentityKey(suggestion), suggestion]));
+      selectedRows.forEach((suggestion) => {
+        byIdentity.set(suggestionIdentityKey(suggestion), suggestion);
+      });
+      return Array.from(byIdentity.values());
+    });
+    setTransferSuggestions((current) => current.filter((suggestion) => !selectedSuggestionIdSet.has(suggestion.id)));
+    setSelectedSuggestionIds([]);
+    setSuggestionView('confirmed');
+    addReallocationAuditLog({
+      action: 'Sugestão confirmada',
+      detail: `${selectedRows.length} linhas enviadas para a etapa confirmada`,
+      count: selectedRows.length,
+      units: selectedRows.reduce((sum, suggestion) => sum + suggestion.quantity, 0),
+    });
+  };
+
+  const removeSelectedConfirmedSuggestions = () => {
+    if (selectedSuggestionIds.length === 0) return;
+    const selectedSet = new Set(selectedSuggestionIds);
+    const selectedRows = confirmedSuggestions.filter((suggestion) => selectedSet.has(suggestion.id));
+    setConfirmedSuggestions((current) => current.filter((suggestion) => !selectedSet.has(suggestion.id)));
+    setSelectedSuggestionIds([]);
+    addReallocationAuditLog({
+      action: 'Confirmadas removidas',
+      detail: `${selectedRows.length} linhas removidas da etapa confirmada`,
+      count: selectedRows.length,
+      units: selectedRows.reduce((sum, suggestion) => sum + suggestion.quantity, 0),
+    });
+  };
 
   const removeSuggestion = (suggestionId: string) => {
-    setTransferSuggestions((current) => current.filter((suggestion) => suggestion.id !== suggestionId));
+    updateActiveSuggestions((current) => current.filter((suggestion) => suggestion.id !== suggestionId));
+    setSelectedSuggestionIds((current) => current.filter((id) => id !== suggestionId));
   };
 
   const restoreSuggestionQuantity = (suggestionId: string) => {
-    setTransferSuggestions((current) => current.map((suggestion) => (
+    updateActiveSuggestions((current) => current.map((suggestion) => (
       suggestion.id === suggestionId
         ? { ...suggestion, quantity: clampSuggestionQuantity(current, suggestion, suggestion.maxQuantity) }
         : suggestion
@@ -1151,31 +1379,104 @@ export function ReallocationManager({
   };
 
   const isSuggestionManuallyChanged = (suggestion: TransferSuggestion) => suggestion.quantity !== suggestion.maxQuantity;
+  const manualSuggestionChangeCount = transferSuggestions.filter(isSuggestionManuallyChanged).length;
+  const activeManualSuggestionChangeCount = activeSuggestionRows.filter(isSuggestionManuallyChanged).length;
+  const requestGenerateTransferSuggestions = () => {
+    if (manualSuggestionChangeCount > 0) {
+      setShowRecalculateConfirm(true);
+      return;
+    }
+
+    generateTransferSuggestions();
+  };
   const getOriginAllocation = (suggestion: TransferSuggestion) => originAllocationByProduct.get(`${suggestion.ean}:${suggestion.originCode}`);
+  const getDestinationAllocation = (suggestion: TransferSuggestion) => destinationAllocationByProduct.get(`${suggestion.ean}:${suggestion.destinationCode}`);
+  const isSuggestionMultiDestination = (suggestion: TransferSuggestion) => (getOriginAllocation(suggestion)?.destinationCodes.size || 0) > 1;
+  const isSuggestionMultiOrigin = (suggestion: TransferSuggestion) => (getDestinationAllocation(suggestion)?.originCodes.size || 0) > 1;
   const isSuggestionOverAllocated = (suggestion: TransferSuggestion) => {
     const allocation = getOriginAllocation(suggestion);
     return Boolean(allocation && allocation.allocated > allocation.stock);
   };
+  const getSuggestionRowClass = (suggestion: TransferSuggestion) => {
+    const multiDestination = isSuggestionMultiDestination(suggestion);
+    const multiOrigin = isSuggestionMultiOrigin(suggestion);
+
+    if (isSuggestionOverAllocated(suggestion)) {
+      return 'shadow-[inset_4px_0_0_#dc2626]';
+    }
+
+    if (isSuggestionManuallyChanged(suggestion)) {
+      return 'shadow-[inset_4px_0_0_#7c3aed]';
+    }
+
+    if (multiDestination && multiOrigin) {
+      return 'shadow-[inset_4px_0_0_#0f766e]';
+    }
+
+    if (multiDestination) {
+      return 'shadow-[inset_4px_0_0_#f59e0b]';
+    }
+
+    if (multiOrigin) {
+      return 'shadow-[inset_4px_0_0_#2563eb]';
+    }
+
+    return '';
+  };
+  const getSuggestionCellToneClass = (suggestion: TransferSuggestion) => {
+    const multiDestination = isSuggestionMultiDestination(suggestion);
+    const multiOrigin = isSuggestionMultiOrigin(suggestion);
+
+    if (isSuggestionOverAllocated(suggestion)) {
+      return 'bg-[#fecaca] group-hover:bg-[#fca5a5]';
+    }
+
+    if (isSuggestionManuallyChanged(suggestion)) {
+      return 'bg-[#ddd6fe] group-hover:bg-[#c4b5fd]';
+    }
+
+    if (multiDestination && multiOrigin) {
+      return 'bg-[#99f6e4] group-hover:bg-[#5eead4]';
+    }
+
+    if (multiDestination) {
+      return 'bg-[#fde68a] group-hover:bg-[#fcd34d]';
+    }
+
+    if (multiOrigin) {
+      return 'bg-[#bae6fd] group-hover:bg-[#7dd3fc]';
+    }
+
+    return 'bg-white group-hover:bg-[#f8fafc]';
+  };
+  const visibleMultiDestinationCount = sortedTransferSuggestions.filter((suggestion) => isSuggestionMultiDestination(suggestion)).length;
+  const visibleMultiOriginCount = sortedTransferSuggestions.filter((suggestion) => isSuggestionMultiOrigin(suggestion)).length;
+  const visibleSharedRouteCount = sortedTransferSuggestions.filter((suggestion) => isSuggestionMultiDestination(suggestion) && isSuggestionMultiOrigin(suggestion)).length;
 
   const downloadSuggestionsTxt = () => {
     if (!canExport) {
-      alert(getBlockedMessage('exportar TXT de remanejamento inteligente', 'supremeAdmin'));
+      alert(getBlockedMessage('exportar TXT de remanejamento inteligente', 'perfumePurchasingOrSupreme'));
       return;
     }
-    if (blockingExportIssues.length > 0) {
-      const first = blockingExportIssues[0];
+    if (confirmedBlockingExportIssues.length > 0) {
+      const first = confirmedBlockingExportIssues[0];
       alert(`${first.title}: ${first.detail}`);
       return;
     }
 
-    const exportableSuggestions = transferSuggestions.filter((suggestion) => suggestion.erpCode && suggestion.quantity > 0);
-    const missingCodeCount = transferSuggestions.filter((suggestion) => !suggestion.erpCode && suggestion.quantity > 0).length;
+    const exportableSuggestions = confirmedSuggestions.filter((suggestion) => suggestion.erpCode && suggestion.quantity > 0);
+    const missingCodeCount = confirmedSuggestions.filter((suggestion) => !suggestion.erpCode && suggestion.quantity > 0).length;
     const content = exportableSuggestions
       .filter((suggestion) => suggestion.erpCode && suggestion.quantity > 0)
       .map((suggestion) => txtLine(suggestion.originCode, suggestion.destinationCode, suggestion.erpCode, suggestion.quantity))
       .join('\n');
 
     if (!content) {
+      if (confirmedSuggestions.length === 0) {
+        alert('Confirme ao menos uma sugestão antes de exportar o TXT.');
+        return;
+      }
+
       alert(missingCodeCount > 0
         ? 'As sugestões foram geradas, mas estão sem código ERP. Reimporte/vincule o cadastro de produtos antes de exportar.'
         : 'Gere uma sugestão de transferência antes de exportar.');
@@ -1185,14 +1486,15 @@ export function ReallocationManager({
     const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
+    const fileName = `sugestao-remanejamento-${downloadTimestamp()}.txt`;
     link.href = url;
-    link.download = 'sugestao-remanejamento.txt';
+    link.download = fileName;
     link.click();
     URL.revokeObjectURL(url);
     setShowExportConfirm(false);
     addReallocationAuditLog({
       action: 'TXT exportado',
-      detail: `${exportableSuggestions.length} linhas`,
+      detail: `${fileName} - ${exportableSuggestions.length} linhas`,
       count: exportableSuggestions.length,
       units: exportableSuggestions.reduce((sum, suggestion) => sum + suggestion.quantity, 0),
     });
@@ -1200,31 +1502,43 @@ export function ReallocationManager({
 
   const exportSuggestionsTxt = () => {
     if (!canExport) {
-      alert(getBlockedMessage('exportar TXT de remanejamento inteligente', 'supremeAdmin'));
+      alert(getBlockedMessage('exportar TXT de remanejamento inteligente', 'perfumePurchasingOrSupreme'));
       return;
     }
-    if (blockingExportIssues.length > 0) {
-      const first = blockingExportIssues[0];
+    if (confirmedBlockingExportIssues.length > 0) {
+      const first = confirmedBlockingExportIssues[0];
       alert(`${first.title}: ${first.detail}`);
       return;
     }
 
-    if (transferSuggestions.filter((suggestion) => suggestion.erpCode && suggestion.quantity > 0).length === 0) {
+    if (confirmedSuggestions.length === 0) {
+      alert('Confirme ao menos uma sugestão antes de exportar o TXT.');
+      return;
+    }
+
+    if (confirmedSuggestions.some((suggestion) => !suggestion.erpCode && suggestion.quantity > 0)) {
+      alert('Existem sugestões confirmadas sem código ERP. Reimporte/vincule o cadastro de produtos antes de exportar.');
+      return;
+    }
+
+    if (confirmedSuggestions.filter((suggestion) => suggestion.erpCode && suggestion.quantity > 0).length === 0) {
       alert('Gere uma sugestão de transferência antes de exportar.');
       return;
     }
 
+    setSuggestionView('confirmed');
+    setSelectedSuggestionIds([]);
     setShowExportConfirm(true);
   };
 
   const exportConferenceCsv = () => {
     if (!canExport) {
-      alert(getBlockedMessage('exportar conferencia de remanejamento inteligente', 'supremeAdmin'));
+      alert(getBlockedMessage('exportar conferencia de remanejamento inteligente', 'perfumePurchasingOrSupreme'));
       return;
     }
     const rows = [
       ['produto', 'origem', 'destino', 'codigo_erp', 'ean', 'quantidade', 'sugestao_original', 'estoque_origem', 'dias_origem_antes', 'dias_origem_depois', 'estoque_destino', 'dias_destino_antes', 'dias_destino_depois', 'rota', 'status'],
-      ...transferSuggestions.map((suggestion) => [
+      ...activeSuggestionRows.map((suggestion) => [
         suggestion.description,
         suggestion.originName,
         suggestion.destinationName,
@@ -1234,10 +1548,10 @@ export function ReallocationManager({
         suggestion.maxQuantity,
         suggestion.originStock,
         decimal(suggestion.originStockDays),
-        decimal(getAdjustedOriginDays(suggestion)),
+        decimal(getAdjustedOriginDays(suggestion, getOriginAllocation(suggestion)?.allocated)),
         suggestion.destinationStock,
         decimal(suggestion.destinationStockDays),
-        decimal(getAdjustedDestinationDays(suggestion)),
+        decimal(getAdjustedDestinationDays(suggestion, getDestinationAllocation(suggestion)?.allocated)),
         suggestion.routePriority,
         [
           !suggestion.erpCode && suggestion.quantity > 0 ? 'SEM_ERP' : '',
@@ -1257,9 +1571,9 @@ export function ReallocationManager({
     URL.revokeObjectURL(url);
     addReallocationAuditLog({
       action: 'CSV conferencia',
-      detail: `${transferSuggestions.length} linhas exportadas`,
-      count: transferSuggestions.length,
-      units: transferSuggestions.reduce((sum, suggestion) => sum + suggestion.quantity, 0),
+      detail: `${activeSuggestionRows.length} linhas exportadas (${suggestionView === 'confirmed' ? 'confirmadas' : 'sugestões'})`,
+      count: activeSuggestionRows.length,
+      units: activeSuggestionRows.reduce((sum, suggestion) => sum + suggestion.quantity, 0),
     });
   };
 
@@ -1277,6 +1591,7 @@ export function ReallocationManager({
     const sourceKey = draggedSuggestionColumnRef.current;
     draggedSuggestionColumnRef.current = null;
     if (!sourceKey || sourceKey === targetKey) return;
+    if (sourceKey === 'selection' || sourceKey === 'actions' || targetKey === 'selection') return;
 
     setSuggestionColumnOrder((current) => {
       const sourceIndex = current.indexOf(sourceKey);
@@ -1296,78 +1611,131 @@ export function ReallocationManager({
   };
 
   const renderSuggestionHeader = (column: SuggestionColumn) => {
-    const alignClass = column.align === 'left' ? 'text-left' : column.align === 'center' ? 'text-center' : 'text-right';
     const highlightClass = 'highlight' in column && column.highlight === 'transfer'
-      ? 'border-2 border-emerald-300 bg-emerald-100 text-emerald-800'
-      : 'border border-slate-300 bg-slate-100 text-slate-700';
+      ? 'bg-emerald-50 text-emerald-700 shadow-[inset_0_-2px_0_#10b981]'
+      : 'bg-slate-50 text-black';
+    const isUtilityColumn = column.key === 'selection' || column.key === 'actions';
 
     return (
       <th
         key={column.key}
-        draggable
+        draggable={!isUtilityColumn}
         onDoubleClick={() => {
-          if (column.key === 'actions' || column.key === 'quantity') return;
+          if (isUtilityColumn || column.key === 'quantity') return;
           setSuggestionSort((current) => ({
             key: column.key,
             direction: current?.key === column.key && current.direction === 'asc' ? 'desc' : 'asc',
           }));
         }}
         onDragStart={() => {
+          if (isUtilityColumn) return;
           draggedSuggestionColumnRef.current = column.key;
         }}
         onDragOver={(event) => event.preventDefault()}
-        onDrop={() => moveSuggestionColumn(column.key)}
-        className={`relative select-none px-2 py-2 ${alignClass} ${highlightClass}`}
+        onDrop={() => {
+          if (!isUtilityColumn) moveSuggestionColumn(column.key);
+        }}
+        className={`relative select-none border-b border-r border-slate-200 px-2.5 py-2.5 text-center text-[10px] font-black uppercase tracking-widest ${highlightClass}`}
         style={{ width: suggestionColumnWidths[column.key] || column.width }}
         title="Arraste para mover. Puxe a borda direita para ajustar a largura."
       >
-        <span className="block truncate pr-2">
-          {column.label}
-          {suggestionSort?.key === column.key && (
-            <span className="ml-1 text-[9px]">{suggestionSort.direction === 'asc' ? 'A-Z' : 'Z-A'}</span>
-          )}
-        </span>
-        <span
-          className="absolute right-0 top-0 h-full w-2 cursor-col-resize"
-          onMouseDown={(event) => startSuggestionColumnResize(event, column.key)}
-          onDoubleClick={(event) => {
-            event.stopPropagation();
-            setSuggestionColumnWidths((current) => ({ ...current, [column.key]: column.width }));
-          }}
-        />
+        {column.key === 'selection' ? (
+          <input
+            type="checkbox"
+            checked={allVisibleSuggestionsSelected}
+            disabled={visibleSuggestionIds.length === 0}
+            onChange={toggleVisibleSuggestionSelection}
+            className="h-4 w-4 rounded border-slate-300 accent-violet-600 disabled:opacity-40"
+            aria-label="Selecionar linhas visiveis"
+          />
+        ) : (
+          <>
+            <span className="block truncate pr-2">
+              {column.label}
+              {suggestionSort?.key === column.key && (
+                <span className="ml-1 text-[9px]">{suggestionSort.direction === 'asc' ? 'A-Z' : 'Z-A'}</span>
+              )}
+            </span>
+            {!isUtilityColumn && (
+              <span
+                className="absolute right-0 top-1/2 h-5 w-2 -translate-y-1/2 cursor-col-resize rounded-full transition hover:bg-blue-200"
+                onMouseDown={(event) => startSuggestionColumnResize(event, column.key)}
+                onDoubleClick={(event) => {
+                  event.stopPropagation();
+                  setSuggestionColumnWidths((current) => ({ ...current, [column.key]: column.width }));
+                }}
+              />
+            )}
+          </>
+        )}
       </th>
     );
   };
 
   const renderSuggestionCell = (suggestion: TransferSuggestion, suggestionIndex: number, column: SuggestionColumn) => {
-    const alignClass = column.align === 'left' ? 'text-left' : column.align === 'center' ? 'text-center' : 'text-right';
-    const baseClass = `border border-slate-200 px-2 py-1.5 ${alignClass}`;
+    const baseClass = 'overflow-hidden truncate whitespace-nowrap border-b border-r border-slate-100 px-2.5 py-1 text-center text-xs leading-tight text-black';
+    const cellToneClass = getSuggestionCellToneClass(suggestion);
+    const cellClass = `${baseClass} ${cellToneClass}`;
 
     switch (column.key) {
+      case 'selection':
+        return (
+          <td key={column.key} className={`border-b border-r border-slate-100 px-2 py-1 text-center ${cellToneClass}`}>
+            <input
+              type="checkbox"
+              checked={selectedSuggestionIdSet.has(suggestion.id)}
+              onChange={() => toggleSuggestionSelection(suggestion.id)}
+              className="h-4 w-4 rounded border-slate-300 accent-violet-600"
+              aria-label={`Selecionar ${suggestion.description}`}
+            />
+          </td>
+        );
       case 'description':
-        return <td key={column.key} className={`${baseClass} font-bold uppercase text-slate-900`}>{suggestion.description}</td>;
+        return <td key={column.key} className={`${cellClass} font-bold uppercase`}>{suggestion.description}</td>;
       case 'ean':
-        return <td key={column.key} className={`${baseClass} font-bold text-slate-700`}>{suggestion.ean || ''}</td>;
-      case 'originName':
-        return <td key={column.key} className={`${baseClass} font-bold text-slate-900`}>{suggestion.originName}</td>;
+        return <td key={column.key} className={`${cellClass} font-bold`}>{suggestion.ean || ''}</td>;
+      case 'originName': {
+        const allocation = getOriginAllocation(suggestion);
+        const destinationCount = allocation?.destinationCodes.size || 0;
+        const isMultiDestination = destinationCount > 1;
+        return (
+          <td
+            key={column.key}
+            className={`${cellClass} font-bold`}
+            title={isMultiDestination ? `${suggestion.originName} envia este item para ${destinationCount} lojas` : undefined}
+          >
+            {suggestion.originName}
+          </td>
+        );
+      }
       case 'originStock':
-        return <td key={column.key} className={baseClass}>{decimal(suggestion.originStock)}</td>;
+        return <td key={column.key} className={cellClass}>{decimal(suggestion.originStock)}</td>;
       case 'originConfirmedStock':
-        return <td key={column.key} className={baseClass}>{decimal(suggestion.originConfirmedStock)}</td>;
+        return <td key={column.key} className={cellClass}>{decimal(suggestion.originConfirmedStock)}</td>;
       case 'originCurve':
-        return <td key={column.key} className={`${baseClass} font-bold`}>{suggestion.originCurve || '-'}</td>;
+        return <td key={column.key} className={`${cellClass} font-bold`}>{suggestion.originCurve || '-'}</td>;
       case 'originMonthlyAvgSales':
-        return <td key={column.key} className={baseClass}>{decimal(suggestion.originMonthlyAvgSales)}</td>;
+        return <td key={column.key} className={cellClass}>{decimal(suggestion.originMonthlyAvgSales)}</td>;
       case 'originStockDays':
-        return <td key={column.key} className={`${baseClass} font-bold text-orange-600`}>{wholeNumber(suggestion.originStockDays)}</td>;
-      case 'adjustedOriginDays':
-        return <td key={column.key} className={`${baseClass} bg-orange-50 font-black text-orange-700`}>{wholeNumber(adjustedOriginDays(suggestion))}</td>;
+        return <td key={column.key} className={`${cellClass} font-bold`}>{wholeNumber(suggestion.originStockDays)}</td>;
+      case 'adjustedOriginDays': {
+        const allocation = getOriginAllocation(suggestion);
+        return (
+          <td
+            key={column.key}
+            className={`${cellClass} font-black`}
+            title={allocation ? `Considera ${wholeNumber(allocation.allocated)} un. totais saindo desta origem/produto` : undefined}
+          >
+            {wholeNumber(adjustedOriginDays(suggestion))}
+          </td>
+        );
+      }
       case 'quantity':
         const allocation = getOriginAllocation(suggestion);
         const isOverAllocated = isSuggestionOverAllocated(suggestion);
         return (
-          <td key={column.key} className={`border-2 px-2 py-1.5 text-right ${isOverAllocated ? 'border-red-300 bg-red-50' : isSuggestionManuallyChanged(suggestion) ? 'border-violet-400 bg-violet-50' : 'border-emerald-200 bg-emerald-50'}`}>
-            <div className={`mx-auto w-24 border-2 bg-white shadow-inner focus-within:ring-2 ${isOverAllocated ? 'border-red-300 focus-within:border-red-600 focus-within:ring-red-200' : isSuggestionManuallyChanged(suggestion) ? 'border-violet-400 focus-within:border-violet-700 focus-within:ring-violet-200' : 'border-emerald-300 focus-within:border-emerald-600 focus-within:ring-emerald-200'}`}>
+          <td key={column.key} className={`border-b border-r border-slate-100 px-2.5 py-1 text-center ${cellToneClass}`}>
+            <div className={`mx-auto w-20 rounded-md border bg-transparent shadow-none transition focus-within:bg-white/70 focus-within:ring-2 ${isOverAllocated ? 'border-red-600 focus-within:border-red-700 focus-within:ring-red-200' : isSuggestionManuallyChanged(suggestion) ? 'border-violet-600 focus-within:border-violet-700 focus-within:ring-violet-200' : 'border-emerald-600 focus-within:border-emerald-700 focus-within:ring-emerald-200'}`}>
               <input
                 data-transfer-index={suggestionIndex}
                 type="text"
@@ -1378,7 +1746,7 @@ export function ReallocationManager({
                 onKeyDown={(event) => {
                   if (event.key === 'Enter' || event.key === 'ArrowDown') {
                     event.preventDefault();
-                    focusSuggestionCell(Math.min(suggestionIndex + 1, transferSuggestions.length - 1));
+                    focusSuggestionCell(Math.min(suggestionIndex + 1, sortedTransferSuggestions.length - 1));
                   }
 
                   if (event.key === 'ArrowUp') {
@@ -1396,63 +1764,85 @@ export function ReallocationManager({
                   event.preventDefault();
                   pasteSuggestionQuantities(suggestionIndex, pastedText);
                 }}
-                className={`h-7 w-full bg-transparent px-2 text-right font-black outline-none ${isOverAllocated ? 'text-red-700' : isSuggestionManuallyChanged(suggestion) ? 'text-violet-700' : 'text-emerald-700'}`}
+                className={`h-5 w-full bg-transparent px-2 text-center font-black leading-none outline-none ${isOverAllocated ? 'text-red-700' : isSuggestionManuallyChanged(suggestion) ? 'text-violet-700' : 'text-emerald-700'}`}
               />
             </div>
             {(isSuggestionManuallyChanged(suggestion) || isOverAllocated) && (
-              <p className={`mt-1 text-[9px] font-black uppercase tracking-wide ${isOverAllocated ? 'text-red-700' : 'text-violet-700'}`}>
+              <p className={`mt-0.5 text-[8px] font-black uppercase tracking-wide leading-none ${isOverAllocated ? 'text-red-700' : 'text-violet-700'}`}>
                 {isOverAllocated ? `Excede ${wholeNumber((allocation?.allocated || 0) - (allocation?.stock || 0))}` : 'Manual'}
               </p>
             )}
           </td>
         );
-      case 'destinationName':
-        return <td key={column.key} className={`${baseClass} font-bold text-slate-900`}>{suggestion.destinationName}</td>;
+      case 'destinationName': {
+        const allocation = getDestinationAllocation(suggestion);
+        const originCount = allocation?.originCodes.size || 0;
+        const isMultiOrigin = originCount > 1;
+        return (
+          <td
+            key={column.key}
+            className={`${cellClass} font-bold`}
+            title={isMultiOrigin ? `${suggestion.destinationName} recebe este item de ${originCount} origens` : undefined}
+          >
+            {suggestion.destinationName}
+          </td>
+        );
+      }
       case 'destinationMonthlyAvgSales':
-        return <td key={column.key} className={baseClass}>{decimal(suggestion.destinationMonthlyAvgSales)}</td>;
+        return <td key={column.key} className={cellClass}>{decimal(suggestion.destinationMonthlyAvgSales)}</td>;
       case 'destinationConfirmedStock':
-        return <td key={column.key} className={baseClass}>{decimal(suggestion.destinationConfirmedStock)}</td>;
+        return <td key={column.key} className={cellClass}>{decimal(suggestion.destinationConfirmedStock)}</td>;
       case 'destinationCurve':
-        return <td key={column.key} className={`${baseClass} font-bold`}>{suggestion.destinationCurve || '-'}</td>;
+        return <td key={column.key} className={`${cellClass} font-bold`}>{suggestion.destinationCurve || '-'}</td>;
       case 'destinationStock':
-        return <td key={column.key} className={baseClass}>{decimal(suggestion.destinationStock)}</td>;
+        return <td key={column.key} className={cellClass}>{decimal(suggestion.destinationStock)}</td>;
       case 'destinationStockDays':
-        return <td key={column.key} className={`${baseClass} font-bold text-blue-700`}>{wholeNumber(suggestion.destinationStockDays)}</td>;
-      case 'adjustedDestinationDays':
-        return <td key={column.key} className={`${baseClass} bg-blue-50 font-black text-blue-700`}>{wholeNumber(adjustedDestinationDays(suggestion))}</td>;
+        return <td key={column.key} className={`${cellClass} font-bold`}>{wholeNumber(suggestion.destinationStockDays)}</td>;
+      case 'adjustedDestinationDays': {
+        const allocation = getDestinationAllocation(suggestion);
+        return (
+          <td
+            key={column.key}
+            className={`${cellClass} font-black`}
+            title={allocation ? `Considera ${wholeNumber(allocation.allocated)} un. totais chegando neste destino/produto` : undefined}
+          >
+            {wholeNumber(adjustedDestinationDays(suggestion))}
+          </td>
+        );
+      }
       case 'originConfirmedPurchase':
-        return <td key={column.key} className={baseClass}>{decimal(suggestion.originConfirmedPurchase)}</td>;
+        return <td key={column.key} className={cellClass}>{decimal(suggestion.originConfirmedPurchase)}</td>;
       case 'originConfirmedTransfer':
-        return <td key={column.key} className={baseClass}>{decimal(suggestion.originConfirmedTransfer)}</td>;
+        return <td key={column.key} className={cellClass}>{decimal(suggestion.originConfirmedTransfer)}</td>;
       case 'erpCode':
-        return <td key={column.key} className={`${baseClass} font-black text-violet-700`}>{suggestion.erpCode}</td>;
+        return <td key={column.key} className={`${cellClass} font-black`}>{suggestion.erpCode}</td>;
       case 'routePriority':
         return (
-          <td key={column.key} className={`${baseClass} ${suggestion.routePriority >= maxRoutePriority && suggestion.quantity > 0 ? 'bg-amber-50 font-black text-amber-700' : ''}`}>
+          <td key={column.key} className={`${cellClass} ${suggestion.routePriority >= maxRoutePriority && suggestion.quantity > 0 ? 'font-black' : ''}`}>
             {suggestion.routePriority}
           </td>
         );
       case 'actions':
         return (
-          <td key={column.key} className="border border-slate-200 px-2 py-1.5 text-center">
+          <td key={column.key} className={`border-b border-r border-slate-100 px-2 py-1 text-center ${cellToneClass}`}>
             <div className="flex items-center justify-center gap-1">
               {isSuggestionManuallyChanged(suggestion) && (
                 <button
                   type="button"
                   onClick={() => restoreSuggestionQuantity(suggestion.id)}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-violet-50 text-violet-700"
+                  className="inline-flex h-6 w-6 items-center justify-center rounded-lg bg-violet-50 text-violet-700 transition hover:bg-violet-600 hover:text-white"
                   title="Restaurar sugestão original"
                 >
-                  <RotateCcw size={15} />
+                  <RotateCcw size={13} />
                 </button>
               )}
               <button
                 type="button"
                 onClick={() => removeSuggestion(suggestion.id)}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-red-50 text-red-600"
+                className="inline-flex h-6 w-6 items-center justify-center rounded-lg bg-red-50 text-red-600 transition hover:bg-red-600 hover:text-white"
                 title="Remover sugestão"
               >
-                <Trash2 size={15} />
+                <Trash2 size={13} />
               </button>
             </div>
           </td>
@@ -1472,9 +1862,14 @@ export function ReallocationManager({
     );
   };
 
-  const dataImportPermissionTitle = canImportData ? undefined : getPermissionDeniedMessage('importar dados do remanejamento inteligente', 'supremeAdmin');
-  const generatePermissionTitle = canGenerateSuggestions ? undefined : getPermissionDeniedMessage('gerar sugestoes de remanejamento inteligente', 'supremeAdmin');
-  const exportPermissionTitle = canExport ? undefined : getPermissionDeniedMessage('exportar remanejamento inteligente', 'supremeAdmin');
+  const dataImportPermissionTitle = canImportData ? undefined : getPermissionDeniedMessage('importar dados do remanejamento inteligente', 'perfumePurchasingOrSupreme');
+  const generatePermissionTitle = canGenerateSuggestions ? undefined : getPermissionDeniedMessage('gerar sugestoes de remanejamento inteligente', 'perfumePurchasingOrSupreme');
+  const exportPermissionTitle = canExport ? undefined : getPermissionDeniedMessage('exportar remanejamento inteligente', 'perfumePurchasingOrSupreme');
+  const showBusyOverlay = stockImporting || generatingSuggestions;
+  const busyOverlayTitle = stockImporting ? 'Importando estoque' : 'Atualizando sugestoes';
+  const busyOverlayMessage = stockImporting
+    ? 'Lendo o arquivo e atualizando a base de estoque.'
+    : 'Recalculando as sugestoes com os filtros selecionados.';
 
   return (
     <main className="reallocation-workbench flex h-[calc(100dvh-4rem)] w-full max-w-none flex-col overflow-hidden px-2 py-2 sm:px-3 sm:py-2">
@@ -1499,6 +1894,26 @@ export function ReallocationManager({
         }}
       />
 
+      {showBusyOverlay && (
+        <div
+          className="fixed inset-0 z-[140] flex items-center justify-center bg-white/80 p-4 backdrop-blur-[2px]"
+          role="status"
+          aria-live="polite"
+          aria-label={busyOverlayTitle}
+        >
+          <div className="flex w-full max-w-[360px] flex-col items-center rounded-2xl border border-slate-200 bg-white px-8 py-7 text-center shadow-[0_22px_60px_rgba(15,23,42,0.18)]">
+            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-violet-600 text-white shadow-lg shadow-violet-200">
+              <Loader2 size={28} className="animate-spin" />
+            </div>
+            <p className="text-sm font-black uppercase tracking-[0.18em] text-slate-900">{busyOverlayTitle}</p>
+            <p className="mt-2 text-xs font-bold leading-relaxed text-slate-500">{busyOverlayMessage}</p>
+            <div className="mt-5 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+              <div className="h-full w-full animate-pulse rounded-full bg-violet-600" />
+            </div>
+          </div>
+        </div>
+      )}
+
       {errorMessage && (
         <div className="mb-5 rounded-2xl border-2 border-amber-200 bg-amber-50 p-4 text-sm font-bold text-amber-800">
           {errorMessage}
@@ -1506,6 +1921,7 @@ export function ReallocationManager({
       )}
 
       <section className="flex min-h-0 flex-1 flex-col overflow-visible rounded-[12px] border border-slate-200 bg-white shadow-sm">
+        {showTopPanel ? (
         <div className="relative z-[90] grid gap-1.5 border-b border-slate-300 bg-slate-100/80 p-1.5 xl:grid-cols-[minmax(980px,1fr)_420px_150px]">
           <div className="min-w-0">
             <div className="grid grid-cols-1 items-start gap-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
@@ -1590,8 +2006,13 @@ export function ReallocationManager({
                 Limpar filtros
               </button>
               <span className={activeSuggestionFilterCount > 0 ? 'text-red-600' : 'text-slate-400'}>
-                {activeSuggestionFilterCount} filtros ativos
+                {activeSuggestionFilterCount} filtros selecionados
               </span>
+              {hasPendingSuggestionSettings && (
+                <span className="rounded-md bg-amber-50 px-2 py-1 text-amber-700">
+                  pendente: atualizar
+                </span>
+              )}
               <span className="hidden sm:inline text-slate-400">Perfil: {SUGGESTION_PROFILES[suggestionProfile].label}</span>
               <span className="hidden sm:inline text-slate-400">Seguranca: {originMinimumDays} dias</span>
             </div>
@@ -1603,12 +2024,20 @@ export function ReallocationManager({
             <StatusMetric label="Excedidas" value={overAllocatedOrigins.length.toLocaleString('pt-BR')} helper="bloqueia" tone="red" compact />
             <StatusMetric label="Estoque" value={stockItems.length.toLocaleString('pt-BR')} tone="indigo" compact />
             <StatusMetric label="Sugestões" value={transferSuggestions.length.toLocaleString('pt-BR')} tone="violet" compact />
-            <StatusMetric label="Unidades" value={transferSuggestions.reduce((sum, item) => sum + item.quantity, 0).toLocaleString('pt-BR')} tone="violet" compact />
+            <StatusMetric label="Confirmadas" value={confirmedSuggestions.length.toLocaleString('pt-BR')} tone="emerald" compact />
             <StatusMetric label="Produtos mov." value={new Set(transferSuggestions.map((item) => item.ean)).size.toLocaleString('pt-BR')} tone="violet" compact />
             <StatusMetric label="Produtos" value={totalProducts.toLocaleString('pt-BR')} compact />
           </div>
 
           <div className="relative grid grid-cols-2 gap-1">
+            <button
+              type="button"
+              onClick={() => setShowTopPanel(false)}
+              className="h-9 rounded-md border border-slate-200 bg-white px-2 text-[10px] font-black uppercase text-slate-600 shadow-sm hover:border-violet-300 hover:text-violet-700"
+              title="Ocultar filtros"
+            >
+              <X size={13} className="mr-1 inline-block" /> Ocultar
+            </button>
             <button
               type="button"
               onClick={() => setShowAdvancedRules(true)}
@@ -1679,8 +2108,8 @@ export function ReallocationManager({
             <button
               type="button"
               onClick={exportSuggestionsTxt}
-              disabled={!canExport || transferSuggestions.length === 0 || blockingExportIssues.length > 0}
-              title={!canExport ? exportPermissionTitle : blockingExportIssues.length > 0 ? `${blockingExportIssues[0].title}: ${blockingExportIssues[0].detail}` : 'Exportar TXT'}
+              disabled={!canExport || confirmedSuggestions.length === 0 || confirmedBlockingExportIssues.length > 0}
+              title={!canExport ? exportPermissionTitle : confirmedBlockingExportIssues.length > 0 ? `${confirmedBlockingExportIssues[0].title}: ${confirmedBlockingExportIssues[0].detail}` : 'Exportar TXT das sugestões confirmadas'}
               className="h-9 rounded-md bg-slate-900 px-2 text-[10px] font-black uppercase text-white shadow-sm disabled:opacity-40"
             >
               <Download size={13} className="mr-1 inline-block" /> TXT
@@ -1688,7 +2117,7 @@ export function ReallocationManager({
             <button
               type="button"
               onClick={exportConferenceCsv}
-              disabled={!canExport || transferSuggestions.length === 0}
+              disabled={!canExport || activeSuggestionRows.length === 0}
               title={exportPermissionTitle}
               className="h-9 rounded-md border border-slate-200 bg-white px-2 text-[10px] font-black uppercase text-slate-500 shadow-sm hover:border-violet-300 hover:text-violet-700 disabled:opacity-40"
             >
@@ -1703,7 +2132,7 @@ export function ReallocationManager({
             </button>
             <button
               type="button"
-              onClick={generateTransferSuggestions}
+              onClick={requestGenerateTransferSuggestions}
               disabled={!canGenerateSuggestions || !stockSnapshot || stockLoading || generatingSuggestions}
               title={generatePermissionTitle}
               className="col-span-2 h-10 rounded-md bg-violet-600 px-2 text-[10px] font-black uppercase text-white shadow-sm disabled:opacity-40"
@@ -1712,9 +2141,50 @@ export function ReallocationManager({
             </button>
           </div>
         </div>
+        ) : (
+          <div className="relative z-[70] flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-wide">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <span className="rounded-md bg-violet-50 px-2 py-1 text-violet-700">
+                {activeSuggestionFilterCount} filtros selecionados
+              </span>
+              {hasPendingSuggestionSettings && (
+                <span className="rounded-md bg-amber-50 px-2 py-1 text-amber-700">
+                  pendente: atualizar
+                </span>
+              )}
+              <span className="rounded-md bg-slate-100 px-2 py-1 text-slate-500">
+                Perfil: {SUGGESTION_PROFILES[suggestionProfile].label}
+              </span>
+              <span className="rounded-md bg-slate-100 px-2 py-1 text-slate-500">
+                Seguranca: {originMinimumDays} dias
+              </span>
+              <span className="rounded-md bg-emerald-50 px-2 py-1 text-emerald-700">
+                {suggestionExportStats.exportableLines.toLocaleString('pt-BR')} exportaveis
+              </span>
+              <span className="rounded-md bg-violet-50 px-2 py-1 text-violet-700">
+                {transferSuggestions.length.toLocaleString('pt-BR')} sugestões
+              </span>
+              <span className="rounded-md bg-emerald-50 px-2 py-1 text-emerald-700">
+                {confirmedSuggestions.length.toLocaleString('pt-BR')} confirmadas
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowTopPanel(true)}
+              className="h-7 rounded-md border border-violet-200 bg-violet-50 px-3 text-[9px] font-black uppercase tracking-wide text-violet-700 transition hover:border-violet-400 hover:bg-violet-100"
+            >
+              Mostrar filtros
+            </button>
+          </div>
+        )}
 
-        {(suggestionMessage || suggestionDiagnostic || originSummary.length > 0) && (
+        {(hasPendingSuggestionSettings || suggestionMessage || suggestionDiagnostic || originSummary.length > 0) && (
           <div className="flex flex-wrap items-center gap-1.5 border-b border-slate-200 bg-white px-3 py-1.5 text-[10px] font-black uppercase">
+            {hasPendingSuggestionSettings && (
+              <span className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-amber-700">
+                filtros alterados, clique em atualizar
+              </span>
+            )}
             {suggestionMessage && (
               <span className="max-w-full truncate rounded-md border border-violet-100 bg-violet-50 px-2 py-1 text-violet-700">
                 {suggestionMessage}
@@ -1749,40 +2219,43 @@ export function ReallocationManager({
           </div>
         )}
 
-        {suggestionExportIssues.length > 0 && (
-          <div className={`mx-3 mt-3 rounded-xl border px-4 py-3 ${
-            blockingExportIssues.length > 0 ? 'border-red-200 bg-red-50 text-red-800' : 'border-amber-200 bg-amber-50 text-amber-800'
-          }`}>
-            <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
-              <div>
-                <p className="text-[10px] font-black uppercase tracking-widest">
-                  {blockingExportIssues.length > 0 ? 'Exportação bloqueada' : 'Revise antes de exportar'}
-                </p>
-                <p className="text-sm font-bold">
-                  {blockingExportIssues.length > 0
-                    ? 'Corrija os bloqueios abaixo para liberar o TXT.'
-                    : 'Ha ajustes manuais ou linhas ignoradas que merecem conferencia.'}
-                </p>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {suggestionExportIssues.slice(0, 4).map((issue) => (
-                  <div key={issue.id} className="max-w-[320px] rounded-lg border border-current/20 bg-white/70 px-3 py-2">
-                    <p className="text-[10px] font-black uppercase">{issue.title}</p>
-                    <p className="truncate text-xs font-bold opacity-80">{issue.detail}</p>
-                  </div>
-                ))}
-                {suggestionExportIssues.length > 4 && (
-                  <div className="rounded-lg border border-current/20 bg-white/70 px-3 py-2 text-[10px] font-black uppercase">
-                    + {suggestionExportIssues.length - 4}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2">
           <div className="flex flex-wrap items-center gap-2">
+            <div className="flex h-8 overflow-hidden rounded-md border border-slate-200 bg-white p-0.5 shadow-sm">
+              <button
+                type="button"
+                onClick={() => changeSuggestionView('draft')}
+                className={`rounded px-3 text-[10px] font-black uppercase transition ${suggestionView === 'draft' ? 'bg-violet-600 text-white' : 'text-slate-500 hover:bg-slate-100'}`}
+              >
+                Sugestões {transferSuggestions.length > 0 ? `(${transferSuggestions.length})` : ''}
+              </button>
+              <button
+                type="button"
+                onClick={() => changeSuggestionView('confirmed')}
+                className={`rounded px-3 text-[10px] font-black uppercase transition ${suggestionView === 'confirmed' ? 'bg-emerald-600 text-white' : 'text-slate-500 hover:bg-slate-100'}`}
+              >
+                Sugestão confirmada {confirmedSuggestions.length > 0 ? `(${confirmedSuggestions.length})` : ''}
+              </button>
+            </div>
+            {suggestionView === 'draft' ? (
+              <button
+                type="button"
+                onClick={confirmSelectedSuggestions}
+                disabled={selectedSuggestionIds.length === 0}
+                className="h-8 rounded-md bg-emerald-600 px-3 text-[10px] font-black uppercase text-white shadow-sm disabled:opacity-40"
+              >
+                <Check size={13} className="mr-1 inline-block" /> Confirmar sugestão
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={removeSelectedConfirmedSuggestions}
+                disabled={selectedSuggestionIds.length === 0}
+                className="h-8 rounded-md bg-red-50 px-3 text-[10px] font-black uppercase text-red-600 shadow-sm disabled:opacity-40"
+              >
+                <Trash2 size={13} className="mr-1 inline-block" /> Remover selecionadas
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setShowOnlyProblemSuggestions((current) => !current)}
@@ -1798,6 +2271,24 @@ export function ReallocationManager({
             >
               Restaurar colunas
             </button>
+            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 shadow-sm">
+              <span className="inline-flex items-center gap-1.5 rounded-md border border-teal-200 bg-teal-50 px-2 py-1 text-[10px] font-black uppercase text-teal-950">
+                <span className="h-3 w-3 rounded-[3px] border border-teal-600 bg-teal-300" />
+                Rota compartilhada nos dois lados {visibleSharedRouteCount > 0 ? `(${visibleSharedRouteCount})` : ''}
+              </span>
+              <span className="inline-flex items-center gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] font-black uppercase text-amber-950">
+                <span className="h-3 w-3 rounded-[3px] border border-amber-500 bg-amber-300" />
+                Origem p/ varios destinos {visibleMultiDestinationCount > 0 ? `(${visibleMultiDestinationCount})` : ''}
+              </span>
+              <span className="inline-flex items-center gap-1.5 rounded-md border border-sky-200 bg-sky-50 px-2 py-1 text-[10px] font-black uppercase text-sky-950">
+                <span className="h-3 w-3 rounded-[3px] border border-sky-500 bg-sky-300" />
+                Destino recebe varias origens {visibleMultiOriginCount > 0 ? `(${visibleMultiOriginCount})` : ''}
+              </span>
+              <span className="inline-flex items-center gap-1.5 rounded-md border border-violet-200 bg-violet-50 px-2 py-1 text-[10px] font-black uppercase text-violet-950">
+                <span className="h-3 w-3 rounded-[3px] border border-violet-500 bg-violet-300" />
+                Manual {activeManualSuggestionChangeCount > 0 ? `(${activeManualSuggestionChangeCount})` : ''}
+              </span>
+            </div>
           </div>
           <div className="ml-auto flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto">
             {suggestionTableSearch && (
@@ -1828,28 +2319,28 @@ export function ReallocationManager({
           </div>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-auto">
-          <table className="w-full border-collapse text-sm whitespace-nowrap" style={{ minWidth: suggestionTableWidth }}>
+        <div className="min-h-0 flex-1 overflow-auto rounded-2xl border border-slate-200 bg-white">
+          <table className="table-fixed border-separate border-spacing-0 text-sm whitespace-nowrap" style={{ width: `${suggestionTableWidth}px`, minWidth: `${suggestionTableWidth}px` }}>
             <colgroup>
               {orderedSuggestionColumns.map((column) => (
-                <col key={column.key} style={{ width: suggestionColumnWidths[column.key] || column.width }} />
+                <col key={column.key} style={{ width: `${suggestionColumnWidths[column.key] || column.width}px` }} />
               ))}
             </colgroup>
-            <thead className="bg-slate-100 text-[10px] uppercase text-slate-700">
+            <thead className="sticky top-0 z-10 text-[10px] uppercase">
               <tr>
                 {orderedSuggestionColumns.map(renderSuggestionHeader)}
               </tr>
             </thead>
             <tbody>
               {sortedTransferSuggestions.map((suggestion, suggestionIndex) => (
-                <tr key={suggestion.id} className={`${isSuggestionOverAllocated(suggestion) ? 'bg-red-50 hover:bg-red-100' : isSuggestionManuallyChanged(suggestion) ? 'bg-violet-50 shadow-[inset_4px_0_0_#7c3aed] hover:bg-violet-100' : 'even:bg-slate-50 hover:bg-yellow-50'}`}>
+                <tr key={suggestion.id} className={`group transition-colors ${getSuggestionRowClass(suggestion)}`}>
                   {orderedSuggestionColumns.map((column) => renderSuggestionCell(suggestion, suggestionIndex, column))}
                 </tr>
               ))}
               {sortedTransferSuggestions.length === 0 && (
                 <tr>
-                  <td colSpan={orderedSuggestionColumns.length} className="h-72 border border-slate-200 px-3 text-center align-middle text-[10px] font-black uppercase tracking-widest text-slate-300">
-                    {suggestionTableSearch ? 'Nenhuma linha encontrada na pesquisa' : showOnlyProblemSuggestions ? 'Nenhuma linha com problema encontrada' : 'Gere as sugestões após importar o estoque'}
+                  <td colSpan={orderedSuggestionColumns.length} className="h-72 border-b border-slate-100 px-3 text-center align-middle text-[10px] font-black uppercase tracking-widest text-black">
+                    {suggestionTableSearch ? 'Nenhuma linha encontrada na pesquisa' : showOnlyProblemSuggestions ? 'Nenhuma linha com problema encontrada' : suggestionView === 'confirmed' ? 'Nenhuma sugestão confirmada ainda' : 'Gere as sugestões após importar o estoque'}
                   </td>
                 </tr>
               )}
@@ -1910,7 +2401,7 @@ export function ReallocationManager({
                 })}
               </div>
 
-              <div className="mt-3 grid grid-cols-1 gap-2 lg:grid-cols-[1.2fr_1fr_1fr_1fr]">
+              <div className="mt-3 grid grid-cols-1 gap-2 lg:grid-cols-[1.2fr_1fr_1fr]">
                 <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
                   <p className="mb-2 text-[10px] font-black uppercase tracking-widest text-violet-500">Segurança origem</p>
                   <NumberStepper
@@ -1921,13 +2412,6 @@ export function ReallocationManager({
                     suffix="dias"
                   />
                 </div>
-                <TransferRuleInput
-                  label="Destino até dias"
-                  value={needDaysThreshold}
-                  onChange={setNeedDaysThreshold}
-                  min={0}
-                  max={9999}
-                />
                 <TransferRuleInput
                   label="Meta destino"
                   value={destinationTargetDays}
@@ -1957,7 +2441,7 @@ export function ReallocationManager({
                 type="button"
                 onClick={() => {
                   setShowAdvancedRules(false);
-                  generateTransferSuggestions();
+                  requestGenerateTransferSuggestions();
                 }}
                 disabled={!canGenerateSuggestions || !stockSnapshot || stockLoading || generatingSuggestions}
                 title={generatePermissionTitle}
@@ -1965,6 +2449,60 @@ export function ReallocationManager({
               >
                 Aplicar e atualizar
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showRecalculateConfirm && (
+        <div
+          className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-900/16 p-3 backdrop-blur-sm"
+          onMouseDown={() => setShowRecalculateConfirm(false)}
+        >
+          <div
+            className="w-full max-w-[560px] overflow-hidden rounded-xl border border-slate-300 bg-white shadow-[0_18px_38px_rgba(15,23,42,0.22)]"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-3">
+              <div>
+                <p className="text-xs font-black uppercase tracking-widest text-slate-900">Recalcular sugestões</p>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-violet-600">
+                  {manualSuggestionChangeCount} ajustes manuais encontrados
+                </p>
+              </div>
+              <button type="button" onClick={() => setShowRecalculateConfirm(false)} className="rounded-md bg-white p-1 text-slate-500 hover:text-red-600">
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="space-y-3 p-4">
+              <div className="rounded-lg border border-violet-100 bg-violet-50 px-3 py-2 text-xs font-bold text-violet-800">
+                Voce alterou quantidades manualmente. Quer manter esses ajustes nas linhas equivalentes ou resetar tudo antes de recalcular?
+              </div>
+              <div className="grid gap-2 md:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowRecalculateConfirm(false);
+                    generateTransferSuggestions({ preserveManualChanges: true });
+                  }}
+                  className="min-h-[84px] rounded-lg border border-violet-200 bg-white p-3 text-left transition hover:border-violet-500 hover:bg-violet-50"
+                >
+                  <span className="block text-xs font-black uppercase tracking-widest text-violet-700">Manter ajustes</span>
+                  <span className="mt-1 block text-xs font-bold leading-snug text-slate-500">Recalcula e tenta reaplicar as quantidades editadas nas mesmas rotas.</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowRecalculateConfirm(false);
+                    generateTransferSuggestions({ preserveManualChanges: false });
+                  }}
+                  className="min-h-[84px] rounded-lg border border-slate-200 bg-white p-3 text-left transition hover:border-red-300 hover:bg-red-50"
+                >
+                  <span className="block text-xs font-black uppercase tracking-widest text-red-600">Resetar ajustes</span>
+                  <span className="mt-1 block text-xs font-bold leading-snug text-slate-500">Descarta as edições manuais e usa somente o novo cálculo do motor.</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -1990,14 +2528,14 @@ export function ReallocationManager({
             </div>
             <div className="p-4">
               <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
-                <DiagnosticCard label="Linhas TXT" value={suggestionExportStats.exportableLines} accent />
-                <DiagnosticCard label="Unidades" value={suggestionExportStats.exportableUnits} />
-                <DiagnosticCard label="Ajustes" value={transferSuggestions.filter(isSuggestionManuallyChanged).length} warning={transferSuggestions.some(isSuggestionManuallyChanged)} />
-                <DiagnosticCard label="Avisos" value={suggestionExportIssues.length} warning={suggestionExportIssues.length > 0} />
+                <DiagnosticCard label="Linhas TXT" value={confirmedExportStats.exportableLines} accent />
+                <DiagnosticCard label="Unidades" value={confirmedExportStats.exportableUnits} />
+                <DiagnosticCard label="Ajustes" value={confirmedSuggestions.filter(isSuggestionManuallyChanged).length} warning={confirmedSuggestions.some(isSuggestionManuallyChanged)} />
+                <DiagnosticCard label="Avisos" value={confirmedExportIssues.length} warning={confirmedExportIssues.length > 0} />
               </div>
-              {suggestionExportIssues.length > 0 && (
+              {confirmedExportIssues.length > 0 && (
                 <div className="mt-3 max-h-40 overflow-auto rounded-lg border border-amber-200 bg-amber-50">
-                  {suggestionExportIssues.map((issue) => (
+                  {confirmedExportIssues.map((issue) => (
                     <div key={issue.id} className="border-b border-amber-100 px-3 py-2 last:border-b-0">
                       <p className="text-[10px] font-black uppercase text-amber-700">{issue.title}</p>
                       <p className="text-xs font-bold text-slate-600">{issue.detail}</p>

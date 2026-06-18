@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase-admin";
+import { isPerfumePurchasingSector } from "@/lib/permissions";
 import type { Profile, UserRole } from "@/lib/types";
 
 type AuthResult =
-  | { ok: true; userId: string; profile: Profile }
+  | { ok: true; userId: string; email: string; profile: Profile }
   | { ok: false; response: NextResponse };
 
 function unauthorized(message = "Sessao invalida ou expirada.") {
@@ -18,6 +19,13 @@ function getBearerToken(request: Request) {
   const authorization = request.headers.get("authorization") || "";
   const [scheme, token] = authorization.split(" ");
   return scheme?.toLowerCase() === "bearer" ? token : "";
+}
+
+function isSupremeAdminEmail(email: string | undefined) {
+  const normalizedEmail = email?.trim().toLowerCase();
+  const configuredEmail = process.env.NEXT_PUBLIC_SUPREME_ADMIN_EMAIL?.trim().toLowerCase();
+
+  return Boolean(normalizedEmail && (normalizedEmail === configuredEmail || normalizedEmail === "admin@wally.system"));
 }
 
 export async function requireAuthenticatedProfile(request: Request): Promise<AuthResult> {
@@ -49,7 +57,7 @@ export async function requireAuthenticatedProfile(request: Request): Promise<Aut
     return { ok: false, response: forbidden("Conta sem permissao para acessar este recurso.") };
   }
 
-  return { ok: true, userId: userData.user.id, profile: typedProfile };
+  return { ok: true, userId: userData.user.id, email: userData.user.email || "", profile: typedProfile };
 }
 
 export async function requireRole(request: Request, roles: UserRole[]) {
@@ -69,6 +77,20 @@ export async function requireSelfOrRole(request: Request, targetUserId: string, 
 
   if (auth.userId !== targetUserId && !roles.includes(auth.profile.role)) {
     return { ok: false as const, response: forbidden() };
+  }
+
+  return auth;
+}
+
+export async function requirePerfumePurchasingOrSupreme(request: Request) {
+  const auth = await requireAuthenticatedProfile(request);
+  if (!auth.ok) return auth;
+
+  const isSupremeAdmin = auth.profile.role === "admin" && isSupremeAdminEmail(auth.email);
+  const isPerfumePurchasing = isPerfumePurchasingSector(auth.profile.sector || "");
+
+  if (!isSupremeAdmin && !isPerfumePurchasing) {
+    return { ok: false as const, response: forbidden("Acesso liberado apenas para Admin Supremo ou setor Compras Perfumaria.") };
   }
 
   return auth;

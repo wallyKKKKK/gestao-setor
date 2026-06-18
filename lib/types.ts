@@ -201,6 +201,14 @@ export interface AppNotification {
   tab?: string;
 }
 
+export interface NotificationPreferences {
+  morningBriefing: boolean;
+  closingSummary: boolean;
+  meetingReminders: boolean;
+  oneOffTasks: boolean;
+  teamCompletions: boolean;
+}
+
 export interface AppDbNotification {
   id: string;
   title: string;

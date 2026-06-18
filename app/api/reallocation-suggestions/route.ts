@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase-admin";
-import { requireAuthenticatedProfile } from "@/lib/server-auth";
+import { requirePerfumePurchasingOrSupreme } from "@/lib/server-auth";
 
 export const runtime = "nodejs";
 
@@ -46,6 +46,50 @@ function storeCode(value: unknown) {
 
 function stockCurve(value: unknown) {
   return String(value || "").trim().toUpperCase().slice(0, 1);
+}
+
+function availableStock(item: StockItem) {
+  return Math.max(0, numberValue(item.stock), numberValue(item.confirmed_stock));
+}
+
+function realStock(item: StockItem) {
+  return Math.max(0, numberValue(item.stock));
+}
+
+function normalizeMonthlyAvgSales(value: number) {
+  if (value <= 0) return 0;
+  return Math.round(value * 3) / 3;
+}
+
+function monthlyToDaily(value: unknown) {
+  return normalizeMonthlyAvgSales(numberValue(value)) / 30;
+}
+
+function dailyToMonthly(value: number) {
+  return normalizeMonthlyAvgSales(value * 30);
+}
+
+function ownDailySales(item: StockItem) {
+  const monthlyDaily = monthlyToDaily(item.monthly_avg_sales);
+  if (monthlyDaily > 0) return monthlyDaily;
+
+  const stock = availableStock(item);
+  const stockDays = numberValue(item.stock_days);
+  if (stock > 0 && stockDays > 0) return stock / stockDays;
+
+  return 0;
+}
+
+function effectiveStockDays(item: StockItem, dailySales: number) {
+  const stockDays = numberValue(item.stock_days);
+  if (dailySales > 0) return availableStock(item) / dailySales;
+  return stockDays > 0 ? stockDays : 0;
+}
+
+function destinationNeedQuantity(stockDays: number, dailySales: number, targetDays: number) {
+  const exactNeed = (targetDays - stockDays) * dailySales;
+  if (exactNeed <= 0) return 0;
+  return Math.max(0, Math.floor(exactNeed + 0.000001));
 }
 
 function routePriority(originItem: StockItem, destinationItem: StockItem, branchLogistics: BranchLogistics) {
@@ -95,18 +139,18 @@ function buildSuggestion(ean: string, origin: SuggestionOrigin, destination: Sug
     maxQuantity: quantity,
     originStock: numberValue(originItem.stock),
     originConfirmedStock: numberValue(originItem.confirmed_stock),
-    originMonthlyAvgSales: numberValue(originItem.monthly_avg_sales),
+    originMonthlyAvgSales: normalizeMonthlyAvgSales(numberValue(originItem.monthly_avg_sales)),
     originCurve: originItem.curve || "",
     originConfirmedPurchase: numberValue(originItem.confirmed_purchase),
     originConfirmedTransfer: numberValue(originItem.confirmed_transfer),
     destinationStock: numberValue(destinationItem.stock),
     destinationConfirmedStock: numberValue(destinationItem.confirmed_stock),
-    destinationMonthlyAvgSales: numberValue(destinationItem.monthly_avg_sales),
+    destinationMonthlyAvgSales: normalizeMonthlyAvgSales(numberValue(destinationItem.monthly_avg_sales)),
     destinationCurve: destinationItem.curve || "",
     destinationConfirmedPurchase: numberValue(destinationItem.confirmed_purchase),
     destinationConfirmedTransfer: numberValue(destinationItem.confirmed_transfer),
-    originDailySales: numberValue(originItem.monthly_avg_sales) / 30,
-    destinationDailySales: numberValue(destinationItem.monthly_avg_sales) / 30,
+    originDailySales: monthlyToDaily(originItem.monthly_avg_sales),
+    destinationDailySales: monthlyToDaily(destinationItem.monthly_avg_sales),
     originStockDays: numberValue(originItem.stock_days),
     destinationStockDays: numberValue(destinationItem.stock_days),
     destinationNeed: need,
@@ -126,7 +170,6 @@ function calculate(payload: {
   };
   rules?: {
     originMinimumDays?: number;
-    needDaysThreshold?: number;
     destinationTargetDays?: number;
     maxRoutePriority?: number;
     originCurves?: string[];
@@ -142,7 +185,6 @@ function calculate(payload: {
   const selectedDestinations = new Set((filters.destinations || []).map(storeCode));
   const selectedProducts = new Set((filters.products || []).filter(Boolean).map(String));
   const originMinimumDays = numberValue(rules.originMinimumDays);
-  const needDaysThreshold = numberValue(rules.needDaysThreshold);
   const destinationTargetDays = numberValue(rules.destinationTargetDays);
   const maxRoutePriority = numberValue(rules.maxRoutePriority);
   const selectedOriginCurves = new Set((rules.originCurves || []).map(stockCurve).filter(Boolean));
@@ -172,16 +214,29 @@ function calculate(payload: {
       if (selectedOrigins.size > 0 && !selectedOrigins.has(code)) continue;
       if (selectedOriginCurves.size > 0 && !selectedOriginCurves.has(stockCurve(item.curve))) continue;
 
-      const stock = numberValue(item.stock);
+      const stock = realStock(item);
       if (stock <= 0) continue;
 
-      const dailySales = numberValue(item.monthly_avg_sales) / 30;
+      const dailySales = ownDailySales(item);
+      const stockDays = dailySales > 0 ? stock / dailySales : numberValue(item.stock_days);
       const protectedStock = dailySales > 0 ? dailySales * originMinimumDays : 0;
       const remaining = Math.max(0, Math.floor(stock - protectedStock));
-      if (remaining > 0) origins.push({ item, remaining });
+      if (remaining > 0) {
+        origins.push({
+          item: {
+            ...item,
+            stock,
+            monthly_avg_sales: dailyToMonthly(dailySales),
+            stock_days: stockDays,
+          },
+          remaining,
+        });
+      }
     }
 
-    origins.sort((left, right) => numberValue(right.item.stock_days) - numberValue(left.item.stock_days));
+    origins.sort((left, right) => (
+      numberValue(right.item.stock_days) - numberValue(left.item.stock_days)
+    ));
     eligibleOrigins += origins.length;
 
     const destinations: SuggestionDestination[] = [];
@@ -190,12 +245,23 @@ function calculate(payload: {
       if (selectedDestinations.size > 0 && !selectedDestinations.has(code)) continue;
       if (selectedDestinationCurves.size > 0 && !selectedDestinationCurves.has(stockCurve(item.curve))) continue;
 
-      const dailySales = numberValue(item.monthly_avg_sales) / 30;
-      const stockDays = numberValue(item.stock_days);
-      if (dailySales <= 0 || stockDays > needDaysThreshold) continue;
+      const stock = availableStock(item);
+      const dailySales = ownDailySales(item);
+      const stockDays = effectiveStockDays(item, dailySales);
+      if (dailySales <= 0 || stockDays >= destinationTargetDays) continue;
 
-      const need = Math.max(0, Math.ceil((destinationTargetDays - stockDays) * dailySales));
-      if (need > 0) destinations.push({ item, need });
+      const need = destinationNeedQuantity(stockDays, dailySales, destinationTargetDays);
+      if (need > 0) {
+        destinations.push({
+          item: {
+            ...item,
+            stock,
+            monthly_avg_sales: dailyToMonthly(dailySales),
+            stock_days: stockDays,
+          },
+          need,
+        });
+      }
     }
 
     destinations.sort((left, right) => numberValue(left.item.stock_days) - numberValue(right.item.stock_days));
@@ -387,7 +453,7 @@ function windowlessTimeout(callback: () => void, delay: number) {
 }
 
 export async function POST(request: Request) {
-  const auth = await requireAuthenticatedProfile(request);
+  const auth = await requirePerfumePurchasingOrSupreme(request);
   if (!auth.ok) return auth.response;
 
   try {

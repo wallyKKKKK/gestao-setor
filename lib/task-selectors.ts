@@ -18,6 +18,7 @@ interface TaskStatsInput {
   filterUsers: string[];
   userRole: UserRole;
   userSector: string;
+  userId?: string;
 }
 
 export interface SectorStat {
@@ -100,10 +101,12 @@ export function filterTasks({
   });
 }
 
-export function getTaskStats({ tasks, dashFilter, filterUsers, userRole, userSector }: TaskStatsInput) {
+export function getTaskStats({ tasks, dashFilter, filterUsers, userRole, userSector, userId }: TaskStatsInput) {
   const today = getTodayStr();
   const taskOnlyItems = tasks.filter((task) => task.category !== "Reunião");
-  const visibleTasks = userRole === "admin" ? taskOnlyItems : taskOnlyItems.filter((task) => task.sector === userSector);
+  const visibleTasks = userRole === "admin"
+    ? taskOnlyItems
+    : taskOnlyItems.filter((task) => task.sector === userSector || Boolean(userId && task.assigned_to === userId));
   const baseTasks = filterUsers.length === 0 ? visibleTasks : visibleTasks.filter((task) => filterUsers.includes(task.assigned_to));
   const periodTasks = dashFilter === "HOJE"
     ? baseTasks.filter((task) => task.lastOcc === today)
@@ -125,10 +128,13 @@ export function getSectorStats({
   dashFilter,
   userRole,
   userSector,
+  userId,
 }: Omit<TaskStatsInput, "filterUsers">): SectorStat[] {
   const today = getTodayStr();
   const taskOnlyItems = tasks.filter((task) => task.category !== "Reunião");
-  const visibleTasks = userRole === "admin" ? taskOnlyItems : taskOnlyItems.filter((task) => task.sector === userSector);
+  const visibleTasks = userRole === "admin"
+    ? taskOnlyItems
+    : taskOnlyItems.filter((task) => task.sector === userSector || Boolean(userId && task.assigned_to === userId));
   const periodTasks = dashFilter === "HOJE"
     ? visibleTasks.filter((task) => task.lastOcc === today)
     : visibleTasks.filter((task) => isActionableTask(task, today));

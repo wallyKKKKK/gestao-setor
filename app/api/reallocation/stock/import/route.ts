@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import * as XLSX from "xlsx";
 import { getSupabaseAdmin } from "@/lib/supabase-admin";
-import { requireRole } from "@/lib/server-auth";
+import { requirePerfumePurchasingOrSupreme } from "@/lib/server-auth";
 
 interface StockRow {
   snapshot_id: string;
@@ -73,6 +73,13 @@ function normalizeSearch(value: string) {
     .trim();
 }
 
+function normalizeHeader(value: string) {
+  return normalizeSearch(value)
+    .replace(/[^A-Z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function normalizeCode(value: string) {
   return value.replace(/[^\dA-Za-z]/g, "").trim();
 }
@@ -102,8 +109,65 @@ function parseNumber(value: string) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function findHeader(headers: string[], matcher: (header: string) => boolean) {
-  return headers.findIndex(matcher);
+function getAvailableStock(stock: number, confirmedStock: number) {
+  return Math.max(0, stock, confirmedStock);
+}
+
+function calculateStockDays(stock: number, confirmedStock: number, monthlyAvgSales: number) {
+  const dailySales = monthlyAvgSales / 30;
+  if (dailySales <= 0) return 0;
+  return roundNumber(getAvailableStock(stock, confirmedStock) / dailySales);
+}
+
+function normalizeMonthlyAvgSales(value: number) {
+  if (value <= 0) return 0;
+  return Number((Math.round(value * 3) / 3).toFixed(3));
+}
+
+function roundNumber(value: number, digits = 3) {
+  if (!Number.isFinite(value)) return 0;
+  return Number(value.toFixed(digits));
+}
+
+function normalizeAlias(alias: string) {
+  return normalizeHeader(alias);
+}
+
+function headerHasAlias(header: string, alias: string) {
+  const normalizedAlias = normalizeAlias(alias);
+  if (!normalizedAlias) return false;
+  return header === normalizedAlias || header.includes(normalizedAlias);
+}
+
+function findHeader(
+  headers: string[],
+  aliases: string[],
+  options: { reject?: string[]; prefer?: string[] } = {},
+) {
+  let bestIndex = -1;
+  let bestScore = 0;
+
+  headers.forEach((header, index) => {
+    if (!header) return;
+    if (options.reject?.some((alias) => headerHasAlias(header, alias))) return;
+
+    const matchedAlias = aliases.find((alias) => headerHasAlias(header, alias));
+    if (!matchedAlias) return;
+
+    const normalizedAlias = normalizeAlias(matchedAlias);
+    let score = header === normalizedAlias ? 100 : normalizedAlias.length;
+
+    options.prefer?.forEach((alias) => {
+      if (headerHasAlias(header, alias)) score += 20;
+    });
+
+    if (score > bestScore) {
+      bestIndex = index;
+      bestScore = score;
+    }
+  });
+
+  return bestIndex;
 }
 
 function requiredCell(cells: string[], index: number) {
@@ -129,15 +193,24 @@ function parseStockWorkbook(buffer: ArrayBuffer) {
 }
 
 function looksLikeStockHeader(headers: string[]) {
-  const hasStore = headers.some((header) => header === "UN. NEG." || header === "UN NEG" || header.includes("UN. NEG"));
-  const hasStoreName = headers.some((header) => header.includes("APELIDO"));
-  const hasEan = headers.some((header) => header.includes("BARRA") || header.includes("EAN"));
-  const hasProduct = headers.some((header) => header === "PRODUTO" || header.includes("DESCRICAO"));
-  return hasStore && hasStoreName && hasEan && hasProduct;
+  const storeCodeIndex = findHeader(headers, ["UN NEG", "UN NEGOCIO", "UNIDADE NEGOCIO", "CODIGO LOJA", "COD LOJA", "LOJA"]);
+  const storeNameIndex = findHeader(headers, ["APELIDO UN NEG", "APELIDO LOJA", "UNIDADE", "FILIAL", "LOJA NOME", "NOME LOJA"]);
+  const eanIndex = findHeader(headers, ["COD DE BARRAS", "CODIGO DE BARRAS", "COD BARRAS", "EAN", "GTIN"]);
+  const productIndex = findHeader(headers, ["PRODUTO", "DESCRICAO PRODUTO", "DESCRICAO"]);
+  const stockIndex = findHeader(headers, ["ESTOQUE"], { reject: ["CONF", "DIAS", "MEDIA", "COMPRA", "TRANSF"] });
+  const monthlyAvgIndex = findHeader(headers, ["MEDIA VENDA MENSAL", "VENDA MENSAL", "MEDIA MENSAL"]);
+  const dailyAvgIndex = findHeader(headers, ["MEDIA VENDA DIARIA", "VENDA DIARIA", "MEDIA DIARIA"]);
+
+  return storeCodeIndex >= 0
+    && storeNameIndex >= 0
+    && eanIndex >= 0
+    && productIndex >= 0
+    && stockIndex >= 0
+    && (monthlyAvgIndex >= 0 || dailyAvgIndex >= 0);
 }
 
 function findHeaderRowIndex(rows: string[][]) {
-  const headerIndex = rows.findIndex((row) => looksLikeStockHeader(row.map((header) => normalizeSearch(header))));
+  const headerIndex = rows.findIndex((row) => looksLikeStockHeader(row.map((header) => normalizeHeader(header))));
   if (headerIndex < 0) {
     throw new Error("Arquivo precisa ter Un. Neg., Apelido Un. Neg., Cod. de Barras e Produto.");
   }
@@ -148,24 +221,35 @@ function parseStockRows(allRows: string[][]) {
   const headerRowIndex = findHeaderRowIndex(allRows);
   const headerRow = allRows[headerRowIndex] || [];
   const dataRows = allRows.slice(headerRowIndex + 1);
-  const headers = headerRow.map((header) => normalizeSearch(header));
+  const headers = headerRow.map((header) => normalizeHeader(header));
 
-  const storeCodeIndex = findHeader(headers, (header) => header === "UN. NEG." || header === "UN NEG" || header.includes("UN. NEG"));
-  const storeNameIndex = findHeader(headers, (header) => header.includes("APELIDO"));
-  const eanIndex = findHeader(headers, (header) => header.includes("BARRA") || header.includes("EAN"));
-  const productIndex = findHeader(headers, (header) => header === "PRODUTO" || header.includes("DESCRICAO"));
-  const stockIndex = findHeader(headers, (header) => header === "ESTOQUE");
-  const confirmedStockIndex = findHeader(headers, (header) => header.includes("ESTOQUE CONF"));
-  const monthlyAvgIndex = findHeader(headers, (header) => header.includes("MEDIA VENDA MENSAL"));
-  const dailyAvgIndex = findHeader(headers, (header) => header.includes("MEDIA VENDA DIARIA"));
-  const stockDaysIndex = findHeader(headers, (header) => header.includes("ESTOQUE FINAL") && header.includes("DIAS"));
-  const stockDaysFallbackIndex = findHeader(headers, (header) => header === "ESTOQUE (DIAS)" || header.includes("ESTOQUE DIAS"));
-  const curveIndex = findHeader(headers, (header) => header.includes("CURVA"));
-  const confirmedPurchaseIndex = findHeader(headers, (header) => header.includes("COMPRA CONF"));
-  const confirmedTransferIndex = findHeader(headers, (header) => header.includes("TRANSF. CONF") || header.includes("TRANSF CONF"));
+  const storeCodeIndex = findHeader(headers, ["UN NEG", "UN NEGOCIO", "UNIDADE NEGOCIO", "CODIGO LOJA", "COD LOJA", "LOJA"], {
+    reject: ["APELIDO", "NOME"],
+    prefer: ["UN NEG"],
+  });
+  const storeNameIndex = findHeader(headers, ["APELIDO UN NEG", "APELIDO LOJA", "UNIDADE", "FILIAL", "LOJA NOME", "NOME LOJA"], {
+    reject: ["CODIGO", "COD"],
+    prefer: ["APELIDO"],
+  });
+  const eanIndex = findHeader(headers, ["COD DE BARRAS", "CODIGO DE BARRAS", "COD BARRAS", "EAN", "GTIN"]);
+  const productIndex = findHeader(headers, ["PRODUTO", "DESCRICAO PRODUTO", "DESCRICAO"], {
+    reject: ["PRINCIPIO ATIVO", "FABRICANTE", "CLASSIFICACAO"],
+    prefer: ["PRODUTO"],
+  });
+  const stockIndex = findHeader(headers, ["ESTOQUE"], {
+    reject: ["CONF", "DIAS", "MEDIA", "COMPRA", "TRANSF", "DESTINO", "DEST"],
+  });
+  const confirmedStockIndex = findHeader(headers, ["ESTOQUE CONFIRMADO", "ESTOQUE CONF", "EST CONF"]);
+  const monthlyAvgIndex = findHeader(headers, ["MEDIA VENDA MENSAL", "VENDA MEDIA MENSAL", "VENDA MENSAL", "MEDIA MENSAL"]);
+  const dailyAvgIndex = findHeader(headers, ["MEDIA VENDA DIARIA", "VENDA MEDIA DIARIA", "VENDA DIARIA", "MEDIA DIARIA"]);
+  const curveIndex = findHeader(headers, ["CURVA QTD", "CURVA ABC QTD", "CURVA ABC", "CURVA"], {
+    reject: ["VALOR"],
+  });
+  const confirmedPurchaseIndex = findHeader(headers, ["COMPRA CONFIRMADA", "COMPRA CONF", "COMPRA"]);
+  const confirmedTransferIndex = findHeader(headers, ["TRANSF CONFIRMADA", "TRANSFERENCIA CONFIRMADA", "TRANSF CONF", "TRANSFERENCIA CONF"]);
 
-  if (storeCodeIndex < 0 || storeNameIndex < 0 || eanIndex < 0 || productIndex < 0) {
-    throw new Error("Arquivo precisa ter Un. Neg., Apelido Un. Neg., Cod. de Barras e Produto.");
+  if (storeCodeIndex < 0 || storeNameIndex < 0 || eanIndex < 0 || productIndex < 0 || stockIndex < 0 || (monthlyAvgIndex < 0 && dailyAvgIndex < 0)) {
+    throw new Error("Arquivo precisa ter loja, apelido da loja, EAN, produto, estoque e media de venda mensal ou diaria.");
   }
 
   let skipped = 0;
@@ -180,19 +264,23 @@ function parseStockRows(allRows: string[][]) {
       return [];
     }
 
+    const stock = parseNumber(requiredCell(cells, stockIndex));
+    const confirmedStock = parseNumber(requiredCell(cells, confirmedStockIndex));
+    const dailyAvgSales = parseNumber(requiredCell(cells, dailyAvgIndex));
+    const monthlyAvgSalesFromColumn = parseNumber(requiredCell(cells, monthlyAvgIndex));
+    const monthlyAvgSales = normalizeMonthlyAvgSales(
+      dailyAvgSales > 0 ? dailyAvgSales * 30 : monthlyAvgSalesFromColumn,
+    );
+
     return [{
       store_code: storeCode,
       store_name: storeName,
       ean,
       product_description: productDescription,
-      stock: parseNumber(requiredCell(cells, stockIndex)),
-      confirmed_stock: parseNumber(requiredCell(cells, confirmedStockIndex)),
-      monthly_avg_sales: monthlyAvgIndex >= 0
-        ? parseNumber(requiredCell(cells, monthlyAvgIndex))
-        : parseNumber(requiredCell(cells, dailyAvgIndex)) * 30,
-      stock_days: stockDaysIndex >= 0
-        ? parseNumber(requiredCell(cells, stockDaysIndex))
-        : parseNumber(requiredCell(cells, stockDaysFallbackIndex)),
+      stock,
+      confirmed_stock: confirmedStock,
+      monthly_avg_sales: monthlyAvgSales,
+      stock_days: calculateStockDays(stock, confirmedStock, monthlyAvgSales),
       curve: requiredCell(cells, curveIndex).toUpperCase(),
       confirmed_purchase: parseNumber(requiredCell(cells, confirmedPurchaseIndex)),
       confirmed_transfer: parseNumber(requiredCell(cells, confirmedTransferIndex)),
@@ -203,10 +291,16 @@ function parseStockRows(allRows: string[][]) {
 }
 
 export async function POST(request: Request) {
+  let importStage = "processar arquivo";
+  let createdSnapshotId: string | null = null;
+  let supabase: ReturnType<typeof getSupabaseAdmin> | null = null;
+
   try {
-    const auth = await requireRole(request, ["admin"]);
+    importStage = "validar permissao";
+    const auth = await requirePerfumePurchasingOrSupreme(request);
     if (!auth.ok) return auth.response;
 
+    importStage = "ler formulario";
     const formData = await request.formData();
     const file = formData.get("file");
 
@@ -222,6 +316,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Importe um arquivo CSV, XLSX ou XLS." }, { status: 400 });
     }
 
+    importStage = "ler arquivo de estoque";
     const { rows, skipped } = isExcel
       ? parseStockWorkbook(await file.arrayBuffer())
       : parseStockCsv(await file.text());
@@ -229,15 +324,18 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Nenhuma linha valida de estoque encontrada." }, { status: 400 });
     }
 
-    const supabase = getSupabaseAdmin();
+    importStage = "criar controle de importacao";
+    supabase = getSupabaseAdmin();
     const { data: snapshot, error: snapshotError } = await supabase
       .from("reallocation_stock_snapshots")
-      .insert([{ source_file: file.name, imported_by: auth.userId, notes: "Importacao de estoque e venda media" }])
+      .insert([{ source_file: file.name.normalize("NFC"), imported_by: auth.userId, notes: "Importacao de estoque e venda media" }])
       .select("id")
       .single();
 
     if (snapshotError) throw snapshotError;
+    createdSnapshotId = snapshot.id;
 
+    importStage = "vincular EAN ao codigo ERP";
     const eans = Array.from(new Set(rows.map((row) => row.ean)));
     const erpByEan = new Map<string, string>();
     const lookupChunkSize = 500;
@@ -263,6 +361,7 @@ export async function POST(request: Request) {
       erp_code: erpByEan.get(row.ean) || null,
     }));
 
+    importStage = "salvar linhas de estoque";
     const insertChunkSize = 1000;
     for (let index = 0; index < payload.length; index += insertChunkSize) {
       const { error } = await supabase
@@ -282,7 +381,17 @@ export async function POST(request: Request) {
       skipped,
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Erro ao importar estoque.";
+    if (createdSnapshotId && supabase) {
+      await supabase
+        .from("reallocation_stock_snapshots")
+        .delete()
+        .eq("id", createdSnapshotId);
+    }
+
+    const baseMessage = error instanceof Error ? error.message : "Erro ao importar estoque.";
+    const message = /^(Arquivo|Nenhuma|Importe|Envie)/i.test(baseMessage)
+      ? baseMessage
+      : `Erro ao ${importStage}: ${baseMessage}`;
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }

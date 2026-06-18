@@ -18,6 +18,56 @@ def stock_curve(value):
     return str(value or "").strip().upper()[:1]
 
 
+def available_stock(item):
+    return max(0, number(item.get("stock")), number(item.get("confirmed_stock")))
+
+
+def real_stock(item):
+    return max(0, number(item.get("stock")))
+
+
+def normalize_monthly_avg_sales(value):
+    parsed = number(value)
+    if parsed <= 0:
+        return 0
+    return round(parsed * 3) / 3
+
+
+def monthly_to_daily(value):
+    return normalize_monthly_avg_sales(value) / 30
+
+
+def daily_to_monthly(value):
+    return normalize_monthly_avg_sales(value * 30)
+
+
+def own_daily_sales(item):
+    monthly_daily = monthly_to_daily(item.get("monthly_avg_sales"))
+    if monthly_daily > 0:
+        return monthly_daily
+
+    stock = available_stock(item)
+    stock_days = number(item.get("stock_days"))
+    if stock > 0 and stock_days > 0:
+        return stock / stock_days
+
+    return 0
+
+
+def effective_stock_days(item, daily_sales):
+    stock_days = number(item.get("stock_days"))
+    if daily_sales > 0:
+        return available_stock(item) / daily_sales
+    return stock_days if stock_days > 0 else 0
+
+
+def destination_need_quantity(stock_days, daily_sales, target_days):
+    exact_need = (target_days - stock_days) * daily_sales
+    if exact_need <= 0:
+        return 0
+    return max(0, math.floor(exact_need + 0.000001))
+
+
 def route_priority(origin_item, destination_item, branch_logistics):
     origin_code = store_code(origin_item.get("store_code"))
     destination_code = store_code(destination_item.get("store_code"))
@@ -71,18 +121,18 @@ def build_suggestion(ean, origin, destination, quantity, need, priority, index):
         "maxQuantity": quantity,
         "originStock": number(origin_item.get("stock")),
         "originConfirmedStock": number(origin_item.get("confirmed_stock")),
-        "originMonthlyAvgSales": number(origin_item.get("monthly_avg_sales")),
+        "originMonthlyAvgSales": normalize_monthly_avg_sales(origin_item.get("monthly_avg_sales")),
         "originCurve": origin_item.get("curve") or "",
         "originConfirmedPurchase": number(origin_item.get("confirmed_purchase")),
         "originConfirmedTransfer": number(origin_item.get("confirmed_transfer")),
         "destinationStock": number(destination_item.get("stock")),
         "destinationConfirmedStock": number(destination_item.get("confirmed_stock")),
-        "destinationMonthlyAvgSales": number(destination_item.get("monthly_avg_sales")),
+        "destinationMonthlyAvgSales": normalize_monthly_avg_sales(destination_item.get("monthly_avg_sales")),
         "destinationCurve": destination_item.get("curve") or "",
         "destinationConfirmedPurchase": number(destination_item.get("confirmed_purchase")),
         "destinationConfirmedTransfer": number(destination_item.get("confirmed_transfer")),
-        "originDailySales": number(origin_item.get("monthly_avg_sales")) / 30,
-        "destinationDailySales": number(destination_item.get("monthly_avg_sales")) / 30,
+        "originDailySales": monthly_to_daily(origin_item.get("monthly_avg_sales")),
+        "destinationDailySales": monthly_to_daily(destination_item.get("monthly_avg_sales")),
         "originStockDays": number(origin_item.get("stock_days")),
         "destinationStockDays": number(destination_item.get("stock_days")),
         "destinationNeed": need,
@@ -99,7 +149,6 @@ def calculate(payload):
     selected_destinations = {store_code(code) for code in filters.get("destinations") or []}
     selected_products = {str(ean) for ean in filters.get("products") or [] if ean}
     origin_minimum_days = number(rules.get("originMinimumDays"))
-    need_days_threshold = number(rules.get("needDaysThreshold"))
     destination_target_days = number(rules.get("destinationTargetDays"))
     max_route_priority = number(rules.get("maxRoutePriority"))
     selected_origin_curves = {stock_curve(curve) for curve in rules.get("originCurves") or [] if stock_curve(curve)}
@@ -131,16 +180,26 @@ def calculate(payload):
                 continue
             if selected_origin_curves and stock_curve(item.get("curve")) not in selected_origin_curves:
                 continue
-            stock = number(item.get("stock"))
+            stock = real_stock(item)
             if stock <= 0:
                 continue
-            daily_sales = number(item.get("monthly_avg_sales")) / 30
+            daily_sales = own_daily_sales(item)
+            stock_days = stock / daily_sales if daily_sales > 0 else number(item.get("stock_days"))
             protected_stock = daily_sales * origin_minimum_days if daily_sales > 0 else 0
             remaining = max(0, math.floor(stock - protected_stock))
             if remaining > 0:
-                origins.append({"item": item, "remaining": remaining})
+                enriched_item = {
+                    **item,
+                    "stock": stock,
+                    "monthly_avg_sales": daily_to_monthly(daily_sales),
+                    "stock_days": stock_days,
+                }
+                origins.append({"item": enriched_item, "remaining": remaining})
 
-        origins.sort(key=lambda origin: number(origin["item"].get("stock_days")), reverse=True)
+        origins.sort(
+            key=lambda origin: number(origin["item"].get("stock_days")),
+            reverse=True,
+        )
         eligible_origins += len(origins)
 
         destinations = []
@@ -150,13 +209,20 @@ def calculate(payload):
                 continue
             if selected_destination_curves and stock_curve(item.get("curve")) not in selected_destination_curves:
                 continue
-            daily_sales = number(item.get("monthly_avg_sales")) / 30
-            stock_days = number(item.get("stock_days"))
-            if daily_sales <= 0 or stock_days > need_days_threshold:
+            stock = available_stock(item)
+            daily_sales = own_daily_sales(item)
+            stock_days = effective_stock_days(item, daily_sales)
+            if daily_sales <= 0 or stock_days >= destination_target_days:
                 continue
-            need = max(0, math.ceil((destination_target_days - stock_days) * daily_sales))
+            need = destination_need_quantity(stock_days, daily_sales, destination_target_days)
             if need > 0:
-                destinations.append({"item": item, "need": need})
+                enriched_item = {
+                    **item,
+                    "stock": stock,
+                    "monthly_avg_sales": daily_to_monthly(daily_sales),
+                    "stock_days": stock_days,
+                }
+                destinations.append({"item": enriched_item, "need": need})
 
         destinations.sort(key=lambda destination: number(destination["item"].get("stock_days")))
         eligible_destinations += len(destinations)

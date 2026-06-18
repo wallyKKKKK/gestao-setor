@@ -9,6 +9,8 @@ interface DailyOverview {
   todayTasks: number;
   overdueTasks: number;
   oneOffTasks: number;
+  futureTasks: number;
+  completedToday: number;
   meetingsToday: number;
   nextMeetingTitle: string;
   nextMeetingTime: string;
@@ -54,7 +56,7 @@ export function DashboardView({ filter, onFilterChange, stats, sectorStats, dail
           </button>
         </div>
 
-        <div className="grid gap-3 lg:grid-cols-[1fr_1fr_1fr_1fr]">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
           <OverviewCard
             label="Hoje"
             value={dailyOverview.todayTasks}
@@ -78,6 +80,22 @@ export function DashboardView({ filter, onFilterChange, stats, sectorStats, dail
             icon={<Target size={18} />}
             tone="amber"
             onClick={() => onOpenTab(dailyOverview.oneOffTasks > 0 && dailyOverview.overdueTasks > 0 ? 'ATRASADOS' : 'HOJE')}
+          />
+          <OverviewCard
+            label="Futuras"
+            value={dailyOverview.futureTasks}
+            detail="agendadas"
+            icon={<Clock3 size={18} />}
+            tone="slate"
+            onClick={() => onOpenTab('Todas')}
+          />
+          <OverviewCard
+            label="Concluidas"
+            value={dailyOverview.completedToday}
+            detail="baixadas hoje"
+            icon={<CheckCircle2 size={18} />}
+            tone="green"
+            onClick={() => onOpenTab('HISTÓRICO')}
           />
           <OverviewCard
             label="Reunioes"
@@ -213,7 +231,7 @@ function OverviewCard({
   value: number;
   detail: string;
   icon: ReactNode;
-  tone: 'blue' | 'red' | 'amber' | 'emerald';
+  tone: 'blue' | 'red' | 'amber' | 'emerald' | 'green' | 'slate';
   onClick: () => void;
 }) {
   const toneClass = {
@@ -221,6 +239,8 @@ function OverviewCard({
     red: 'border-red-100 bg-red-50 text-red-700',
     amber: 'border-amber-100 bg-amber-50 text-amber-700',
     emerald: 'border-emerald-100 bg-emerald-50 text-emerald-700',
+    green: 'border-emerald-100 bg-emerald-50 text-emerald-700',
+    slate: 'border-slate-200 bg-slate-50 text-slate-700',
   }[tone];
 
   return (

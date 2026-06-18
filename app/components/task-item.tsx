@@ -5,7 +5,7 @@ import type { PointerEvent, WheelEvent } from "react";
 import { Check, ChevronDown, Edit3, MessageSquare, RotateCcw, Trash2 } from "lucide-react";
 import { addAuditLog, addTaskHistory, updateTaskCompletion } from "@/lib/api";
 import { getPermissionDeniedMessage } from "@/lib/permissions";
-import { formatToBR, getTodayStr } from "@/lib/task-recurrence";
+import { formatToBR, getScheduleDisplayLabel, getTodayStr } from "@/lib/task-recurrence";
 import type { Profile, Subtask, TaskItemProps } from "@/lib/types";
 
 export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit, userRole, currentUser, onView, onToggle, onDelete, canDelete, onScheduleOverride }: TaskItemProps) => {
@@ -31,6 +31,7 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
   const assignedProfile = profiles.find((p: Profile) => p.id === task.assigned_to);
   const assignedFirstName = assignedProfile?.full_name?.split(" ")[0] || "Sem dono";
   const assignedInitial = assignedProfile?.full_name?.charAt(0) || "?";
+  const scheduleDisplayLabel = getScheduleDisplayLabel(task);
   const scheduleLabel = isLate
     ? `DESDE ${formatToBR(task.lastOcc)}`
     : isAdvanced
@@ -39,7 +40,7 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
         ? `ADIADA: ${task.nextOcc}`
         : isScheduledToday
           ? "HOJE"
-          : `PROXIMA: ${task.nextOcc}`;
+          : scheduleDisplayLabel;
   const swipeDistance = 90;
   const dragAction = feedbackOffset <= -swipeDistance ? "advance" : feedbackOffset >= swipeDistance ? "postpone" : null;
   const manageTaskDeniedMessage = getPermissionDeniedMessage("alterar esta tarefa", "managerOrAdmin")
@@ -315,11 +316,13 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
                 {isAdvanced ? "ADIANTADA" : "ADIADA"}
               </span>
             )}
-            <span className={`inline-flex h-6 items-center rounded-full px-3 text-[8px] font-black uppercase tracking-wide border shadow-sm
+            <span
+              title={scheduleLabel}
+              className={`inline-flex h-6 max-w-[220px] items-center rounded-full px-3 text-[8px] font-black uppercase tracking-wide border shadow-sm
               ${task.isDoneToday ? "bg-green-100 border-green-200 text-green-700" :
                 isLate ? "bg-red-600 border-red-700 text-white animate-pulse" : "bg-slate-100 border-slate-200 text-slate-700"}`}
             >
-              {scheduleLabel}
+              <span className="truncate">{scheduleLabel}</span>
             </span>
           </div>
         </div>

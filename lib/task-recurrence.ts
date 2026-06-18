@@ -8,6 +8,14 @@ const WEEK_DAYS: Record<string, number> = {
   sex: 5,
 };
 
+const WEEK_DAY_LABELS: Record<string, string> = {
+  seg: "SEG",
+  ter: "TER",
+  qua: "QUA",
+  qui: "QUI",
+  sex: "SEX",
+};
+
 export const MONTHLY_WEEKDAY_ORDINALS = [
   { value: "1", label: "1a" },
   { value: "2", label: "2a" },
@@ -33,6 +41,40 @@ export function parseMonthlyWeekdayRepeat(repeatDays: string | null | undefined)
     ordinal: ordinal as MonthlyWeekdayOrdinal,
     weekday,
   };
+}
+
+export function getRecurrenceLabel(task: Pick<Task, "repeat_days" | "repeat_interval" | "is_one_off">) {
+  if (task.is_one_off || !task.repeat_days) return "PONTUAL";
+
+  const monthlyWeekdayRepeat = parseMonthlyWeekdayRepeat(task.repeat_days);
+  if (monthlyWeekdayRepeat) {
+    const ordinalLabel = MONTHLY_WEEKDAY_ORDINALS.find((item) => item.value === monthlyWeekdayRepeat.ordinal)?.label || "1a";
+    const weekdayLabel = WEEK_DAY_LABELS[monthlyWeekdayRepeat.weekday] || monthlyWeekdayRepeat.weekday.toUpperCase();
+    return `${ordinalLabel} ${weekdayLabel} DO MES`;
+  }
+
+  const dayOfMonth = parseInt(task.repeat_days);
+  if (!isNaN(dayOfMonth) && !task.repeat_days.includes(",")) {
+    return `DIA ${dayOfMonth} DO MES`;
+  }
+
+  const weekdays = task.repeat_days
+    .split(",")
+    .map((day) => WEEK_DAY_LABELS[day] || day.toUpperCase())
+    .join(" ");
+  const interval = task.repeat_interval || 1;
+
+  return interval > 1 ? `A CADA ${interval} SEMANAS - ${weekdays}` : `SEMANAL - ${weekdays}`;
+}
+
+export function getScheduleDisplayLabel(task: Pick<Task, "repeat_days" | "repeat_interval" | "is_one_off"> & { nextOcc?: string }) {
+  const recurrenceLabel = getRecurrenceLabel(task);
+  const nextDate = task.nextOcc && task.nextOcc !== "--/--/----" ? task.nextOcc : "";
+
+  if (!nextDate) return recurrenceLabel;
+  if (recurrenceLabel === "PONTUAL") return nextDate;
+
+  return `${recurrenceLabel}: ${nextDate}`;
 }
 
 export const getTodayStr = () => {

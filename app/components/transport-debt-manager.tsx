@@ -1,12 +1,14 @@
 'use client';
 
-import { Children, isValidElement, useCallback, useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from 'react';
+import { Children, isValidElement, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactElement, type ReactNode } from 'react';
 import { AlertTriangle, CheckCircle2, ChevronDown, Download, FileSpreadsheet, MoreHorizontal, Pencil, Plus, Search, Trash2, Upload, XCircle } from 'lucide-react';
+import { fetchSupplierPaymentTerms } from '@/lib/api';
 import { getPermissionDeniedMessage } from '@/lib/permissions';
 
 type DebtNature = 'divida' | 'credito';
 type PaymentStatus = 'aberto' | 'pago';
 type ChargeMode = 'auto_fee' | 'fixed_value' | 'previous_balance';
+type TransportTableColumnKey = 'select' | 'month' | 'supplier' | 'document' | 'value' | 'balance' | 'nature' | 'payment' | 'actions';
 
 interface TransportDebtEntry {
   id: string;
@@ -20,6 +22,7 @@ interface TransportDebtEntry {
   fee: number;
   nature: DebtNature;
   status: PaymentStatus;
+  paidAmount?: number;
   paidAt?: string;
 }
 
@@ -51,6 +54,13 @@ interface BulkEditForm {
   updateDescription: boolean;
   updateNature: boolean;
   updateStatus: boolean;
+}
+
+interface SupplierPaymentForm {
+  supplier: string;
+  amount: string;
+  paidAt: string;
+  note: string;
 }
 
 type BulkDebtDraft = Omit<TransportDebtEntry, 'id'>;
@@ -96,6 +106,7 @@ interface TransportDebtPreferences {
   natureFilters: string[];
   statusFilters: string[];
   typeFilters: string[];
+  paymentFilters: string[];
   showOnlyAlerts: boolean;
 }
 
@@ -105,6 +116,21 @@ const PREFERENCES_STORAGE_KEY = 'transport-debt-preferences-v1';
 const MANUAL_SHEET_NAME = 'Lançamentos manuais';
 const NO_MONTH_VALUE = '__sem_mes__';
 const TRANSPORT_FEE_RATE = 0.035;
+const TRANSPORT_TABLE_COLUMNS: Array<{ key: TransportTableColumnKey; label: string; width: number; minWidth: number; align?: 'left' | 'center' | 'right'; resizable?: boolean }> = [
+  { key: 'select', label: '', width: 42, minWidth: 42, align: 'center' },
+  { key: 'month', label: 'Mês', width: 74, minWidth: 46, align: 'center', resizable: true },
+  { key: 'supplier', label: 'Fornecedor', width: 520, minWidth: 92, resizable: true },
+  { key: 'document', label: 'Documento', width: 118, minWidth: 64, resizable: true },
+  { key: 'value', label: 'Valor NF', width: 118, minWidth: 72, align: 'right', resizable: true },
+  { key: 'balance', label: 'Saldo', width: 112, minWidth: 68, align: 'right', resizable: true },
+  { key: 'nature', label: 'Natureza', width: 98, minWidth: 62, align: 'center', resizable: true },
+  { key: 'payment', label: 'Pagamento', width: 106, minWidth: 68, align: 'center', resizable: true },
+  { key: 'actions', label: 'Ações', width: 62, minWidth: 58, align: 'center' },
+];
+const TRANSPORT_TABLE_COLUMN_DEFAULTS = Object.fromEntries(
+  TRANSPORT_TABLE_COLUMNS.map((column) => [column.key, column.width]),
+) as Record<TransportTableColumnKey, number>;
+const TRANSPORT_CHECKBOX_CLASS = 'h-4 w-4 cursor-pointer appearance-none rounded-full border-2 border-slate-300 bg-white shadow-sm transition checked:border-blue-600 checked:bg-blue-600 checked:shadow-[inset_0_0_0_3px_white] hover:border-blue-400 disabled:cursor-not-allowed disabled:opacity-40';
 
 const blankManualForm: ManualDebtForm = {
   debtMonth: '',
@@ -130,6 +156,13 @@ const blankBulkEditForm: BulkEditForm = {
   updateDescription: false,
   updateNature: false,
   updateStatus: false,
+};
+
+const blankSupplierPaymentForm: SupplierPaymentForm = {
+  supplier: '',
+  amount: '',
+  paidAt: new Date().toISOString().slice(0, 10),
+  note: '',
 };
 
 function loadStoredEntries() {
@@ -175,6 +208,7 @@ function emptyTransportPreferences(): TransportDebtPreferences {
     natureFilters: [],
     statusFilters: [],
     typeFilters: [],
+    paymentFilters: [],
     showOnlyAlerts: false,
   };
 }
@@ -195,6 +229,7 @@ function loadTransportPreferences() {
       natureFilters: readStringArray(parsed.natureFilters),
       statusFilters: readStringArray(parsed.statusFilters),
       typeFilters: readStringArray(parsed.typeFilters),
+      paymentFilters: readStringArray(parsed.paymentFilters),
       showOnlyAlerts: Boolean(parsed.showOnlyAlerts),
     };
   } catch {
@@ -216,6 +251,7 @@ function isTransportDebtEntry(value: unknown): value is TransportDebtEntry {
     && typeof entry.fee === 'number'
     && (entry.nature === 'divida' || entry.nature === 'credito')
     && (entry.status === 'aberto' || entry.status === 'pago')
+    && (entry.paidAmount === undefined || typeof entry.paidAmount === 'number')
     && (entry.paidAt === undefined || typeof entry.paidAt === 'string');
 }
 
@@ -270,6 +306,32 @@ function parseMoney(value: unknown) {
 
 function calculateTransportFee(value: number) {
   return Number((value * TRANSPORT_FEE_RATE).toFixed(2));
+}
+
+function roundMoney(value: number) {
+  return Number(value.toFixed(2));
+}
+
+function entryPaidAmount(entry: TransportDebtEntry) {
+  if (entry.status === 'pago') return entry.fee;
+  return Math.min(entry.fee, Math.max(0, entry.paidAmount || 0));
+}
+
+function entryOpenAmount(entry: TransportDebtEntry) {
+  if (entry.status === 'pago') return 0;
+  return Math.max(0, roundMoney(entry.fee - entryPaidAmount(entry)));
+}
+
+function entryPaymentState(entry: TransportDebtEntry) {
+  if (entry.status === 'pago') return 'quitado';
+  return entryPaidAmount(entry) > 0 ? 'parcial' : 'sem_pagamento';
+}
+
+function sortOpenDebtsByAge(left: TransportDebtEntry, right: TransportDebtEntry) {
+  const leftMonth = left.debtMonth || '9999-99';
+  const rightMonth = right.debtMonth || '9999-99';
+  if (leftMonth !== rightMonth) return leftMonth.localeCompare(rightMonth);
+  return left.invoice.localeCompare(right.invoice, 'pt-BR', { numeric: true, sensitivity: 'base' });
 }
 
 function splitBulkPasteLine(line: string) {
@@ -416,19 +478,22 @@ type SheetToJson = (sheet: unknown, options: Record<string, unknown>) => unknown
 
 function summarizeDebts(items: TransportDebtEntry[]) {
   return items.reduce((acc, entry) => {
+    const paidAmount = entryPaidAmount(entry);
+    const openAmount = entryOpenAmount(entry);
+
     acc.value += entry.value;
     acc.fee += entry.fee;
 
     if (entry.nature === 'credito') {
       acc.credit += entry.fee;
-      if (entry.status === 'aberto') acc.openCredit += entry.fee;
-      if (entry.status === 'pago') acc.paidCredit += entry.fee;
+      acc.openCredit += openAmount;
+      acc.paidCredit += paidAmount;
     }
 
     if (entry.nature === 'divida') {
       acc.debt += entry.fee;
-      if (entry.status === 'aberto') acc.openDebt += entry.fee;
-      if (entry.status === 'pago') acc.paidDebt += entry.fee;
+      acc.openDebt += openAmount;
+      acc.paidDebt += paidAmount;
     }
 
     return acc;
@@ -619,14 +684,19 @@ export function TransportDebtManager({
   const [natureFilters, setNatureFilters] = useState<string[]>(initialPreferences.natureFilters);
   const [statusFilters, setStatusFilters] = useState<string[]>(initialPreferences.statusFilters);
   const [typeFilters, setTypeFilters] = useState<string[]>(initialPreferences.typeFilters);
+  const [paymentFilters, setPaymentFilters] = useState<string[]>(initialPreferences.paymentFilters);
   const [showManualForm, setShowManualForm] = useState(false);
   const [showBulkForm, setShowBulkForm] = useState(false);
   const [showBulkEditForm, setShowBulkEditForm] = useState(false);
+  const [showPaymentForm, setShowPaymentForm] = useState(false);
   const [manualForm, setManualForm] = useState<ManualDebtForm>(blankManualForm);
+  const [paymentForm, setPaymentForm] = useState<SupplierPaymentForm>(blankSupplierPaymentForm);
   const [bulkEditForm, setBulkEditForm] = useState<BulkEditForm>(blankBulkEditForm);
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [manualError, setManualError] = useState('');
+  const [paymentError, setPaymentError] = useState('');
   const [bulkPasteText, setBulkPasteText] = useState('');
+  const [paymentTermSuppliers, setPaymentTermSuppliers] = useState<string[]>([]);
   const [selectedEntryIds, setSelectedEntryIds] = useState<string[]>([]);
   const [pendingDeleteIds, setPendingDeleteIds] = useState<string[]>([]);
   const [pendingImport, setPendingImport] = useState<PendingTransportImport | null>(null);
@@ -636,6 +706,7 @@ export function TransportDebtManager({
   const [showOnlyAlerts, setShowOnlyAlerts] = useState(initialPreferences.showOnlyAlerts);
   const [openActionMenuId, setOpenActionMenuId] = useState<string | null>(null);
   const [openToolbarMenu, setOpenToolbarMenu] = useState<null | 'create' | 'import' | 'export' | 'more'>(null);
+  const [transportColumnWidths, setTransportColumnWidths] = useState<Record<TransportTableColumnKey, number>>(TRANSPORT_TABLE_COLUMN_DEFAULTS);
   const [importMessage, setImportMessage] = useState(() => {
     const storedCount = loadStoredEntries().length;
     return storedCount
@@ -645,6 +716,15 @@ export function TransportDebtManager({
   const [importing, setImporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const backupInputRef = useRef<HTMLInputElement>(null);
+  const transportTableRef = useRef<HTMLTableElement>(null);
+  const transportColumnRefs = useRef<Partial<Record<TransportTableColumnKey, HTMLTableColElement | null>>>({});
+  const resizingTransportColumnRef = useRef<{
+    key: TransportTableColumnKey;
+    startX: number;
+    startWidth: number;
+    startTableWidth: number;
+    currentWidth: number;
+  } | null>(null);
 
   useEffect(() => {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
@@ -653,6 +733,89 @@ export function TransportDebtManager({
   useEffect(() => {
     window.localStorage.setItem(AUDIT_STORAGE_KEY, JSON.stringify(auditLog));
   }, [auditLog]);
+
+  const getTransportColumnWidth = useCallback((key: TransportTableColumnKey) => (
+    transportColumnWidths[key] || TRANSPORT_TABLE_COLUMN_DEFAULTS[key]
+  ), [transportColumnWidths]);
+
+  const transportTableWidth = useMemo(() => (
+    TRANSPORT_TABLE_COLUMNS.reduce((total, column) => total + getTransportColumnWidth(column.key), 0)
+  ), [getTransportColumnWidth]);
+
+  const startTransportColumnResize = useCallback((event: ReactMouseEvent<HTMLSpanElement>, key: TransportTableColumnKey) => {
+    const column = TRANSPORT_TABLE_COLUMNS.find((item) => item.key === key);
+    if (!column?.resizable) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    resizingTransportColumnRef.current = {
+      key,
+      startX: event.clientX,
+      startWidth: getTransportColumnWidth(key),
+      startTableWidth: transportTableWidth,
+      currentWidth: getTransportColumnWidth(key),
+    };
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const current = resizingTransportColumnRef.current;
+      if (!current) return;
+
+      const targetColumn = TRANSPORT_TABLE_COLUMNS.find((item) => item.key === current.key);
+      const minWidth = targetColumn?.minWidth || 48;
+      const nextWidth = Math.round(Math.max(minWidth, Math.min(1200, current.startWidth + moveEvent.clientX - current.startX)));
+      const nextTableWidth = current.startTableWidth + nextWidth - current.startWidth;
+
+      current.currentWidth = nextWidth;
+      const tableElement = transportTableRef.current;
+      const columnElement = transportColumnRefs.current[current.key];
+      if (columnElement) columnElement.style.width = `${nextWidth}px`;
+      if (tableElement) {
+        tableElement.style.width = `${nextTableWidth}px`;
+        tableElement.style.minWidth = `${nextTableWidth}px`;
+      }
+    };
+
+    const handleMouseUp = () => {
+      const current = resizingTransportColumnRef.current;
+      if (current) {
+        setTransportColumnWidths((previous) => (
+          previous[current.key] === current.currentWidth ? previous : { ...previous, [current.key]: current.currentWidth }
+        ));
+      }
+      resizingTransportColumnRef.current = null;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  }, [getTransportColumnWidth, transportTableWidth]);
+
+  useEffect(() => {
+    let active = true;
+
+    fetchSupplierPaymentTerms()
+      .then((terms) => {
+        if (!active) return;
+        setPaymentTermSuppliers(Array.from(new Set(
+          terms
+            .filter((term) => term.is_active)
+            .map((term) => term.supplier_name.trim())
+            .filter(Boolean),
+        )).sort((left, right) => left.localeCompare(right, 'pt-BR', { sensitivity: 'base' })));
+      })
+      .catch(() => {
+        if (active) setPaymentTermSuppliers([]);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     const preferences: TransportDebtPreferences = {
@@ -663,11 +826,12 @@ export function TransportDebtManager({
       natureFilters,
       statusFilters,
       typeFilters,
+      paymentFilters,
       showOnlyAlerts,
     };
 
     window.localStorage.setItem(PREFERENCES_STORAGE_KEY, JSON.stringify(preferences));
-  }, [monthFilters, natureFilters, searchTerm, sheetFilters, showOnlyAlerts, statusFilters, supplierFilters, typeFilters]);
+  }, [monthFilters, natureFilters, paymentFilters, searchTerm, sheetFilters, showOnlyAlerts, statusFilters, supplierFilters, typeFilters]);
 
   useEffect(() => {
     const handleEscape = (event: KeyboardEvent) => {
@@ -699,6 +863,12 @@ export function TransportDebtManager({
         setManualError('');
         return;
       }
+      if (showPaymentForm) {
+        setShowPaymentForm(false);
+        setPaymentForm(blankSupplierPaymentForm);
+        setPaymentError('');
+        return;
+      }
       if (showBulkForm) {
         setShowBulkForm(false);
         setManualError('');
@@ -716,7 +886,7 @@ export function TransportDebtManager({
 
     window.addEventListener('keydown', handleEscape);
     return () => window.removeEventListener('keydown', handleEscape);
-  }, [openActionMenuId, openToolbarMenu, pendingDeleteIds.length, pendingImport, searchTerm, showAuditLog, showBulkEditForm, showBulkForm, showManualForm]);
+  }, [openActionMenuId, openToolbarMenu, pendingDeleteIds.length, pendingImport, searchTerm, showAuditLog, showBulkEditForm, showBulkForm, showManualForm, showPaymentForm]);
 
   useEffect(() => {
     if (!openActionMenuId && !openToolbarMenu) return;
@@ -737,9 +907,12 @@ export function TransportDebtManager({
   const monthOptions = useMemo(() => Array.from(new Set(entries.map((entry) => entry.debtMonth || NO_MONTH_VALUE))).sort((left, right) => (
     left === NO_MONTH_VALUE ? 1 : right === NO_MONTH_VALUE ? -1 : right.localeCompare(left)
   )), [entries]);
-  const supplierOptions = useMemo(() => Array.from(new Set(entries.map((entry) => entry.supplier))).sort((left, right) => (
+  const entrySupplierOptions = useMemo(() => Array.from(new Set(entries.map((entry) => entry.supplier))).sort((left, right) => (
     left.localeCompare(right, 'pt-BR', { sensitivity: 'base' })
   )), [entries]);
+  const supplierOptions = useMemo(() => Array.from(new Set([...paymentTermSuppliers, ...entrySupplierOptions])).sort((left, right) => (
+    left.localeCompare(right, 'pt-BR', { sensitivity: 'base' })
+  )), [entrySupplierOptions, paymentTermSuppliers]);
   const typeOptions = useMemo(() => Array.from(new Set(entries.map((entry) => entry.category || 'Sem tipo'))).sort((left, right) => (
     left.localeCompare(right, 'pt-BR', { sensitivity: 'base' })
   )), [entries]);
@@ -754,6 +927,7 @@ export function TransportDebtManager({
       if (natureFilters.length > 0 && !natureFilters.includes(entry.nature)) return false;
       if (statusFilters.length > 0 && !statusFilters.includes(entry.status)) return false;
       if (typeFilters.length > 0 && !typeFilters.includes(entry.category || 'Sem tipo')) return false;
+      if (paymentFilters.length > 0 && !paymentFilters.includes(entryPaymentState(entry))) return false;
 
       if (!query) return true;
       return normalizeSearch([
@@ -765,7 +939,7 @@ export function TransportDebtManager({
         monthLabel(entry.debtMonth),
       ].join(' ')).includes(query);
     });
-  }, [monthFilters, natureFilters, searchTerm, sheetFilters, statusFilters, supplierFilters, typeFilters]);
+  }, [monthFilters, natureFilters, paymentFilters, searchTerm, sheetFilters, statusFilters, supplierFilters, typeFilters]);
   const baseFilteredEntries = useMemo(() => filterEntries(entries), [entries, filterEntries]);
   const debtAlerts = useMemo(() => getTransportDebtAlerts(baseFilteredEntries), [baseFilteredEntries]);
   const alertEntryIds = useMemo(() => new Set(debtAlerts.flatMap((alert) => alert.entryIds)), [debtAlerts]);
@@ -824,6 +998,7 @@ export function TransportDebtManager({
   const supplierPanel = useMemo(() => {
     const base = summarizeDebts(filteredEntries);
     const open = Math.max(0, base.openDebt - base.openCredit);
+    const creditBalance = Math.max(0, base.openCredit - base.openDebt);
     const paid = Math.max(0, base.paidDebt - base.paidCredit);
     const total = Math.max(0, base.debt - base.credit);
     const paidPercent = total > 0 ? Math.min(100, Math.round((paid / total) * 100)) : 0;
@@ -831,11 +1006,54 @@ export function TransportDebtManager({
     return {
       ...base,
       open,
+      creditBalance,
       paid,
       total,
       paidPercent,
     };
   }, [filteredEntries]);
+
+  const financialPosition = useMemo(() => {
+    if (supplierPanel.open > 0) {
+      return {
+        label: 'A receber',
+        value: supplierPanel.open,
+        tone: 'amber' as const,
+      };
+    }
+
+    if (supplierPanel.creditBalance > 0) {
+      return {
+        label: 'Credito disponivel',
+        value: supplierPanel.creditBalance,
+        tone: 'emerald' as const,
+      };
+    }
+
+    return {
+      label: 'Sem saldo',
+      value: 0,
+      tone: 'slate' as const,
+    };
+  }, [supplierPanel.creditBalance, supplierPanel.open]);
+
+  const paymentPreview = useMemo(() => {
+    const typedSupplier = paymentForm.supplier.trim();
+    const supplier = supplierOptions.find((option) => normalizeSearch(option) === normalizeSearch(typedSupplier)) || typedSupplier;
+    const openDebts = entries
+      .filter((entry) => entry.supplier === supplier && entry.nature === 'divida' && entry.status === 'aberto' && entryOpenAmount(entry) > 0)
+      .sort(sortOpenDebtsByAge);
+    const openAmount = openDebts.reduce((sum, entry) => sum + entryOpenAmount(entry), 0);
+    const paymentAmount = parseMoney(paymentForm.amount) || 0;
+
+    return {
+      count: openDebts.length,
+      openAmount,
+      appliedAmount: Math.min(openAmount, paymentAmount),
+      remainingDebt: Math.max(0, roundMoney(openAmount - paymentAmount)),
+      leftoverPayment: Math.max(0, roundMoney(paymentAmount - openAmount)),
+    };
+  }, [entries, paymentForm.amount, paymentForm.supplier, supplierOptions]);
 
   const topSuppliers = useMemo(() => {
     const query = normalizeSearch(searchTerm);
@@ -846,6 +1064,7 @@ export function TransportDebtManager({
       if (natureFilters.length > 0 && !natureFilters.includes(entry.nature)) return;
       if (statusFilters.length > 0 && !statusFilters.includes(entry.status)) return;
       if (typeFilters.length > 0 && !typeFilters.includes(entry.category || 'Sem tipo')) return;
+      if (paymentFilters.length > 0 && !paymentFilters.includes(entryPaymentState(entry))) return;
       if (query && !normalizeSearch([
         entry.supplier,
         entry.category,
@@ -859,11 +1078,11 @@ export function TransportDebtManager({
       current.rows += 1;
       if (entry.nature === 'divida') {
         current.debt += entry.fee;
-        if (entry.status === 'aberto') current.openDebt += entry.fee;
+        current.openDebt += entryOpenAmount(entry);
       }
       if (entry.nature === 'credito') {
         current.credit += entry.fee;
-        if (entry.status === 'aberto') current.openCredit += entry.fee;
+        current.openCredit += entryOpenAmount(entry);
       }
       map.set(entry.supplier, current);
     });
@@ -875,7 +1094,7 @@ export function TransportDebtManager({
       }))
       .sort((left, right) => right.fee - left.fee)
       .slice(0, 5);
-  }, [entries, monthFilters, natureFilters, searchTerm, sheetFilters, statusFilters, typeFilters]);
+  }, [entries, monthFilters, natureFilters, paymentFilters, searchTerm, sheetFilters, statusFilters, typeFilters]);
 
   const importFile = useCallback(async (file: File) => {
     if (!canImport) {
@@ -938,7 +1157,7 @@ export function TransportDebtManager({
     const target = entries.find((entry) => entry.id === id);
     const paidAt = status === 'pago' ? new Date().toISOString() : undefined;
     setEntries((current) => current.map((entry) => (
-      entry.id === id ? { ...entry, status, paidAt } : entry
+      entry.id === id ? { ...entry, status, paidAt, paidAmount: status === 'pago' ? entry.fee : undefined } : entry
     )));
     if (target) {
       addAuditLog({
@@ -957,7 +1176,10 @@ export function TransportDebtManager({
       return;
     }
 
-    const targets = entries.filter((entry) => selectedEntryIds.includes(entry.id) && entry.status !== status);
+    const targets = entries.filter((entry) => (
+      selectedEntryIds.includes(entry.id)
+      && (entry.status !== status || (status === 'aberto' && entryPaidAmount(entry) > 0))
+    ));
     if (!targets.length) {
       setImportMessage(status === 'pago' ? 'Os lançamentos selecionados já estão pagos.' : 'Os lançamentos selecionados já estão em aberto.');
       setSelectedEntryIds([]);
@@ -970,7 +1192,7 @@ export function TransportDebtManager({
     });
     const paidAt = status === 'pago' ? new Date().toISOString() : undefined;
     setEntries((current) => current.map((entry) => (
-      selectedEntryIds.includes(entry.id) ? { ...entry, status, paidAt } : entry
+      selectedEntryIds.includes(entry.id) ? { ...entry, status, paidAt, paidAmount: status === 'pago' ? entry.fee : undefined } : entry
     )));
     setSelectedEntryIds([]);
     setImportMessage(status === 'pago'
@@ -1007,14 +1229,35 @@ export function TransportDebtManager({
     setManualError('');
   }, []);
 
+  const closePaymentForm = useCallback(() => {
+    setShowPaymentForm(false);
+    setPaymentForm(blankSupplierPaymentForm);
+    setPaymentError('');
+  }, []);
+
   const openNewManualForm = useCallback(() => {
     setManualForm(blankManualForm);
     setEditingEntryId(null);
     setShowBulkForm(false);
     setShowBulkEditForm(false);
+    setShowPaymentForm(false);
     setManualError('');
     setShowManualForm(true);
   }, []);
+
+  const openSupplierPaymentForm = useCallback(() => {
+    const filteredSupplier = supplierFilters.length === 1 ? supplierFilters[0] : '';
+    setPaymentForm({
+      ...blankSupplierPaymentForm,
+      supplier: filteredSupplier,
+      paidAt: new Date().toISOString().slice(0, 10),
+    });
+    setPaymentError('');
+    setShowManualForm(false);
+    setShowBulkForm(false);
+    setShowBulkEditForm(false);
+    setShowPaymentForm(true);
+  }, [supplierFilters]);
 
   const openEditEntry = useCallback((entry: TransportDebtEntry) => {
     if (!canBulkEdit) {
@@ -1037,6 +1280,7 @@ export function TransportDebtManager({
     setManualError('');
     setShowBulkForm(false);
     setShowBulkEditForm(false);
+    setShowPaymentForm(false);
     setShowManualForm(true);
   }, [canBulkEdit, getBlockedMessage]);
 
@@ -1125,6 +1369,10 @@ export function TransportDebtManager({
     setBulkEditForm((current) => ({ ...current, [field]: value }));
   }, []);
 
+  const updatePaymentForm = useCallback((field: keyof SupplierPaymentForm, value: string) => {
+    setPaymentForm((current) => ({ ...current, [field]: value }));
+  }, []);
+
   const closeBulkEditForm = useCallback(() => {
     setShowBulkEditForm(false);
     setBulkEditForm(blankBulkEditForm);
@@ -1166,7 +1414,11 @@ export function TransportDebtManager({
         ...(bulkEditForm.updateCategory ? { category } : {}),
         ...(bulkEditForm.updateDescription ? { description } : {}),
         ...(bulkEditForm.updateNature ? { nature: bulkEditForm.nature } : {}),
-        ...(bulkEditForm.updateStatus ? { status: nextStatus, paidAt: nextStatus === 'pago' ? entry.paidAt || new Date().toISOString() : undefined } : {}),
+        ...(bulkEditForm.updateStatus ? {
+          status: nextStatus,
+          paidAt: nextStatus === 'pago' ? entry.paidAt || new Date().toISOString() : undefined,
+          paidAmount: nextStatus === 'pago' ? entry.fee : undefined,
+        } : {}),
       };
     }));
 
@@ -1179,6 +1431,101 @@ export function TransportDebtManager({
       count: selectedEntryIds.length,
     });
   }, [addAuditLog, bulkEditForm, canBulkEdit, closeBulkEditForm, entries, getBlockedMessage, selectedEntryIds]);
+
+  const applySupplierPayment = useCallback(() => {
+    if (!canBulkEdit) {
+      setPaymentError(getBlockedMessage('lançar pagamento de transporte', 'transportBulk'));
+      return;
+    }
+
+    const typedSupplier = paymentForm.supplier.trim();
+    const supplier = supplierOptions.find((option) => normalizeSearch(option) === normalizeSearch(typedSupplier)) || typedSupplier;
+    const amount = parseMoney(paymentForm.amount);
+    const paidAt = paymentForm.paidAt
+      ? new Date(`${paymentForm.paidAt}T12:00:00`).toISOString()
+      : new Date().toISOString();
+
+    if (!supplier) {
+      setPaymentError('Informe o fornecedor.');
+      return;
+    }
+
+    if (amount === null || amount <= 0) {
+      setPaymentError('Informe um valor de pagamento valido.');
+      return;
+    }
+
+    const openDebts = entries
+      .filter((entry) => entry.supplier === supplier && entry.nature === 'divida' && entry.status === 'aberto' && entryOpenAmount(entry) > 0)
+      .sort(sortOpenDebtsByAge);
+
+    if (!openDebts.length) {
+      setPaymentError('Esse fornecedor nao possui dividas abertas para abater.');
+      return;
+    }
+
+    let remainingPayment = amount;
+    let appliedAmount = 0;
+    const applications = new Map<string, { paidAmount: number; fullyPaid: boolean }>();
+
+    openDebts.forEach((entry) => {
+      if (remainingPayment <= 0) return;
+      const openAmount = entryOpenAmount(entry);
+      const applied = Math.min(openAmount, remainingPayment);
+      if (applied <= 0) return;
+
+      remainingPayment = roundMoney(remainingPayment - applied);
+      appliedAmount = roundMoney(appliedAmount + applied);
+      const nextPaidAmount = roundMoney(entryPaidAmount(entry) + applied);
+      applications.set(entry.id, {
+        paidAmount: nextPaidAmount >= entry.fee - 0.009 ? entry.fee : nextPaidAmount,
+        fullyPaid: nextPaidAmount >= entry.fee - 0.009,
+      });
+    });
+
+    if (!applications.size) {
+      setPaymentError('Nao encontrei saldo aberto para abater.');
+      return;
+    }
+
+    setUndoSnapshot({
+      label: `Pagamento de ${supplier}`,
+      entries,
+    });
+
+    setEntries((current) => current.map((entry) => {
+      const application = applications.get(entry.id);
+      if (!application) return entry;
+
+      return {
+        ...entry,
+        paidAmount: application.paidAmount,
+        status: application.fullyPaid ? 'pago' : 'aberto',
+        paidAt,
+        description: paymentForm.note.trim()
+          ? [entry.description, `Pagamento: ${paymentForm.note.trim()}`].filter(Boolean).join(' | ')
+          : entry.description,
+      };
+    }));
+
+    const affectedCount = applications.size;
+    setSelectedEntryIds((current) => current.filter((id) => !applications.has(id)));
+    setPaymentError('');
+    setShowPaymentForm(false);
+    setPaymentForm(blankSupplierPaymentForm);
+    setSupplierFilters([supplier]);
+    setStatusFilters([]);
+    setNatureFilters([]);
+    setImportMessage(remainingPayment > 0.009
+      ? `${money(appliedAmount)} abatidos de ${supplier}. Sobrou ${money(remainingPayment)} sem divida aberta.`
+      : `${money(appliedAmount)} abatidos de ${supplier} em ${affectedCount} lancamento${affectedCount === 1 ? '' : 's'}.`);
+    addAuditLog({
+      action: 'Pagamento lançado',
+      detail: supplier,
+      count: affectedCount,
+      amount: appliedAmount,
+    });
+  }, [addAuditLog, canBulkEdit, entries, getBlockedMessage, paymentForm, supplierOptions]);
 
   const addManualEntry = useCallback(() => {
     const supplier = manualForm.supplier.trim();
@@ -1223,6 +1570,7 @@ export function TransportDebtManager({
       fee: chargeValue,
       nature: manualForm.nature,
       status: manualForm.status,
+      paidAmount: manualForm.status === 'pago' ? chargeValue : undefined,
       paidAt: manualForm.status === 'pago' ? new Date().toISOString() : undefined,
     };
 
@@ -1294,7 +1642,7 @@ export function TransportDebtManager({
       return;
     }
     const rows = [
-      ['mes', 'aba', 'fornecedor', 'categoria', 'descricao', 'nota', 'valor_nf', 'valor_cobranca', 'natureza', 'status', 'baixa'],
+      ['mes', 'aba', 'fornecedor', 'categoria', 'descricao', 'nota', 'valor_nf', 'valor_cobranca', 'valor_pago', 'saldo', 'natureza', 'status', 'baixa'],
       ...filteredEntries.map((entry) => [
         monthLabel(entry.debtMonth),
         entry.sheet,
@@ -1304,8 +1652,10 @@ export function TransportDebtManager({
         entry.invoice,
         entry.value.toFixed(2),
         entry.fee.toFixed(2),
+        entryPaidAmount(entry).toFixed(2),
+        entryOpenAmount(entry).toFixed(2),
         entry.nature,
-        entry.status,
+        entry.status === 'aberto' && entryPaidAmount(entry) > 0 ? 'parcial' : entry.status,
         entry.paidAt || '',
       ]),
     ];
@@ -1388,6 +1738,9 @@ export function TransportDebtManager({
       sheetFilters.length ? `Aba: ${sheetFilters.join(', ')}` : '',
       natureFilters.length ? `Natureza: ${natureFilters.join(', ')}` : '',
       statusFilters.length ? `Status: ${statusFilters.join(', ')}` : '',
+      paymentFilters.length ? `Pagamento: ${paymentFilters.map((filter) => (
+        filter === 'sem_pagamento' ? 'Sem pagamento' : filter === 'parcial' ? 'Parcial' : 'Quitado'
+      )).join(', ')}` : '',
       typeFilters.length ? `Tipo: ${typeFilters.join(', ')}` : '',
       searchTerm.trim() ? `Busca: ${searchTerm.trim()}` : '',
     ].filter(Boolean);
@@ -1445,7 +1798,7 @@ export function TransportDebtManager({
 
     autoTable(doc, {
       startY: 174,
-      head: [['Mês', 'Fornecedor', 'Tipo', 'Nota', 'Valor NF', 'Valor cobrança', 'Natureza', 'Status', 'Baixa']],
+      head: [['Mes', 'Fornecedor', 'Tipo', 'Nota', 'Valor NF', 'Cobranca', 'Pago', 'Saldo', 'Natureza', 'Status', 'Baixa']],
       body: exportEntries.map((entry) => [
         monthLabel(entry.debtMonth),
         entry.supplier,
@@ -1453,8 +1806,10 @@ export function TransportDebtManager({
         entry.invoice,
         money(entry.value),
         money(entry.fee),
+        money(entryPaidAmount(entry)),
+        money(entryOpenAmount(entry)),
         entry.nature,
-        entry.status,
+        entry.status === 'aberto' && entryPaidAmount(entry) > 0 ? 'parcial' : entry.status,
         shortDateTimeLabel(entry.paidAt),
       ]),
       margin: { left: 40, right: 40 },
@@ -1475,6 +1830,8 @@ export function TransportDebtManager({
       columnStyles: {
         4: { halign: 'right' },
         5: { halign: 'right' },
+        6: { halign: 'right' },
+        7: { halign: 'right' },
       },
     });
 
@@ -1486,7 +1843,7 @@ export function TransportDebtManager({
       : `cobran\u00E7a-transporte-${new Date().toISOString().slice(0, 10)}.pdf`;
 
     doc.save(fileName);
-  }, [canExport, entries, filterEntries, getBlockedMessage, monthFilters, natureFilters, searchTerm, sheetFilters, statusFilters, supplierFilters, typeFilters]);
+  }, [canExport, entries, filterEntries, getBlockedMessage, monthFilters, natureFilters, paymentFilters, searchTerm, sheetFilters, statusFilters, supplierFilters, typeFilters]);
 
   const importPermissionTitle = canImport ? undefined : getPermissionDeniedMessage('importar planilhas de transporte', 'perfumePurchasingOrSupreme');
   const exportPermissionTitle = canExport ? undefined : getPermissionDeniedMessage('exportar dados de transporte', 'perfumePurchasingOrSupreme');
@@ -1549,6 +1906,7 @@ export function TransportDebtManager({
                       setShowBulkForm((current) => !current);
                       setShowManualForm(false);
                       setShowBulkEditForm(false);
+                      setShowPaymentForm(false);
                       setManualError('');
                       setOpenToolbarMenu(null);
                     }}
@@ -1556,6 +1914,19 @@ export function TransportDebtManager({
                   >
                     <FileSpreadsheet size={15} />
                     Em massa
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      openSupplierPaymentForm();
+                      setOpenToolbarMenu(null);
+                    }}
+                    disabled={!canBulkEdit}
+                    title={bulkEditPermissionTitle}
+                    className="flex h-10 w-full items-center gap-2 rounded-xl px-3 text-left text-[10px] font-black uppercase tracking-widest text-slate-700 transition hover:bg-emerald-50 hover:text-emerald-700 disabled:opacity-40"
+                  >
+                    <CheckCircle2 size={15} />
+                    Pagamento
                   </button>
                 </div>
               )}
@@ -1713,8 +2084,8 @@ export function TransportDebtManager({
                 )}
               </div>
               <div className="mt-1 flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                <p className="text-xl font-black uppercase tracking-tight text-slate-950">{money(supplierPanel.open)}</p>
-                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">saldo em aberto</span>
+                <p className="text-xl font-black uppercase tracking-tight text-slate-950">{money(financialPosition.value)}</p>
+                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">{financialPosition.label}</span>
               </div>
             </div>
             <div className="grid gap-2 sm:grid-cols-3 xl:grid-cols-6">
@@ -1723,7 +2094,7 @@ export function TransportDebtManager({
               <CompactMetric label="Valor NF" value={money(totals.value)} />
               <CompactMetric label="Dívida" value={money(supplierPanel.debt)} />
               <CompactMetric label="Crédito" value={money(supplierPanel.credit)} tone="emerald" />
-              <CompactMetric label="Saldo" value={money(supplierPanel.open)} tone="amber" />
+              <CompactMetric label="Posição" value={money(financialPosition.value)} tone={financialPosition.tone} />
             </div>
           </div>
           <div className="mt-2 flex items-center gap-3">
@@ -1857,6 +2228,18 @@ export function TransportDebtManager({
           />
 
           <MultiDropdownFilter
+            label="Pagamento"
+            allLabel="Todos pagamentos"
+            selectedValues={paymentFilters}
+            onChange={setPaymentFilters}
+            options={[
+              { value: 'sem_pagamento', label: 'Sem pagamento' },
+              { value: 'parcial', label: 'Parcial' },
+              { value: 'quitado', label: 'Quitado' },
+            ]}
+          />
+
+          <MultiDropdownFilter
             label="Tipo"
             allLabel="Todos tipos"
             selectedValues={typeFilters}
@@ -1874,9 +2257,10 @@ export function TransportDebtManager({
               setNatureFilters([]);
               setStatusFilters([]);
               setTypeFilters([]);
+              setPaymentFilters([]);
               setShowOnlyAlerts(false);
             }}
-            disabled={!searchTerm && supplierFilters.length === 0 && monthFilters.length === 0 && sheetFilters.length === 0 && natureFilters.length === 0 && statusFilters.length === 0 && typeFilters.length === 0 && !showOnlyAlerts}
+            disabled={!searchTerm && supplierFilters.length === 0 && monthFilters.length === 0 && sheetFilters.length === 0 && natureFilters.length === 0 && statusFilters.length === 0 && typeFilters.length === 0 && paymentFilters.length === 0 && !showOnlyAlerts}
             className="h-12 rounded-2xl border border-slate-200 px-4 text-[10px] font-black uppercase tracking-widest text-slate-500 transition hover:border-red-200 hover:text-red-500 disabled:opacity-40"
           >
             Limpar filtros
@@ -1923,6 +2307,7 @@ export function TransportDebtManager({
                   setManualError('');
                   setShowManualForm(false);
                   setShowBulkForm(false);
+                  setShowPaymentForm(false);
                   setShowBulkEditForm(true);
                 }}
                 disabled={!canBulkEdit}
@@ -1957,6 +2342,18 @@ export function TransportDebtManager({
                 options={[
                   { value: 'aberto', label: 'Em aberto' },
                   { value: 'pago', label: 'Pago' },
+                ]}
+              />
+
+              <MultiDropdownFilter
+                label="Pagamento"
+                allLabel="Todos pagamentos"
+                selectedValues={paymentFilters}
+                onChange={setPaymentFilters}
+                options={[
+                  { value: 'sem_pagamento', label: 'Sem pagamento' },
+                  { value: 'parcial', label: 'Parcial' },
+                  { value: 'quitado', label: 'Quitado' },
                 ]}
               />
 
@@ -2013,9 +2410,10 @@ export function TransportDebtManager({
                   setNatureFilters([]);
                   setStatusFilters([]);
                   setTypeFilters([]);
+                  setPaymentFilters([]);
                   setShowOnlyAlerts(false);
                 }}
-                disabled={!searchTerm && supplierFilters.length === 0 && monthFilters.length === 0 && sheetFilters.length === 0 && natureFilters.length === 0 && statusFilters.length === 0 && typeFilters.length === 0 && !showOnlyAlerts}
+                disabled={!searchTerm && supplierFilters.length === 0 && monthFilters.length === 0 && sheetFilters.length === 0 && natureFilters.length === 0 && statusFilters.length === 0 && typeFilters.length === 0 && paymentFilters.length === 0 && !showOnlyAlerts}
                 className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-[9px] font-black uppercase tracking-widest text-slate-500 transition hover:border-red-200 hover:text-red-500 disabled:opacity-40"
               >
                 Limpar filtros
@@ -2023,9 +2421,13 @@ export function TransportDebtManager({
             </div>
 
             <div className="mt-2 grid gap-2">
-              <SideMetric label="Saldo" value={money(supplierPanel.open)} tone="amber" />
-              <SideMetric label="Crédito" value={money(supplierPanel.credit)} tone="emerald" />
-              <SideMetric label="Dívida" value={money(supplierPanel.debt)} />
+              <FinancialPositionCard
+                label={financialPosition.label}
+                value={money(financialPosition.value)}
+                debt={money(supplierPanel.openDebt)}
+                credit={money(supplierPanel.openCredit)}
+                tone={financialPosition.tone}
+              />
               <SideMetric label="Valor NF" value={money(totals.value)} />
               <SideMetric label="Lanc." value={filteredEntries.length.toLocaleString('pt-BR')} />
               <SideMetric label="Forn." value={suppliers.toLocaleString('pt-BR')} />
@@ -2038,8 +2440,8 @@ export function TransportDebtManager({
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[10px] font-black uppercase tracking-widest text-blue-600">{importMessage}</p>
                   <div className="mt-0.5 flex items-baseline gap-2">
-                    <p className="text-xl font-black uppercase tracking-tight text-slate-950">{money(supplierPanel.open)}</p>
-                    <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">saldo em aberto</span>
+                    <p className="text-xl font-black uppercase tracking-tight text-slate-950">{money(financialPosition.value)}</p>
+                    <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">{financialPosition.label}</span>
                   </div>
                 </div>
                 {undoSnapshot && (
@@ -2063,82 +2465,147 @@ export function TransportDebtManager({
               </div>
             </div>
             <div className="min-h-0 flex-1 overflow-auto">
-              <table className="w-full table-fixed border-collapse text-left">
+              <table
+                ref={transportTableRef}
+                className="table-fixed border-separate border-spacing-0 text-left"
+                style={{ width: `${transportTableWidth}px`, minWidth: `${transportTableWidth}px` }}
+              >
+                <colgroup>
+                  {TRANSPORT_TABLE_COLUMNS.map((column) => (
+                    <col
+                      key={column.key}
+                      ref={(element) => {
+                        transportColumnRefs.current[column.key] = element;
+                      }}
+                      style={{ width: `${getTransportColumnWidth(column.key)}px` }}
+                    />
+                  ))}
+                </colgroup>
                 <thead>
-                  <tr className="bg-slate-50 text-[10px] font-black uppercase tracking-widest text-slate-500">
-                    <th className="w-10 border-b border-slate-200 px-2 py-3 text-center">
-                      <input
-                        type="checkbox"
-                        checked={allVisibleSelected}
-                        disabled={!filteredEntries.length}
-                        onChange={toggleVisibleSelection}
-                        className="h-4 w-4 accent-blue-600"
-                        aria-label="Selecionar lançamentos visíveis"
-                      />
-                    </th>
-                    <th className="w-20 border-b border-slate-200 px-2 py-3 text-center">Mês</th>
-                    <th className="border-b border-slate-200 px-2 py-3">Fornecedor</th>
-                    <th className="w-24 border-b border-slate-200 px-2 py-3">Tipo</th>
-                    <th className="w-24 border-b border-slate-200 px-2 py-3">Nota</th>
-                    <th className="w-28 border-b border-slate-200 px-2 py-3 text-right">Valor NF</th>
-                    <th className="w-24 border-b border-slate-200 px-2 py-3 text-right">Cobrança</th>
-                    <th className="w-24 border-b border-slate-200 px-2 py-3">Natureza</th>
-                    <th className="w-24 border-b border-slate-200 px-2 py-3">Status</th>
-                    <th className="w-16 border-b border-slate-200 px-2 py-3 text-center">Ações</th>
+                  <tr className="sticky top-0 z-10 bg-slate-50 text-[10px] font-black uppercase tracking-widest text-slate-500 shadow-[0_1px_0_rgba(148,163,184,0.35)]">
+                    {TRANSPORT_TABLE_COLUMNS.map((column) => {
+                      const alignClass = column.align === 'right' ? 'text-right' : column.align === 'center' ? 'text-center' : 'text-left';
+
+                      return (
+                        <th
+                          key={column.key}
+                          className={`relative border-b border-slate-200 px-2 py-2.5 ${alignClass}`}
+                          style={{ width: getTransportColumnWidth(column.key) }}
+                        >
+                          {column.key === 'select' ? (
+                            <input
+                              type="checkbox"
+                              checked={allVisibleSelected}
+                              disabled={!filteredEntries.length}
+                              onChange={toggleVisibleSelection}
+                              className={TRANSPORT_CHECKBOX_CLASS}
+                              aria-label="Selecionar lançamentos visíveis"
+                            />
+                          ) : (
+                            <span className="block truncate">{column.label}</span>
+                          )}
+                          {column.resizable && (
+                            <span
+                              aria-hidden="true"
+                              title="Ajustar largura"
+                              className="absolute right-0 top-1/2 h-5 w-2 -translate-y-1/2 cursor-col-resize rounded-full transition hover:bg-blue-200"
+                              onMouseDown={(event) => startTransportColumnResize(event, column.key)}
+                              onDoubleClick={() => setTransportColumnWidths((current) => ({ ...current, [column.key]: column.width }))}
+                            />
+                          )}
+                        </th>
+                      );
+                    })}
                   </tr>
                 </thead>
                 <tbody>
                   {filteredEntries.map((entry) => (
                     <tr
                       key={entry.id}
-                      className={selectedEntryIds.includes(entry.id)
-                        ? 'bg-blue-50'
-                        : alertEntryIds.has(entry.id) ? 'bg-amber-50/70'
-                          : entry.status === 'pago' ? 'bg-emerald-50/60' : 'bg-white'}
+                      className={`group transition-colors ${
+                        selectedEntryIds.includes(entry.id)
+                          ? 'bg-blue-50 shadow-[inset_3px_0_0_#2563eb]'
+                          : alertEntryIds.has(entry.id)
+                            ? 'bg-amber-50/80 shadow-[inset_3px_0_0_#f59e0b]'
+                            : entry.status === 'pago'
+                              ? 'bg-emerald-50/60'
+                              : 'bg-white hover:bg-slate-50/80'
+                      }`}
                       onContextMenu={(event) => {
                         event.preventDefault();
                         setOpenActionMenuId((current) => current === entry.id ? null : entry.id);
                       }}
                     >
-                      <td className="border-b border-slate-100 px-2 py-3 text-center">
+                      <td className="border-b border-slate-100 px-2 py-2.5 text-center">
                         <input
                           type="checkbox"
                           checked={selectedEntryIds.includes(entry.id)}
                           onChange={() => toggleEntrySelection(entry.id)}
-                          className="h-4 w-4 accent-blue-600"
+                          className={TRANSPORT_CHECKBOX_CLASS}
                           aria-label={`Selecionar nota ${entry.invoice}`}
                         />
                       </td>
-                      <td className="border-b border-slate-100 px-2 py-3 text-center">
+                      <td className="overflow-hidden border-b border-slate-100 px-2 py-2.5 text-center">
                         <span
-                          className="inline-flex h-7 min-w-[58px] items-center justify-center rounded-full border border-slate-200 bg-slate-50 px-2 text-[10px] font-black uppercase tracking-wide text-slate-600"
+                          className="inline-flex h-7 max-w-full items-center justify-center truncate rounded-full border border-slate-200 bg-white px-2 text-[10px] font-black uppercase tracking-wide text-slate-600 shadow-sm"
                           title={monthLabel(entry.debtMonth)}
                         >
                           {shortMonthLabel(entry.debtMonth)}
                         </span>
                       </td>
-                      <td className="border-b border-slate-100 px-2 py-3 text-xs font-black uppercase text-slate-900" title={entry.supplier}>
-                        <div className="flex min-w-0 items-center gap-1.5">
+                      <td className="overflow-hidden border-b border-slate-100 px-3 py-2.5 text-xs font-black uppercase text-slate-900" title={entry.supplier}>
+                        <div className="flex min-w-0 items-center gap-2">
                           {alertEntryIds.has(entry.id) && <AlertTriangle size={13} className="shrink-0 text-amber-500" />}
-                          <span className="truncate">{entry.supplier}</span>
+                          <div className="min-w-0">
+                            <span className="block truncate">{entry.supplier}</span>
+                            <span className="mt-0.5 block truncate text-[9px] font-black uppercase tracking-wide text-slate-400">
+                              {entry.category || entry.description || 'Sem tipo informado'}
+                            </span>
+                          </div>
                         </div>
                       </td>
-                      <td className="truncate border-b border-slate-100 px-2 py-3 text-xs font-bold text-slate-500" title={entry.category || entry.description || '-'}>{entry.category || entry.description || '-'}</td>
-                      <td className="truncate border-b border-slate-100 px-2 py-3 text-xs font-black text-blue-700">{entry.invoice}</td>
-                      <td className="truncate border-b border-slate-100 px-2 py-3 text-right text-xs font-black text-slate-900">{money(entry.value)}</td>
-                      <td className="truncate border-b border-slate-100 px-2 py-3 text-right text-xs font-black text-slate-900">{money(entry.fee)}</td>
-                      <td className="border-b border-slate-100 px-2 py-3">
-                        <span className={`rounded-full px-2.5 py-1 text-[9px] font-black uppercase tracking-widest ${entry.nature === 'credito' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>
+                      <td className="overflow-hidden border-b border-slate-100 px-2 py-2.5">
+                        <div className="min-w-0 text-xs font-black text-blue-700">
+                          <span className="block truncate">{entry.invoice}</span>
+                          <span className="mt-0.5 block truncate text-[9px] font-black uppercase tracking-wide text-slate-400">
+                            {entry.sheet || 'Manual'}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="truncate border-b border-slate-100 px-2 py-2.5 text-right text-xs font-black text-slate-900">{money(entry.value)}</td>
+                      <td className="overflow-hidden border-b border-slate-100 px-2 py-2.5 text-right text-xs font-black text-slate-900">
+                        <div className="flex flex-col items-end gap-0.5">
+                          <span>{money(entryOpenAmount(entry) || entry.fee)}</span>
+                          {entry.status === 'pago' && (
+                            <span className="text-[9px] font-black uppercase tracking-wide text-emerald-600">
+                              quitado
+                            </span>
+                          )}
+                          {entryPaidAmount(entry) > 0 && entry.status !== 'pago' && (
+                            <span className="text-[9px] font-black uppercase tracking-wide text-emerald-600">
+                              {money(entryPaidAmount(entry))} pago
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="overflow-hidden border-b border-slate-100 px-2 py-2.5 text-center">
+                        <span className={`inline-flex max-w-full justify-center truncate rounded-full px-2.5 py-1 text-[9px] font-black uppercase tracking-widest ${entry.nature === 'credito' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>
                           {entry.nature}
                         </span>
                       </td>
-                      <td className="border-b border-slate-100 px-2 py-3">
-                        <div className="flex flex-col items-start gap-1">
+                      <td className="overflow-hidden border-b border-slate-100 px-2 py-2.5 text-center">
+                        <div className="flex flex-col items-center gap-1">
                           <span
-                            className={`rounded-full px-2.5 py-1 text-[9px] font-black uppercase tracking-widest ${entry.status === 'pago' ? 'bg-emerald-600 text-white' : 'bg-amber-100 text-amber-700'}`}
-                            title={entry.status === 'pago' ? `Baixado em ${shortDateTimeLabel(entry.paidAt)}` : 'Em aberto'}
+                            className={`inline-flex max-w-full justify-center truncate rounded-full px-2.5 py-1 text-[9px] font-black uppercase tracking-widest ${
+                              entry.status === 'pago'
+                                ? 'bg-emerald-600 text-white'
+                                : entryPaidAmount(entry) > 0
+                                  ? 'bg-blue-100 text-blue-700'
+                                  : 'bg-amber-100 text-amber-700'
+                            }`}
+                            title={entry.status === 'pago' ? `Baixado em ${shortDateTimeLabel(entry.paidAt)}` : entryPaidAmount(entry) > 0 ? `Parcial: ${money(entryPaidAmount(entry))} pago` : 'Em aberto'}
                           >
-                            {entry.status}
+                            {entry.status === 'aberto' && entryPaidAmount(entry) > 0 ? 'parcial' : entry.status}
                           </span>
                           {entry.status === 'pago' && entry.paidAt && (
                             <span className="text-[9px] font-black uppercase tracking-wide text-emerald-700">
@@ -2147,11 +2614,11 @@ export function TransportDebtManager({
                           )}
                         </div>
                       </td>
-                      <td className="relative border-b border-slate-100 px-2 py-3 text-center" data-transport-action-menu="true">
+                      <td className="relative border-b border-slate-100 px-2 py-2.5 text-center" data-transport-action-menu="true">
                         <button
                           type="button"
                           onClick={() => setOpenActionMenuId((current) => current === entry.id ? null : entry.id)}
-                          className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100 text-slate-500 transition hover:bg-blue-600 hover:text-white"
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-slate-100 text-slate-500 transition hover:bg-blue-600 hover:text-white"
                           title="Abrir acoes"
                         >
                           <MoreHorizontal size={18} />
@@ -2196,7 +2663,7 @@ export function TransportDebtManager({
                   ))}
                   {!filteredEntries.length && (
                     <tr>
-                      <td colSpan={10} className="h-64 text-center text-xs font-black uppercase tracking-widest text-slate-400">
+                      <td colSpan={9} className="h-64 text-center text-xs font-black uppercase tracking-widest text-slate-400">
                         <FileSpreadsheet className="mx-auto mb-3 text-slate-300" size={32} />
                         Nenhum lançamento encontrado.
                       </td>
@@ -2239,6 +2706,7 @@ export function TransportDebtManager({
                         setShowBulkForm((current) => !current);
                         setShowManualForm(false);
                         setShowBulkEditForm(false);
+                        setShowPaymentForm(false);
                         setManualError('');
                         setOpenToolbarMenu(null);
                       }}
@@ -2246,6 +2714,19 @@ export function TransportDebtManager({
                     >
                       <FileSpreadsheet size={15} />
                       Em massa
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        openSupplierPaymentForm();
+                        setOpenToolbarMenu(null);
+                      }}
+                      disabled={!canBulkEdit}
+                      title={bulkEditPermissionTitle}
+                      className="flex h-10 w-full items-center gap-2 rounded-xl px-3 text-left text-[10px] font-black uppercase tracking-widest text-slate-700 transition hover:bg-emerald-50 hover:text-emerald-700 disabled:opacity-40"
+                    >
+                      <CheckCircle2 size={15} />
+                      Pagamento
                     </button>
                   </div>
                 )}
@@ -2754,6 +3235,107 @@ export function TransportDebtManager({
         </div>
       )}
 
+      {showPaymentForm && (
+        <div
+          className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-900/16 p-3 backdrop-blur-sm"
+          onMouseDown={closePaymentForm}
+        >
+          <form
+            className="w-full max-w-3xl overflow-visible rounded-[30px] border border-slate-200 bg-white shadow-[0_24px_70px_rgba(15,23,42,0.22)]"
+            onMouseDown={(event) => event.stopPropagation()}
+            onSubmit={(event) => {
+              event.preventDefault();
+              applySupplierPayment();
+            }}
+          >
+            <div className="flex items-center justify-between border-b-2 border-slate-100 px-5 py-4">
+              <div>
+                <p className="text-xl font-black uppercase italic tracking-tighter text-slate-900">Pagamento de fornecedor</p>
+                <p className="text-[10px] font-black uppercase tracking-widest text-emerald-600">Abatimento automatico das dividas abertas</p>
+              </div>
+              <button
+                type="button"
+                onClick={closePaymentForm}
+                className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-100 text-slate-700 transition hover:bg-slate-200"
+                aria-label="Fechar pagamento"
+              >
+                <XCircle size={15} />
+              </button>
+            </div>
+
+            <div className="px-5 py-4">
+              {paymentError && (
+                <div className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs font-bold text-red-600">
+                  {paymentError}
+                </div>
+              )}
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <SupplierDropdown
+                  label="Fornecedor"
+                  value={paymentForm.supplier}
+                  options={supplierOptions}
+                  onChange={(value) => updatePaymentForm('supplier', value)}
+                />
+
+                <ManualInput
+                  label="Valor pago"
+                  value={paymentForm.amount}
+                  onChange={(value) => updatePaymentForm('amount', value)}
+                  placeholder="0,00"
+                />
+
+                <label className="flex h-9 items-center gap-2 rounded-md border border-slate-300 bg-white px-2">
+                  <span className="shrink-0 text-[9px] font-black uppercase tracking-wide text-slate-400">Data</span>
+                  <input
+                    type="date"
+                    value={paymentForm.paidAt}
+                    onChange={(event) => updatePaymentForm('paidAt', event.target.value)}
+                    className="min-w-0 flex-1 bg-transparent text-xs font-bold text-slate-800 outline-none"
+                  />
+                </label>
+
+                <ManualInput
+                  label="Obs."
+                  value={paymentForm.note}
+                  onChange={(value) => updatePaymentForm('note', value)}
+                  placeholder="Opcional"
+                />
+              </div>
+
+              <div className="mt-4 grid gap-2 sm:grid-cols-4">
+                <CompactMetric label="Abertas" value={paymentPreview.count.toLocaleString('pt-BR')} />
+                <CompactMetric label="Saldo" value={money(paymentPreview.openAmount)} tone="amber" />
+                <CompactMetric label="Abater" value={money(paymentPreview.appliedAmount)} tone="emerald" />
+                <CompactMetric label={paymentPreview.leftoverPayment > 0 ? 'Sobra' : 'Restante'} value={money(paymentPreview.leftoverPayment || paymentPreview.remainingDebt)} tone={paymentPreview.leftoverPayment > 0 ? 'blue' : 'slate'} />
+              </div>
+
+              <div className="mt-3 rounded-md border border-emerald-100 bg-emerald-50 px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-emerald-700">
+                O sistema baixa as dividas abertas mais antigas primeiro. Se o valor nao fechar a ultima nota, ela fica aberta com saldo parcial.
+              </div>
+
+              <div className="mt-4 flex justify-end gap-3 border-t-2 border-slate-100 pt-4">
+                <button
+                  type="button"
+                  onClick={closePaymentForm}
+                  className="h-12 min-w-[160px] rounded-2xl bg-slate-100 text-xs font-black uppercase text-slate-500 transition hover:bg-slate-200"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={!canBulkEdit}
+                  title={bulkEditPermissionTitle}
+                  className="h-12 min-w-[220px] rounded-2xl bg-emerald-600 px-4 text-xs font-black uppercase tracking-widest text-white transition hover:bg-emerald-700 disabled:opacity-40"
+                >
+                  Aplicar pagamento
+                </button>
+              </div>
+            </div>
+          </form>
+        </div>
+      )}
+
       {showManualForm && (
         <div
           className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-900/16 p-3 backdrop-blur-sm"
@@ -2806,11 +3388,11 @@ export function TransportDebtManager({
                   <option value="fixed_value">Valor informado</option>
                   <option value="previous_balance">Saldo anterior</option>
                 </SelectFilter>
-                <ManualInput
+                <SupplierDropdown
                   label="Fornecedor"
                   value={manualForm.supplier}
+                  options={supplierOptions}
                   onChange={(value) => updateManualForm('supplier', value)}
-                  placeholder="Ex.: ARMAZEM MATEUS"
                 />
                 <ManualInput
                   label="Tipo"
@@ -3050,6 +3632,51 @@ function SideMetric({ label, value, tone = 'slate' }: { label: string; value: st
   );
 }
 
+function FinancialPositionCard({
+  label,
+  value,
+  debt,
+  credit,
+  tone,
+}: {
+  label: string;
+  value: string;
+  debt: string;
+  credit: string;
+  tone: 'slate' | 'amber' | 'emerald';
+}) {
+  const toneClass = {
+    slate: 'border-slate-200 bg-white text-slate-900',
+    amber: 'border-amber-200 bg-white text-amber-700',
+    emerald: 'border-emerald-200 bg-white text-emerald-700',
+  }[tone];
+  const accentClass = {
+    slate: 'bg-slate-900',
+    amber: 'bg-amber-500',
+    emerald: 'bg-emerald-500',
+  }[tone];
+
+  return (
+    <div className={`overflow-hidden rounded-xl border ${toneClass}`}>
+      <div className={`h-1 w-full ${accentClass}`} />
+      <div className="px-3 py-2">
+        <p className="truncate text-[9px] font-black uppercase tracking-widest text-slate-400">{label}</p>
+        <p className="mt-0.5 truncate text-base font-black">{value}</p>
+        <div className="mt-2 space-y-1 border-t border-slate-100 pt-2">
+          <div className="flex items-center justify-between gap-2 text-[9px] font-black uppercase tracking-wide">
+            <span className="text-slate-400">Divida</span>
+            <span className="truncate text-slate-900">{debt}</span>
+          </div>
+          <div className="flex items-center justify-between gap-2 text-[9px] font-black uppercase tracking-wide">
+            <span className="text-slate-400">Credito</span>
+            <span className="truncate text-emerald-600">{credit}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ActionMenuButton({
   icon,
   label,
@@ -3108,6 +3735,105 @@ function BulkEditRow({
       <div className={checked ? 'opacity-100' : 'pointer-events-none opacity-40'}>
         {children}
       </div>
+    </div>
+  );
+}
+
+function SupplierDropdown({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: string[];
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [searchValue, setSearchValue] = useState('');
+  const filteredOptions = useMemo(() => {
+    const query = normalizeSearch(searchValue);
+    if (!query) return options;
+    return options.filter((option) => normalizeSearch(option).includes(query));
+  }, [options, searchValue]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, [open]);
+
+  return (
+    <div className="relative min-w-0">
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        className={`flex h-9 w-full items-center gap-2 rounded-md border bg-white px-2 text-left transition ${
+          open ? 'border-blue-500 ring-2 ring-blue-100' : 'border-slate-300 hover:border-blue-300'
+        }`}
+      >
+        <span className="shrink-0 text-[9px] font-black uppercase tracking-wide text-slate-400">{label}</span>
+        <span className={`min-w-0 flex-1 truncate text-xs font-bold ${value ? 'text-slate-800' : 'text-slate-300'}`}>
+          {value || 'Selecionar'}
+        </span>
+        <ChevronDown size={14} className={`shrink-0 text-slate-500 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      {open && (
+        <>
+          <div className="fixed inset-0 z-[100]" onClick={() => setOpen(false)} />
+          <div className="absolute left-0 right-0 top-full z-[110] mt-2 overflow-hidden rounded-2xl border border-slate-200 bg-white p-2 shadow-[0_18px_42px_rgba(15,23,42,0.18)]">
+            <label className="mb-2 flex h-10 items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3">
+              <Search size={15} className="text-slate-400" />
+              <input
+                value={searchValue}
+                onChange={(event) => setSearchValue(event.target.value)}
+                placeholder="Buscar fornecedor..."
+                className="h-full min-w-0 flex-1 bg-transparent text-xs font-bold text-slate-800 outline-none placeholder:text-slate-400"
+                autoFocus
+              />
+            </label>
+
+            <div className="max-h-64 overflow-y-auto pr-1">
+              {filteredOptions.map((option) => {
+                const checked = option === value;
+
+                return (
+                  <button
+                    key={option}
+                    type="button"
+                    onClick={() => {
+                      onChange(option);
+                      setOpen(false);
+                      setSearchValue('');
+                    }}
+                    className={`mb-1 flex w-full items-center gap-3 rounded-xl p-3 text-left transition ${
+                      checked ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-blue-50 hover:text-blue-700'
+                    }`}
+                  >
+                    <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border-2 ${
+                      checked ? 'border-white bg-white text-blue-600' : 'border-slate-200 bg-white text-transparent'
+                    }`}>
+                      <CheckCircle2 size={13} strokeWidth={3} />
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-[10px] font-black uppercase">{option}</span>
+                  </button>
+                );
+              })}
+              {filteredOptions.length === 0 && (
+                <div className="rounded-xl border-2 border-dashed border-slate-100 px-3 py-8 text-center text-[10px] font-black uppercase tracking-widest text-slate-300">
+                  Nenhum fornecedor encontrado
+                </div>
+              )}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

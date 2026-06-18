@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase-admin";
-import { requireRole } from "@/lib/server-auth";
+import { requirePerfumePurchasingOrSupreme } from "@/lib/server-auth";
 
 interface CatalogRow {
   erp_code: string;
@@ -74,18 +74,79 @@ function normalizeSearch(...values: string[]) {
     .trim();
 }
 
+function normalizeAttribute(value: string) {
+  const normalized = String(value || "").trim().toUpperCase();
+  if (!normalized || ["VAZIO", "A DEFINIR", "SEM FAB", "SEM FABRICANTE", "0"].includes(normalized)) return "";
+  return normalized;
+}
+
+function normalizeCategoryLevel(value: string) {
+  const normalized = normalizeAttribute(value);
+  if (!normalized || normalized === "PRINCIPAL" || /^[.\s-]+$/.test(normalized)) return "";
+  return normalized;
+}
+
 function normalizeCode(value: string) {
   return value.replace(/[^\dA-Za-z]/g, "").trim();
+}
+
+function firstHeaderIndex(headers: string[], matchers: Array<(header: string) => boolean>) {
+  for (const matcher of matchers) {
+    const index = headers.findIndex(matcher);
+    if (index >= 0) return index;
+  }
+  return -1;
+}
+
+function categoryIndexes(headers: string[]) {
+  return headers
+    .map((header, index) => ({ header, index }))
+    .filter(({ header }) => header.includes("CATEGORIA") && header.includes("NIVEL"))
+    .sort((left, right) => left.header.localeCompare(right.header, "pt-BR", { numeric: true }))
+    .map(({ index }) => index);
+}
+
+function buildClassification(cells: string[], explicitIndex: number, treeIndexes: number[]) {
+  if (explicitIndex >= 0) return normalizeAttribute(String(cells[explicitIndex] || ""));
+
+  const levels = treeIndexes
+    .map((index) => normalizeCategoryLevel(String(cells[index] || "")))
+    .filter(Boolean);
+
+  return Array.from(new Set(levels)).join(" > ");
+}
+
+function decodeCsvBuffer(buffer: ArrayBuffer) {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+  } catch {
+    return new TextDecoder("windows-1252").decode(buffer);
+  }
 }
 
 function parseCatalogCsv(csvText: string, sourceFile: string) {
   const [headerRow = [], ...dataRows] = parseDelimitedRows(csvText);
   const headers = headerRow.map((header) => normalizeSearch(header));
   const erpIndex = headers.findIndex((header) => header.includes("CODIGO PRODUTO") || header === "CODIGO");
-  const descriptionIndex = headers.findIndex((header) => header.includes("DESCRICAO") || header === "PRODUTO" || header.includes("PRODUTO"));
-  const eanIndex = headers.findIndex((header) => header.includes("BARRA") || header.includes("EAN"));
-  const manufacturerIndex = headers.findIndex((header) => header.includes("FABRICANTE"));
-  const classificationIndex = headers.findIndex((header) => header.includes("CLASSIFICACAO"));
+  const descriptionIndex = firstHeaderIndex(headers, [
+    (header) => header.includes("DESCRICAO"),
+    (header) => header === "PRODUTO",
+    (header) => header.includes("PRODUTO"),
+  ]);
+  const eanIndex = firstHeaderIndex(headers, [
+    (header) => header.includes("BARRA"),
+    (header) => header.includes("EAN"),
+  ]);
+  const manufacturerIndex = firstHeaderIndex(headers, [
+    (header) => header.includes("FABRICANTE"),
+    (header) => header === "MARCA" || header.includes("MARCA"),
+    (header) => header.includes("FORNECEDOR"),
+  ]);
+  const classificationIndex = firstHeaderIndex(headers, [
+    (header) => header.includes("CLASSIFICACAO"),
+    (header) => header.includes("CLASSIFICAÇÃO"),
+  ]);
+  const treeIndexes = categoryIndexes(headers);
 
   if (descriptionIndex < 0 || eanIndex < 0) {
     throw new Error("CSV precisa ter pelo menos as colunas Descricao e Barra/EAN.");
@@ -100,8 +161,8 @@ function parseCatalogCsv(csvText: string, sourceFile: string) {
     const erpCode = erpIndex >= 0 ? normalizeCode(String(cells[erpIndex] || "")) : "";
     const description = String(cells[descriptionIndex] || "").trim();
     const ean = normalizeCode(String(cells[eanIndex] || ""));
-    const manufacturer = manufacturerIndex >= 0 ? String(cells[manufacturerIndex] || "").trim().toUpperCase() : "";
-    const classification = classificationIndex >= 0 ? String(cells[classificationIndex] || "").trim().toUpperCase() : "";
+    const manufacturer = manufacturerIndex >= 0 ? normalizeAttribute(String(cells[manufacturerIndex] || "")) : "";
+    const classification = buildClassification(cells, classificationIndex, treeIndexes);
 
     if (!description || !ean) {
       skipped += 1;
@@ -141,7 +202,7 @@ function parseCatalogCsv(csvText: string, sourceFile: string) {
 
 export async function POST(request: Request) {
   try {
-    const auth = await requireRole(request, ["admin"]);
+    const auth = await requirePerfumePurchasingOrSupreme(request);
     if (!auth.ok) return auth.response;
 
     const formData = await request.formData();
@@ -151,7 +212,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Envie um arquivo CSV." }, { status: 400 });
     }
 
-    const csvText = await file.text();
+    const csvText = decodeCsvBuffer(await file.arrayBuffer());
     if (!file.name.toLowerCase().endsWith(".csv")) {
       return NextResponse.json({ error: "Por enquanto importe esta tabela em CSV. No Excel, use Salvar como CSV UTF-8." }, { status: 400 });
     }
@@ -184,7 +245,7 @@ export async function POST(request: Request) {
       const eans = Array.from(new Set(chunk.map((row) => row.ean)));
       const { data: existingProducts, error: existingError } = await supabase
         .from("reallocation_products")
-        .select("erp_code,ean,description,source_file")
+        .select("erp_code,ean,description,manufacturer,classification,source_file")
         .in("ean", eans);
 
       if (existingError) throw existingError;
@@ -193,13 +254,15 @@ export async function POST(request: Request) {
       const attributesByEan = new Map(chunk.map((row) => [row.ean, row]));
       const payload = (existingProducts || []).map((product) => {
         const attribute = attributesByEan.get(product.ean);
+        const manufacturer = attribute?.manufacturer || product.manufacturer || "";
+        const classification = attribute?.classification || product.classification || "";
         return {
           erp_code: product.erp_code,
           ean: product.ean,
           description: product.description || attribute?.description || "",
-          manufacturer: attribute?.manufacturer || "",
-          classification: attribute?.classification || "",
-          search_text: normalizeSearch(product.erp_code, product.ean, product.description || attribute?.description || "", attribute?.manufacturer || "", attribute?.classification || ""),
+          manufacturer,
+          classification,
+          search_text: normalizeSearch(product.erp_code, product.ean, product.description || attribute?.description || "", manufacturer, classification),
           source_file: product.source_file || file.name,
         };
       });

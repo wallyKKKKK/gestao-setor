@@ -7,6 +7,8 @@ import {
   ClipboardList,
   Clock3,
   Database,
+  Eye,
+  EyeOff,
   ListTodo,
   Moon,
   Search,
@@ -21,7 +23,7 @@ import {
 import { NAV_CATEGORIES } from '@/app/constants';
 import { MultiCheckboxFilter } from '@/app/components/multi-checkbox-filter';
 import type { AppSection } from '@/app/components/app-sidebar';
-import type { AppNotification, Profile, UserRole } from '@/lib/types';
+import type { AppNotification, NotificationPreferences, Profile, UserRole } from '@/lib/types';
 
 interface AppShellNavProps {
   section: AppSection;
@@ -47,9 +49,11 @@ interface AppShellNavProps {
   notifications: AppNotification[];
   unreadNotificationIds: string[];
   browserNotificationPermission: NotificationPermission | "unsupported";
+  notificationPreferences: NotificationPreferences;
   onNotificationSelect: (notification: AppNotification) => void;
   onMarkAllNotificationsRead: () => void;
   onRequestBrowserNotifications: () => void;
+  onNotificationPreferenceChange: (key: keyof NotificationPreferences, value: boolean) => void;
 }
 
 const SECTION_NAV_META: Record<AppSection, { icon: LucideIcon; iconClassName: string }> = {
@@ -68,6 +72,18 @@ const NOTIFICATION_GROUPS = [
   { id: 'alerts', label: 'Avisos', helper: 'Comunicados internos' },
   { id: 'system', label: 'Sistema', helper: 'Movimentos e atualizações' },
 ] as const;
+
+const NOTIFICATION_PREFERENCE_OPTIONS: Array<{
+  key: keyof NotificationPreferences;
+  label: string;
+  helper: string;
+}> = [
+  { key: 'morningBriefing', label: 'Bom dia', helper: 'Resumo das 8h' },
+  { key: 'closingSummary', label: 'Fechamento', helper: 'Pendencias das 17h' },
+  { key: 'meetingReminders', label: 'Reunioes', helper: 'Agenda e lembretes' },
+  { key: 'oneOffTasks', label: 'Pontuais', helper: 'Tarefas sem repeticao' },
+  { key: 'teamCompletions', label: 'Equipe', helper: 'Tarefa concluida no setor' },
+];
 
 function getNotificationGroupId(notification: AppNotification) {
   if (
@@ -103,14 +119,17 @@ export function AppShellNav({
   notifications,
   unreadNotificationIds,
   browserNotificationPermission,
+  notificationPreferences,
   onNotificationSelect,
   onMarkAllNotificationsRead,
   onRequestBrowserNotifications,
+  onNotificationPreferenceChange,
 }: AppShellNavProps) {
   const currentProfile = profiles.find((profile) => profile.id === userId);
   const visibleProfiles = profiles.filter((profile) => userRole === 'admin' || profile.sector === userSector);
   const SectionIcon = SECTION_NAV_META[section].icon;
   const [showNotifications, setShowNotifications] = useState(false);
+  const [showNotificationPreferences, setShowNotificationPreferences] = useState(true);
   const unreadCount = unreadNotificationIds.length;
   const groupedNotifications = useMemo(() => {
     const unreadSet = new Set(unreadNotificationIds);
@@ -234,6 +253,52 @@ export function AppShellNav({
                       </button>
                     </div>
                   )}
+
+                  <div className="border-b border-slate-100 bg-white px-3 py-3">
+                    <div className="mb-2 flex items-center justify-between px-1">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Preferencias</p>
+                      <button
+                        type="button"
+                        onClick={() => setShowNotificationPreferences((current) => !current)}
+                        className="inline-flex h-7 items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-2.5 text-[9px] font-black uppercase tracking-widest text-slate-400 transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-600"
+                        aria-expanded={showNotificationPreferences}
+                        aria-label={showNotificationPreferences ? 'Ocultar preferencias de avisos' : 'Mostrar preferencias de avisos'}
+                        title={showNotificationPreferences ? 'Ocultar preferencias' : 'Mostrar preferencias'}
+                      >
+                        {showNotificationPreferences ? <EyeOff size={13} /> : <Eye size={13} />}
+                        Avisos
+                      </button>
+                    </div>
+                    {showNotificationPreferences && (
+                      <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                        {NOTIFICATION_PREFERENCE_OPTIONS.map((option) => {
+                          const enabled = notificationPreferences[option.key];
+
+                          return (
+                            <button
+                              key={option.key}
+                              type="button"
+                              onClick={() => onNotificationPreferenceChange(option.key, !enabled)}
+                              className={`flex items-center justify-between gap-2 rounded-2xl border px-3 py-2 text-left transition ${
+                                enabled
+                                  ? 'border-blue-100 bg-blue-50 text-slate-900'
+                                  : 'border-slate-100 bg-slate-50 text-slate-400'
+                              }`}
+                              aria-pressed={enabled}
+                            >
+                              <span className="min-w-0">
+                                <span className="block truncate text-[10px] font-black uppercase tracking-wide">{option.label}</span>
+                                <span className="mt-0.5 block truncate text-[9px] font-bold uppercase tracking-wide text-slate-400">{option.helper}</span>
+                              </span>
+                              <span className={`relative h-5 w-9 shrink-0 rounded-full transition ${enabled ? 'bg-blue-600' : 'bg-slate-300'}`}>
+                                <span className={`absolute top-1 h-3 w-3 rounded-full bg-white shadow-sm transition ${enabled ? 'left-5' : 'left-1'}`} />
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
 
                   <div className="min-h-0 flex-1 overflow-y-auto p-2">
                     {notifications.length === 0 ? (

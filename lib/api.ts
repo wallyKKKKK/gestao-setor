@@ -56,6 +56,7 @@ interface UpdateTaskInput {
   repeatInterval: number;
   subtasks: Subtask[];
   dueDate?: string | null;
+  isOneOff?: boolean;
   sector?: string;
   googleEventId?: string | null;
   googleEventLink?: string | null;
@@ -729,6 +730,7 @@ export async function updateTask(input: UpdateTaskInput) {
       repeat_interval: input.repeatInterval,
       subtasks: input.subtasks,
       ...(input.dueDate !== undefined ? { due_date: input.dueDate } : {}),
+      ...(input.isOneOff !== undefined ? { is_one_off: input.isOneOff } : {}),
       ...(input.sector !== undefined ? { sector: input.sector } : {}),
       ...(input.googleEventId !== undefined ? { google_event_id: input.googleEventId } : {}),
       ...(input.googleEventLink !== undefined ? { google_event_link: input.googleEventLink } : {}),

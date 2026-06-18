@@ -9,7 +9,7 @@ interface ProfileModalProps {
 
 export function ProfileModal({ newName, onNameChange, onSave, onClose }: ProfileModalProps) {
   return (
-    <div className="fixed inset-0 bg-slate-900/16 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
+    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-slate-900/16 p-4 backdrop-blur-sm animate-in fade-in">
       <div className="w-full max-w-sm rounded-[30px] border border-slate-200 bg-white p-8 text-center shadow-[0_24px_70px_rgba(15,23,42,0.22)]">
         <h2 className="text-2xl font-black uppercase mb-6 tracking-tighter">Meu Perfil</h2>
         <input
