@@ -345,20 +345,31 @@ async function fetchSnapshotStockItems(snapshotId: string) {
   const supabase = getSupabaseAdmin();
   const rows: StockItem[] = [];
   const chunkSize = 1000;
+  let lastId = "";
 
-  for (let from = 0; ; from += chunkSize) {
-    const to = from + chunkSize - 1;
-    const { data, error } = await supabase
+  for (;;) {
+    let query = supabase
       .from("reallocation_stock_items")
       .select("*")
       .eq("snapshot_id", snapshotId)
-      .range(from, to);
+      .order("id", { ascending: true })
+      .limit(chunkSize);
+
+    if (lastId) {
+      query = query.gt("id", lastId);
+    }
+
+    const { data, error } = await query;
 
     if (error) throw error;
 
-    const chunk = (data || []) as StockItem[];
+    const chunk = (data || []) as Array<StockItem & { id?: string | null }>;
     rows.push(...chunk);
     if (chunk.length < chunkSize) break;
+
+    const nextLastId = chunk[chunk.length - 1]?.id;
+    if (!nextLastId || nextLastId === lastId) break;
+    lastId = nextLastId;
   }
 
   return rows;
@@ -420,16 +431,21 @@ async function fetchProductEansByAttributes(filters: {
   if (classifications.length === 0 && manufacturers.length === 0) return [];
 
   const supabase = getSupabaseAdmin();
-  const rows: Array<{ ean: string | null }> = [];
+  const rows: Array<{ id: string | null; ean: string | null }> = [];
   const chunkSize = 1000;
+  let lastId = "";
 
-  for (let from = 0; ; from += chunkSize) {
-    const to = from + chunkSize - 1;
+  for (;;) {
     let query = supabase
       .from("reallocation_products")
-      .select("ean")
+      .select("id,ean")
       .not("ean", "is", null)
-      .range(from, to);
+      .order("id", { ascending: true })
+      .limit(chunkSize);
+
+    if (lastId) {
+      query = query.gt("id", lastId);
+    }
 
     if (manufacturers.length === 1) {
       query = query.ilike("manufacturer", `%${manufacturers[0]}%`);
@@ -446,9 +462,13 @@ async function fetchProductEansByAttributes(filters: {
     const { data, error } = await query;
     if (error) throw error;
 
-    const chunk = (data || []) as Array<{ ean: string | null }>;
+    const chunk = (data || []) as Array<{ id: string | null; ean: string | null }>;
     rows.push(...chunk);
     if (chunk.length < chunkSize) break;
+
+    const nextLastId = chunk[chunk.length - 1]?.id;
+    if (!nextLastId || nextLastId === lastId) break;
+    lastId = nextLastId;
   }
 
   return Array.from(new Set(rows.map((row) => row.ean).filter((ean): ean is string => Boolean(ean))));
@@ -507,6 +527,7 @@ function windowlessTimeout(callback: () => void, delay: number) {
 
 function shouldUsePythonEngine() {
   const engine = String(process.env.REALLOCATION_ENGINE || "").trim().toLowerCase();
+  if (process.env.NODE_ENV === "production" && process.env.REALLOCATION_ENGINE_FORCE_PYTHON !== "1") return false;
   if (engine === "python") return true;
   if (engine === "typescript") return false;
 

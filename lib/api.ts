@@ -513,23 +513,44 @@ export async function fetchLatestReallocationStockSnapshot() {
 }
 
 export async function fetchReallocationStockItems(snapshotId: string, searchTerm = "", limit = 200) {
-  let query = supabase
-    .from("reallocation_stock_items")
-    .select("*")
-    .eq("snapshot_id", snapshotId)
-    .order("store_code", { ascending: true })
-    .order("product_description", { ascending: true })
-    .limit(limit);
-
   const normalizedSearch = searchTerm.trim();
-  if (normalizedSearch) {
-    const safeSearch = normalizedSearch.replace(/[%_]/g, "");
-    query = query.or(`store_code.ilike.%${safeSearch}%,store_name.ilike.%${safeSearch}%,ean.ilike.%${safeSearch}%,erp_code.ilike.%${safeSearch}%,product_description.ilike.%${safeSearch}%,curve.ilike.%${safeSearch}%`);
+  const rows: ReallocationStockItem[] = [];
+  const pageSize = Math.min(1000, Math.max(1, limit));
+  let lastId = "";
+
+  while (rows.length < limit) {
+    let query = supabase
+      .from("reallocation_stock_items")
+      .select("*")
+      .eq("snapshot_id", snapshotId)
+      .order("id", { ascending: true })
+      .limit(Math.min(pageSize, limit - rows.length));
+
+    if (lastId) {
+      query = query.gt("id", lastId);
+    }
+
+    if (normalizedSearch) {
+      const safeSearch = normalizedSearch.replace(/[%_]/g, "");
+      query = query.or(`store_code.ilike.%${safeSearch}%,store_name.ilike.%${safeSearch}%,ean.ilike.%${safeSearch}%,erp_code.ilike.%${safeSearch}%,product_description.ilike.%${safeSearch}%,curve.ilike.%${safeSearch}%`);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    const chunk = (data || []) as ReallocationStockItem[];
+    rows.push(...chunk);
+    if (chunk.length < pageSize) break;
+
+    const nextLastId = chunk[chunk.length - 1]?.id;
+    if (!nextLastId || nextLastId === lastId) break;
+    lastId = nextLastId;
   }
 
-  const { data, error } = await query;
-  if (error) throw error;
-  return (data || []) as ReallocationStockItem[];
+  return rows.sort((left, right) => (
+    left.store_code.localeCompare(right.store_code)
+    || left.product_description.localeCompare(right.product_description)
+  ));
 }
 
 export async function updateProfileName(userId: string, fullName: string) {
