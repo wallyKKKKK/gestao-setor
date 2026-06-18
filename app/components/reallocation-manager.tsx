@@ -147,6 +147,9 @@ interface SuggestionDiagnostic {
   missingErpCode: number;
   blockedDifferentUf: number;
   blockedRoute: number;
+  attributeProducts: number;
+  filteredProducts: number;
+  branchLogistics: number;
   suggestions: number;
 }
 
@@ -1159,6 +1162,9 @@ export function ReallocationManager({
         missingErpCode: Number(data.missingErpCode || 0),
         blockedDifferentUf: Number(data.blockedDifferentUf || 0),
         blockedRoute: Number(data.blockedRoute || 0),
+        attributeProducts: Number(data.attributeProducts || 0),
+        filteredProducts: Number(data.filteredProducts || 0),
+        branchLogistics: Number(data.branchLogistics || 0),
         suggestions: nextSuggestions.length,
       });
       if (nextSuggestions.length === 0) {
@@ -2200,6 +2206,12 @@ export function ReallocationManager({
                 </span>
                 <span className="rounded-md bg-slate-100 px-2 py-1 text-slate-500">
                   {suggestionDiagnostic.productGroups.toLocaleString('pt-BR')} produtos
+                </span>
+                <span className="rounded-md bg-slate-100 px-2 py-1 text-slate-500">
+                  {suggestionDiagnostic.filteredProducts.toLocaleString('pt-BR')} filtro prod.
+                </span>
+                <span className="rounded-md bg-slate-100 px-2 py-1 text-slate-500">
+                  {suggestionDiagnostic.branchLogistics.toLocaleString('pt-BR')} rotas
                 </span>
                 <span className="rounded-md bg-violet-50 px-2 py-1 text-violet-700">
                   {suggestionDiagnostic.suggestions.toLocaleString('pt-BR')} sugestões

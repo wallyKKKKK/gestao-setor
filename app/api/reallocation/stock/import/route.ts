@@ -19,6 +19,13 @@ interface StockRow {
   confirmed_transfer: number;
 }
 
+interface StockProductAttribute {
+  ean: string;
+  description: string;
+  manufacturer: string;
+  classification: string;
+}
+
 function parseDelimitedRows(csvText: string) {
   const rows: string[][] = [];
   let current = "";
@@ -71,6 +78,17 @@ function normalizeSearch(value: string) {
     .toUpperCase()
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function normalizeProductSearch(...values: string[]) {
+  return values
+    .map((value) => normalizeSearch(value))
+    .filter(Boolean)
+    .join(" ");
+}
+
+function normalizeAttribute(value: string) {
+  return normalizeSearch(value);
 }
 
 function normalizeHeader(value: string) {
@@ -245,6 +263,11 @@ function parseStockRows(allRows: string[][]) {
   const curveIndex = findHeader(headers, ["CURVA QTD", "CURVA ABC QTD", "CURVA ABC", "CURVA"], {
     reject: ["VALOR"],
   });
+  const manufacturerIndex = findHeader(headers, ["FABRICANTE", "MARCA"]);
+  const classificationIndex = findHeader(headers, ["CLASSIFICACAO PRINCIPAL", "CLASSIFICACAO", "CATEGORIA", "GRUPO"], {
+    reject: ["CURVA"],
+    prefer: ["CLASSIFICACAO PRINCIPAL"],
+  });
   const confirmedPurchaseIndex = findHeader(headers, ["COMPRA CONFIRMADA", "COMPRA CONF", "COMPRA"]);
   const confirmedTransferIndex = findHeader(headers, ["TRANSF CONFIRMADA", "TRANSFERENCIA CONFIRMADA", "TRANSF CONF", "TRANSFERENCIA CONF"]);
 
@@ -253,6 +276,7 @@ function parseStockRows(allRows: string[][]) {
   }
 
   let skipped = 0;
+  const attributesByEan = new Map<string, StockProductAttribute>();
   const rows = dataRows.flatMap((cells) => {
     const storeCode = normalizeStoreCode(requiredCell(cells, storeCodeIndex));
     const storeName = requiredCell(cells, storeNameIndex).toUpperCase();
@@ -271,6 +295,18 @@ function parseStockRows(allRows: string[][]) {
     const monthlyAvgSales = normalizeMonthlyAvgSales(
       dailyAvgSales > 0 ? dailyAvgSales * 30 : monthlyAvgSalesFromColumn,
     );
+    const manufacturer = normalizeAttribute(requiredCell(cells, manufacturerIndex));
+    const classification = normalizeAttribute(requiredCell(cells, classificationIndex));
+    const currentAttribute = attributesByEan.get(ean);
+
+    if (manufacturer || classification) {
+      attributesByEan.set(ean, {
+        ean,
+        description: currentAttribute?.description || productDescription,
+        manufacturer: manufacturer || currentAttribute?.manufacturer || "",
+        classification: classification || currentAttribute?.classification || "",
+      });
+    }
 
     return [{
       store_code: storeCode,
@@ -287,7 +323,7 @@ function parseStockRows(allRows: string[][]) {
     }];
   });
 
-  return { rows, skipped };
+  return { rows, skipped, attributes: Array.from(attributesByEan.values()) };
 }
 
 export async function POST(request: Request) {
@@ -317,7 +353,7 @@ export async function POST(request: Request) {
     }
 
     importStage = "ler arquivo de estoque";
-    const { rows, skipped } = isExcel
+    const { rows, skipped, attributes } = isExcel
       ? parseStockWorkbook(await file.arrayBuffer())
       : parseStockCsv(await file.text());
     if (!rows.length) {
@@ -338,13 +374,21 @@ export async function POST(request: Request) {
     importStage = "vincular EAN ao codigo ERP";
     const eans = Array.from(new Set(rows.map((row) => row.ean)));
     const erpByEan = new Map<string, string>();
+    const productsByEan = new Map<string, Array<{
+      ean: string;
+      erp_code: string;
+      description: string | null;
+      manufacturer: string | null;
+      classification: string | null;
+      source_file: string | null;
+    }>>();
     const lookupChunkSize = 500;
 
     for (let index = 0; index < eans.length; index += lookupChunkSize) {
       const chunk = eans.slice(index, index + lookupChunkSize);
       const { data: products, error } = await supabase
         .from("reallocation_products")
-        .select("ean,erp_code")
+        .select("ean,erp_code,description,manufacturer,classification,source_file")
         .in("ean", chunk);
 
       if (error) throw error;
@@ -352,7 +396,43 @@ export async function POST(request: Request) {
         if (product.ean && product.erp_code && !erpByEan.has(product.ean)) {
           erpByEan.set(product.ean, product.erp_code);
         }
+        if (product.ean && product.erp_code) {
+          productsByEan.set(product.ean, [...(productsByEan.get(product.ean) || []), product]);
+        }
       });
+    }
+
+    importStage = "atualizar atributos dos produtos";
+    const attributesByEan = new Map(attributes.map((attribute) => [attribute.ean, attribute]));
+    const productAttributePayload = Array.from(attributesByEan.values()).flatMap((attribute) => {
+      const products = productsByEan.get(attribute.ean) || [];
+
+      return products.map((product) => {
+        const manufacturer = attribute.manufacturer || product.manufacturer || "";
+        const classification = attribute.classification || product.classification || "";
+        const description = product.description || attribute.description || "";
+
+        return {
+          erp_code: product.erp_code,
+          ean: product.ean,
+          description,
+          manufacturer,
+          classification,
+          search_text: normalizeProductSearch(product.erp_code, product.ean, description, manufacturer, classification),
+          source_file: product.source_file || file.name.normalize("NFC"),
+        };
+      });
+    });
+    let enrichedProducts = 0;
+
+    for (let index = 0; index < productAttributePayload.length; index += lookupChunkSize) {
+      const chunk = productAttributePayload.slice(index, index + lookupChunkSize);
+      const { error } = await supabase
+        .from("reallocation_products")
+        .upsert(chunk, { onConflict: "erp_code,ean" });
+
+      if (error) throw error;
+      enrichedProducts += chunk.length;
     }
 
     const payload: StockRow[] = rows.map((row) => ({
@@ -378,6 +458,7 @@ export async function POST(request: Request) {
       imported: payload.length,
       matchedProducts,
       unmatchedProducts: payload.length - matchedProducts,
+      enrichedProducts,
       skipped,
     });
   } catch (error) {

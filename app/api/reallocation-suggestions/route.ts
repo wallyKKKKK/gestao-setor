@@ -529,11 +529,22 @@ export async function POST(request: Request) {
       },
       stockItems,
     };
+    const diagnostics = {
+      attributeProducts: attributeProducts.length,
+      filteredProducts: Array.isArray(calculationPayload.filters.products) ? calculationPayload.filters.products.length : 0,
+      branchLogistics: Object.keys(calculationPayload.branchLogistics).length,
+    };
 
     try {
-      return NextResponse.json(await calculateWithPython(calculationPayload));
+      return NextResponse.json({
+        ...await calculateWithPython(calculationPayload),
+        ...diagnostics,
+      });
     } catch {
-      return NextResponse.json(calculate(calculationPayload));
+      return NextResponse.json({
+        ...calculate(calculationPayload),
+        ...diagnostics,
+      });
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Erro ao gerar sugestoes.";
