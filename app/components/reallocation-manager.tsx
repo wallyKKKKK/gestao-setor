@@ -150,6 +150,7 @@ interface SuggestionDiagnostic {
   attributeProducts: number;
   filteredProducts: number;
   branchLogistics: number;
+  engineNote?: string;
   suggestions: number;
 }
 
@@ -1165,6 +1166,7 @@ export function ReallocationManager({
         attributeProducts: Number(data.attributeProducts || 0),
         filteredProducts: Number(data.filteredProducts || 0),
         branchLogistics: Number(data.branchLogistics || 0),
+        engineNote: typeof data.engineNote === 'string' ? data.engineNote : undefined,
         suggestions: nextSuggestions.length,
       });
       if (nextSuggestions.length === 0) {

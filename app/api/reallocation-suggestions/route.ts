@@ -505,6 +505,14 @@ function windowlessTimeout(callback: () => void, delay: number) {
   return setTimeout(callback, delay);
 }
 
+function shouldUsePythonEngine() {
+  const engine = String(process.env.REALLOCATION_ENGINE || "").trim().toLowerCase();
+  if (engine === "python") return true;
+  if (engine === "typescript") return false;
+
+  return !process.env.VERCEL;
+}
+
 export async function POST(request: Request) {
   const auth = await requirePerfumePurchasingOrSupreme(request);
   if (!auth.ok) return auth.response;
@@ -535,15 +543,28 @@ export async function POST(request: Request) {
       branchLogistics: Object.keys(calculationPayload.branchLogistics).length,
     };
 
+    if (!shouldUsePythonEngine()) {
+      return NextResponse.json({
+        ...calculate(calculationPayload),
+        ...diagnostics,
+        engineNote: "Motor TypeScript usado no ambiente hospedado.",
+      });
+    }
+
     try {
       return NextResponse.json({
         ...await calculateWithPython(calculationPayload),
         ...diagnostics,
       });
-    } catch {
+    } catch (pythonError) {
+      const engineNote = pythonError instanceof Error
+        ? `Python indisponivel: ${pythonError.message}`
+        : "Python indisponivel.";
+
       return NextResponse.json({
         ...calculate(calculationPayload),
         ...diagnostics,
+        engineNote,
       });
     }
   } catch (error) {
