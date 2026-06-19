@@ -467,6 +467,11 @@ export function ReallocationManager({
   onPermissionBlocked,
 }: ReallocationManagerProps) {
   const initialPreferences = useMemo(() => loadReallocationPreferences(), []);
+  const showReallocationTechDiagnostics = useMemo(() => {
+    if (typeof window === 'undefined') return false;
+    return window.location.search.includes('debugRemanejamento=1')
+      || window.localStorage.getItem('reallocation-debug') === '1';
+  }, []);
   const [products, setProducts] = useState<ReallocationProduct[]>([]);
   const [branches, setBranches] = useState<PricingBranch[]>([]);
   const searchTerm = '';
@@ -2204,13 +2209,15 @@ export function ReallocationManager({
             )}
             {suggestionMessage && (
               <span className="max-w-full truncate rounded-md border border-violet-100 bg-violet-50 px-2 py-1 text-violet-700">
-                {suggestionMessage}
+                {suggestionMessage.replace(/\s+pelo motor [^.]+/i, '')}
               </span>
             )}
-            <span className="rounded-md bg-slate-100 px-2 py-1 text-slate-500">
-              {REALLOCATION_CLIENT_VERSION}
-            </span>
-            {suggestionDiagnostic && (
+            {showReallocationTechDiagnostics && (
+              <span className="rounded-md bg-slate-100 px-2 py-1 text-slate-500">
+                {REALLOCATION_CLIENT_VERSION}
+              </span>
+            )}
+            {showReallocationTechDiagnostics && suggestionDiagnostic && (
               <>
                 <span className="rounded-md bg-slate-100 px-2 py-1 text-slate-500">
                   {suggestionDiagnostic.engine === 'python' ? 'Python' : suggestionDiagnostic.engine === 'fallback' ? 'Fallback' : 'TypeScript'}
