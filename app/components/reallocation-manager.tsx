@@ -1022,10 +1022,14 @@ export function ReallocationManager({
     const normalizedTerm = normalizeAutocompleteText(term);
     if (normalizedTerm.length < 2) return [];
 
-    const rows = await fetchReallocationProducts(term, 24);
+    const searchTerms = Array.from(new Set([term, ...autocompleteTokens(term).filter((token) => token.length >= 2)]))
+      .slice(0, 4);
+    const rows = (await Promise.all(searchTerms.map((searchTerm) => fetchReallocationProducts(searchTerm, 24))))
+      .flat();
+    const uniqueRows = Array.from(new Map(rows.map((product) => [`${product.erp_code}:${product.ean}`, product])).values());
 
     return rankAutocompleteOptions(
-      rows.map((product) => ({
+      uniqueRows.map((product) => ({
         id: `${product.erp_code}:${product.ean}`,
         columns: [product.description, product.erp_code, product.ean || '-', product.manufacturer || '-', product.classification || '-'],
         searchText: `${product.description} ${product.erp_code} ${product.ean} ${product.manufacturer} ${product.classification}`.toLowerCase(),
@@ -1040,7 +1044,9 @@ export function ReallocationManager({
     const normalizedTerm = normalizeAutocompleteText(term);
     if (normalizedTerm.length < 2) return [];
 
-    const rows = await fetchReallocationAttributeOptions('manufacturer', term, 60);
+    const searchTerms = Array.from(new Set([term, ...autocompleteTokens(term).filter((token) => token.length >= 2)]))
+      .slice(0, 4);
+    const rows = Array.from(new Set((await Promise.all(searchTerms.map((searchTerm) => fetchReallocationAttributeOptions('manufacturer', searchTerm, 60)))).flat()));
     return rankAutocompleteOptions(
       rows.map((manufacturer) => ({
         id: manufacturer,
@@ -1056,7 +1062,9 @@ export function ReallocationManager({
     const normalizedTerm = normalizeAutocompleteText(term);
     if (normalizedTerm.length < 2) return [];
 
-    const rows = await fetchReallocationAttributeOptions('classification', term, 60);
+    const searchTerms = Array.from(new Set([term, ...autocompleteTokens(term).filter((token) => token.length >= 2)]))
+      .slice(0, 4);
+    const rows = Array.from(new Set((await Promise.all(searchTerms.map((searchTerm) => fetchReallocationAttributeOptions('classification', searchTerm, 60)))).flat()));
     return rankAutocompleteOptions(
       rows.map((classification) => ({
         id: classification,
@@ -2823,19 +2831,29 @@ function normalizeAutocompleteText(value: string) {
   return value
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9]+/g, ' ')
     .toLowerCase()
+    .replace(/\s+/g, ' ')
     .trim();
+}
+
+function autocompleteTokens(value: string) {
+  return normalizeAutocompleteText(value).split(' ').filter(Boolean);
 }
 
 function autocompleteScore(item: QuickFilterItem, query: string) {
   const normalizedColumns = item.columns.map(normalizeAutocompleteText);
   const normalizedSearch = normalizeAutocompleteText(item.searchText);
+  const queryTokens = autocompleteTokens(query);
+  const searchTokens = normalizedSearch.split(' ').filter(Boolean);
 
   if (!query) return 0;
   if (normalizedColumns.some((column) => column === query)) return 0;
   if (normalizedColumns.some((column) => column.startsWith(query))) return 1;
-  if (normalizedSearch.split(/\s+/).some((word) => word.startsWith(query))) return 2;
+  if (searchTokens.some((word) => word.startsWith(query))) return 2;
   if (normalizedSearch.includes(query)) return 3;
+  if (queryTokens.length > 1 && queryTokens.every((token) => searchTokens.some((word) => word.startsWith(token)))) return 4;
+  if (queryTokens.length > 1 && queryTokens.every((token) => normalizedSearch.includes(token))) return 5;
   return 99;
 }
 
@@ -2883,7 +2901,7 @@ function QuickFilterBox({
   const availableOptions = onQuickSearch && normalizedQuickValue ? remoteOptions : options;
   const visibleOptions = useMemo(() => {
     if (hideInitialOptions && !normalizedQuickValue) return [];
-    return rankAutocompleteOptions(availableOptions, normalizedQuickValue, 12);
+    return rankAutocompleteOptions(availableOptions, normalizedQuickValue, 18);
   }, [availableOptions, hideInitialOptions, normalizedQuickValue]);
   const selectedIds = useMemo(() => new Set(selected.map((item) => item.id)), [selected]);
   const listOptions = useMemo(() => {
@@ -3045,6 +3063,20 @@ function QuickFilterBox({
       return next;
     });
   };
+  const removeSelectedItem = (itemId: string) => {
+    onChange(selected.filter((item) => item.id !== itemId));
+    setMarkedIds((current) => {
+      if (!current.has(itemId)) return current;
+      const next = new Set(current);
+      next.delete(itemId);
+      return next;
+    });
+  };
+  const clearQuickValue = () => {
+    setQuickValue('');
+    setRemoteOptions([]);
+    setSearching(false);
+  };
 
   const summary = selected.length === 0
     ? 'Nenhum item filtrado.'
@@ -3092,8 +3124,35 @@ function QuickFilterBox({
             </button>
           </div>
 
-          <div className="p-2 grid grid-cols-1 md:grid-cols-[1fr_36px] items-center gap-2 border-b border-slate-200 bg-slate-50">
+          <div className="grid grid-cols-1 gap-2 border-b border-slate-200 bg-slate-50 p-2">
+            {selected.length > 0 && (
+              <div className="flex max-h-16 flex-wrap gap-1 overflow-auto rounded-md border border-violet-100 bg-white p-1.5">
+                {selected.slice(0, 10).map((item) => (
+                  <span
+                    key={`selected-${item.id}`}
+                    className="inline-flex max-w-[180px] items-center gap-1 rounded-md border border-violet-200 bg-violet-50 px-2 py-1 text-[10px] font-black uppercase text-violet-700"
+                  >
+                    <span className="truncate">{item.columns[0]}</span>
+                    <button
+                      type="button"
+                      onClick={() => removeSelectedItem(item.id)}
+                      className="rounded text-violet-500 hover:text-red-600"
+                      aria-label={`Remover ${item.columns[0]}`}
+                    >
+                      <X size={11} />
+                    </button>
+                  </span>
+                ))}
+                {selected.length > 10 && (
+                  <span className="rounded-md bg-slate-100 px-2 py-1 text-[10px] font-black uppercase text-slate-500">
+                    +{selected.length - 10}
+                  </span>
+                )}
+              </div>
+            )}
+            <div className="grid grid-cols-1 items-center gap-2 md:grid-cols-[1fr_36px]">
             <div className="relative">
+              <Search size={14} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" />
               <input
                 value={quickValue}
                 onChange={(event) => setQuickValue(event.target.value)}
@@ -3104,8 +3163,18 @@ function QuickFilterBox({
                   }
                 }}
                 placeholder={placeholder}
-                className="h-8 w-full rounded-md border border-slate-300 bg-white px-2 pr-16 text-xs font-bold outline-none focus:border-violet-500"
+                className="h-8 w-full rounded-md border border-slate-300 bg-white pl-8 pr-20 text-xs font-bold outline-none focus:border-violet-500"
               />
+              {quickValue && (
+                <button
+                  type="button"
+                  onClick={clearQuickValue}
+                  className="absolute right-14 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded bg-slate-100 text-slate-400 hover:bg-red-50 hover:text-red-600"
+                  aria-label="Limpar busca"
+                >
+                  <X size={11} />
+                </button>
+              )}
               {searching && (
                 <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400">
                   buscando
@@ -3115,6 +3184,7 @@ function QuickFilterBox({
             <button type="button" onClick={addQuickValue} className="h-8 w-full md:w-9 rounded-md bg-violet-600 text-white flex items-center justify-center">
               <Plus size={14} />
             </button>
+            </div>
           </div>
 
           <div className="max-h-64 min-h-40 overflow-auto border-b border-slate-200 bg-white">
@@ -3184,14 +3254,14 @@ function QuickFilterBox({
             </div>
             {listOptions.length === 0 && (
               <div className="flex h-20 items-center justify-center rounded-md bg-slate-50 px-3 text-center text-xs font-bold text-slate-400">
-                {searching ? 'Buscando...' : normalizedQuickValue ? (allowManual ? 'Nenhum resultado. Aperte + para usar o texto digitado.' : 'Nenhum resultado direto.') : 'Digite pelo menos 2 caracteres para buscar.'}
+                {searching ? 'Buscando...' : normalizedQuickValue ? (allowManual ? 'Nenhum resultado direto. Use + para adicionar o texto digitado.' : 'Nenhum resultado encontrado para essa busca.') : selected.length > 0 ? 'Digite para buscar mais itens ou marque os selecionados para remover.' : 'Digite pelo menos 2 caracteres para buscar.'}
               </div>
             )}
           </div>
 
           <div className="p-2 flex flex-wrap items-center justify-between gap-2 bg-white">
             <span className="text-[10px] font-black uppercase text-slate-400">
-              {visibleMarkedIds.size} marcado{visibleMarkedIds.size === 1 ? '' : 's'}
+              {selected.length} selecionado{selected.length === 1 ? '' : 's'} - {visibleMarkedIds.size} marcado{visibleMarkedIds.size === 1 ? '' : 's'}
             </span>
             <div className="flex items-center gap-2">
               <button
