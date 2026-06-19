@@ -289,7 +289,9 @@ function parseStockRows(allRows: string[][]) {
     }
 
     const stock = parseNumber(requiredCell(cells, stockIndex));
-    const confirmedStock = parseNumber(requiredCell(cells, confirmedStockIndex));
+    const confirmedStock = confirmedStockIndex >= 0
+      ? parseNumber(requiredCell(cells, confirmedStockIndex))
+      : stock;
     const dailyAvgSales = parseNumber(requiredCell(cells, dailyAvgIndex));
     const monthlyAvgSalesFromColumn = parseNumber(requiredCell(cells, monthlyAvgIndex));
     const monthlyAvgSales = normalizeMonthlyAvgSales(

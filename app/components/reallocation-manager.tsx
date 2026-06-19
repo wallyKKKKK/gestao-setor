@@ -119,6 +119,7 @@ interface TransferSuggestion {
   quantity: number;
   maxQuantity: number;
   originStock: number;
+  originAvailableStock: number;
   originConfirmedStock: number;
   originMonthlyAvgSales: number;
   originCurve: string;
@@ -173,8 +174,8 @@ interface ReallocationAuditLog {
 
 const REALLOCATION_AUDIT_STORAGE_KEY = 'reallocation-audit-v1';
 const REALLOCATION_PREFERENCES_STORAGE_KEY = 'reallocation-preferences-v1';
-const REALLOCATION_API_VERSION = 'reallocation-api-2026-06-19-v3';
-const REALLOCATION_CLIENT_VERSION = 'reallocation-front-2026-06-19-v4';
+const REALLOCATION_API_VERSION = 'reallocation-api-2026-06-19-v4';
+const REALLOCATION_CLIENT_VERSION = 'reallocation-front-2026-06-19-v5';
 
 const SUGGESTION_COLUMNS = [
   { key: 'selection', label: '', align: 'center', width: 52 },
@@ -366,6 +367,16 @@ function getAdjustedDestinationDays(suggestion: TransferSuggestion, allocatedQua
   return (currentCoverageStock + allocatedQuantity) / dailySales;
 }
 
+function getOriginAvailableStock(suggestion: TransferSuggestion) {
+  const explicitLimit = Number(suggestion.originAvailableStock);
+  if (Number.isFinite(explicitLimit)) return Math.max(0, explicitLimit);
+
+  const stock = Math.max(0, Number(suggestion.originStock || 0));
+  const confirmedStock = Number(suggestion.originConfirmedStock);
+  if (!Number.isFinite(confirmedStock)) return stock;
+  return Math.min(stock, Math.max(0, confirmedStock));
+}
+
 function suggestionIdentityKey(suggestion: TransferSuggestion) {
   return [
     suggestion.ean,
@@ -382,7 +393,7 @@ function clampSuggestionQuantity(
 ) {
   const originStockLimit = Math.max(
     0,
-    Math.floor(Number(targetSuggestion.originStock || 0)),
+    Math.floor(getOriginAvailableStock(targetSuggestion)),
   );
   const targetKey = `${targetSuggestion.ean}:${targetSuggestion.originCode}`;
   const allocatedElsewhere = suggestions.reduce((sum, suggestion) => {
@@ -771,7 +782,7 @@ export function ReallocationManager({
 
     for (const suggestion of activeSuggestionRows) {
       const key = `${suggestion.ean}:${suggestion.originCode}`;
-      const originStockLimit = Math.max(0, Number(suggestion.originStock || 0));
+      const originStockLimit = getOriginAvailableStock(suggestion);
       const current = allocations.get(key) || {
         allocated: 0,
         stock: originStockLimit,
@@ -816,7 +827,7 @@ export function ReallocationManager({
 
     for (const suggestion of confirmedSuggestions) {
       const key = `${suggestion.ean}:${suggestion.originCode}`;
-      const originStockLimit = Math.max(0, Number(suggestion.originStock || 0));
+      const originStockLimit = getOriginAvailableStock(suggestion);
       const current = allocations.get(key) || {
         allocated: 0,
         stock: originStockLimit,

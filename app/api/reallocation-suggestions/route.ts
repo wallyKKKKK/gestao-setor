@@ -5,7 +5,7 @@ import { requirePerfumePurchasingOrSupreme } from "@/lib/server-auth";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const REALLOCATION_API_VERSION = "reallocation-api-2026-06-19-v3";
+const REALLOCATION_API_VERSION = "reallocation-api-2026-06-19-v4";
 
 function reallocationJson(payload: Record<string, unknown>, init?: ResponseInit) {
   const headers = new Headers(init?.headers);
@@ -40,6 +40,7 @@ type BranchLogistics = Record<string, {
 
 type SuggestionOrigin = {
   item: StockItem;
+  availableStock: number;
   remaining: number;
 };
 
@@ -90,6 +91,17 @@ function availableStock(item: StockItem) {
 
 function realStock(item: StockItem) {
   return Math.max(0, numberValue(item.stock));
+}
+
+function originAvailableStock(item: StockItem) {
+  const stock = realStock(item);
+  const confirmedStock = item.confirmed_stock;
+
+  if (confirmedStock === null || confirmedStock === undefined || String(confirmedStock).trim() === "") {
+    return stock;
+  }
+
+  return Math.min(stock, Math.max(0, numberValue(confirmedStock)));
 }
 
 function normalizeMonthlyAvgSales(value: number) {
@@ -179,6 +191,7 @@ function buildSuggestion(ean: string, origin: SuggestionOrigin, destination: Sug
     quantity,
     maxQuantity: quantity,
     originStock: numberValue(originItem.stock),
+    originAvailableStock: origin.availableStock,
     originConfirmedStock: numberValue(originItem.confirmed_stock),
     originMonthlyAvgSales: normalizeMonthlyAvgSales(numberValue(originItem.monthly_avg_sales)),
     originCurve: originItem.curve || "",
@@ -255,7 +268,7 @@ function calculate(payload: {
       if (selectedOrigins.size > 0 && !selectedOrigins.has(code)) continue;
       if (selectedOriginCurves.size > 0 && !selectedOriginCurves.has(stockCurve(item.curve))) continue;
 
-      const stock = realStock(item);
+      const stock = originAvailableStock(item);
       if (stock <= 0) continue;
 
       const dailySales = ownDailySales(item);
@@ -266,10 +279,10 @@ function calculate(payload: {
         origins.push({
           item: {
             ...item,
-            stock,
             monthly_avg_sales: dailyToMonthly(dailySales),
             stock_days: stockDays,
           },
+          availableStock: stock,
           remaining,
         });
       }

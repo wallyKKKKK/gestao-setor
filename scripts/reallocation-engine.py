@@ -47,6 +47,14 @@ def real_stock(item):
     return max(0, number(item.get("stock")))
 
 
+def origin_available_stock(item):
+    stock = real_stock(item)
+    confirmed_stock = item.get("confirmed_stock")
+    if confirmed_stock is None or str(confirmed_stock).strip() == "":
+        return stock
+    return min(stock, max(0, number(confirmed_stock)))
+
+
 def normalize_monthly_avg_sales(value):
     parsed = number(value)
     if parsed <= 0:
@@ -147,6 +155,7 @@ def build_suggestion(ean, origin, destination, quantity, need, priority, index):
         "quantity": quantity,
         "maxQuantity": quantity,
         "originStock": number(origin_item.get("stock")),
+        "originAvailableStock": number(origin.get("available_stock")),
         "originConfirmedStock": number(origin_item.get("confirmed_stock")),
         "originMonthlyAvgSales": normalize_monthly_avg_sales(origin_item.get("monthly_avg_sales")),
         "originCurve": origin_item.get("curve") or "",
@@ -207,7 +216,7 @@ def calculate(payload):
                 continue
             if selected_origin_curves and stock_curve(item.get("curve")) not in selected_origin_curves:
                 continue
-            stock = real_stock(item)
+            stock = origin_available_stock(item)
             if stock <= 0:
                 continue
             daily_sales = own_daily_sales(item)
@@ -217,11 +226,10 @@ def calculate(payload):
             if remaining > 0:
                 enriched_item = {
                     **item,
-                    "stock": stock,
                     "monthly_avg_sales": daily_to_monthly(daily_sales),
                     "stock_days": stock_days,
                 }
-                origins.append({"item": enriched_item, "remaining": remaining})
+                origins.append({"item": enriched_item, "available_stock": stock, "remaining": remaining})
 
         origins.sort(
             key=lambda origin: number(origin["item"].get("stock_days")),
