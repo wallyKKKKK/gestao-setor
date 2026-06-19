@@ -5,7 +5,7 @@ import { requirePerfumePurchasingOrSupreme } from "@/lib/server-auth";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const REALLOCATION_API_VERSION = "reallocation-api-2026-06-19-keyset-v2";
+const REALLOCATION_API_VERSION = "reallocation-api-2026-06-19-v3";
 
 function reallocationJson(payload: Record<string, unknown>, init?: ResponseInit) {
   const headers = new Headers(init?.headers);

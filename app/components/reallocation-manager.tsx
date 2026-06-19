@@ -173,8 +173,8 @@ interface ReallocationAuditLog {
 
 const REALLOCATION_AUDIT_STORAGE_KEY = 'reallocation-audit-v1';
 const REALLOCATION_PREFERENCES_STORAGE_KEY = 'reallocation-preferences-v1';
-const REALLOCATION_API_VERSION = 'reallocation-api-2026-06-19-keyset-v2';
-const REALLOCATION_CLIENT_VERSION = 'reallocation-front-2026-06-19-v3';
+const REALLOCATION_API_VERSION = 'reallocation-api-2026-06-19-v3';
+const REALLOCATION_CLIENT_VERSION = 'reallocation-front-2026-06-19-v4';
 
 const SUGGESTION_COLUMNS = [
   { key: 'selection', label: '', align: 'center', width: 52 },
@@ -1105,7 +1105,7 @@ export function ReallocationManager({
       const selectedProducts = new Set(productFilters.map((item) => item.source?.ean).filter(Boolean) as string[]);
       const selectedClassifications = classificationFilters.map((item) => item.columns[0]).filter(Boolean);
       const selectedManufacturers = manufacturerFilters.map((item) => item.columns[0]).filter(Boolean);
-      const response = await fetch(`/api/reallocation-suggestions?ts=${Date.now()}`, {
+      const response = await fetch(`/api/reallocation-suggestions-v2?ts=${Date.now()}`, {
         method: 'POST',
         cache: 'no-store',
         headers: { 'Content-Type': 'application/json', ...await getAuthHeaders() },
