@@ -476,64 +476,13 @@ async function fetchProductEansByAttributes(filters: {
   return Array.from(new Set(rows.map((row) => row.ean).filter((ean): ean is string => Boolean(ean))));
 }
 
-async function calculateWithPython(payload: unknown) {
-  const runtimeImport = new Function("specifier", "return import(specifier)") as (specifier: string) => Promise<typeof import("node:child_process")>;
-  const { spawn } = await runtimeImport("node:child_process");
-  const pythonBin = process.env.PYTHON_BIN || "python";
-  const scriptPath = "scripts/reallocation-engine.py";
-
-  return await new Promise<Record<string, unknown>>((resolve, reject) => {
-    const child = spawn(pythonBin, [scriptPath], {
-      stdio: ["pipe", "pipe", "pipe"],
-      windowsHide: true,
-    });
-    const timeout = windowlessTimeout(() => {
-      child.kill();
-      reject(new Error("Motor Python excedeu o tempo limite."));
-    }, 20_000);
-    let stdout = "";
-    let stderr = "";
-
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk;
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk;
-    });
-    child.on("error", (error) => {
-      clearTimeout(timeout);
-      reject(error);
-    });
-    child.on("close", (code) => {
-      clearTimeout(timeout);
-      if (code !== 0) {
-        reject(new Error(stderr || `Motor Python finalizou com codigo ${code}.`));
-        return;
-      }
-
-      try {
-        resolve(JSON.parse(stdout));
-      } catch {
-        reject(new Error("Motor Python retornou JSON invalido."));
-      }
-    });
-    child.stdin.end(JSON.stringify(payload));
+export async function GET() {
+  return NextResponse.json({
+    apiVersion: REALLOCATION_API_VERSION,
+    engine: "typescript",
+    nodeEnv: process.env.NODE_ENV || "",
+    vercel: Boolean(process.env.VERCEL),
   });
-}
-
-function windowlessTimeout(callback: () => void, delay: number) {
-  return setTimeout(callback, delay);
-}
-
-function shouldUsePythonEngine() {
-  const engine = String(process.env.REALLOCATION_ENGINE || "").trim().toLowerCase();
-  if (process.env.VERCEL || process.env.NODE_ENV === "production") return false;
-  if (engine === "python") return true;
-  if (engine === "typescript") return false;
-
-  return !process.env.VERCEL;
 }
 
 export async function POST(request: Request) {
@@ -567,30 +516,11 @@ export async function POST(request: Request) {
       branchLogistics: Object.keys(calculationPayload.branchLogistics).length,
     };
 
-    if (!shouldUsePythonEngine()) {
-      return NextResponse.json({
-        ...calculate(calculationPayload),
-        ...diagnostics,
-        engineNote: "Motor TypeScript usado no ambiente hospedado.",
-      });
-    }
-
-    try {
-      return NextResponse.json({
-        ...await calculateWithPython(calculationPayload),
-        ...diagnostics,
-      });
-    } catch (pythonError) {
-      const engineNote = pythonError instanceof Error
-        ? `Python indisponivel: ${pythonError.message}`
-        : "Python indisponivel.";
-
-      return NextResponse.json({
-        ...calculate(calculationPayload),
-        ...diagnostics,
-        engineNote,
-      });
-    }
+    return NextResponse.json({
+      ...calculate(calculationPayload),
+      ...diagnostics,
+      engineNote: "Motor TypeScript unico no ambiente hospedado.",
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Erro ao gerar sugestoes.";
     return NextResponse.json({ error: message, suggestions: [] }, { status: 400 });
