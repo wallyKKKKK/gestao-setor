@@ -139,6 +139,7 @@ interface TransferSuggestion {
 }
 
 interface SuggestionDiagnostic {
+  apiVersion?: string;
   engine: 'python' | 'typescript' | 'fallback';
   stockRows: number;
   productGroups: number;
@@ -1155,6 +1156,7 @@ export function ReallocationManager({
       setSelectedSuggestionIds([]);
       setAppliedSuggestionSignature(suggestionSettingsSignature);
       setSuggestionDiagnostic({
+        apiVersion: typeof data.apiVersion === 'string' ? data.apiVersion : undefined,
         engine: suggestionEngine,
         stockRows: Number(data.stockRows || stockItems.length),
         productGroups: Number(data.productGroups || 0),
@@ -2203,6 +2205,11 @@ export function ReallocationManager({
                 <span className="rounded-md bg-slate-100 px-2 py-1 text-slate-500">
                   {suggestionDiagnostic.engine === 'python' ? 'Python' : suggestionDiagnostic.engine === 'fallback' ? 'Fallback' : 'TypeScript'}
                 </span>
+                {suggestionDiagnostic.apiVersion && (
+                  <span className="rounded-md bg-slate-100 px-2 py-1 text-slate-500">
+                    {suggestionDiagnostic.apiVersion}
+                  </span>
+                )}
                 <span className="rounded-md bg-slate-100 px-2 py-1 text-slate-500">
                   {suggestionDiagnostic.stockRows.toLocaleString('pt-BR')} linhas
                 </span>

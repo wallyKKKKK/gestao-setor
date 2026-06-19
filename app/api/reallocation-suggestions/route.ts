@@ -4,6 +4,8 @@ import { requirePerfumePurchasingOrSupreme } from "@/lib/server-auth";
 
 export const runtime = "nodejs";
 
+const REALLOCATION_API_VERSION = "reallocation-api-2026-06-19-keyset-v2";
+
 type StockItem = {
   store_code?: string | null;
   store_name?: string | null;
@@ -559,6 +561,7 @@ export async function POST(request: Request) {
       stockItems,
     };
     const diagnostics = {
+      apiVersion: REALLOCATION_API_VERSION,
       attributeProducts: attributeProducts.length,
       filteredProducts: Array.isArray(calculationPayload.filters.products) ? calculationPayload.filters.products.length : 0,
       branchLogistics: Object.keys(calculationPayload.branchLogistics).length,
