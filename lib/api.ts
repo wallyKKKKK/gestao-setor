@@ -472,23 +472,37 @@ export async function fetchReallocationProducts(searchTermOrFilters: string | Re
 }
 
 export async function fetchReallocationAttributeOptions(field: "manufacturer" | "classification", searchTerm: string, limit = 200) {
-  let query = supabase
-    .from("reallocation_products")
-    .select(field)
-    .neq(field, "")
-    .order(field, { ascending: true })
-    .limit(limit);
-
+  const options = new Set<string>();
   const normalizedSearch = searchTerm.trim();
-  if (normalizedSearch) {
-    const safeSearch = normalizedSearch.replace(/[%_]/g, "");
-    query = query.ilike(field, `%${safeSearch}%`);
+  const safeSearch = normalizedSearch.replace(/[%_]/g, "");
+  const pageSize = 1000;
+  const maxRowsToScan = 8000;
+
+  for (let offset = 0; offset < maxRowsToScan && options.size < limit; offset += pageSize) {
+    let query = supabase
+      .from("reallocation_products")
+      .select(field)
+      .neq(field, "")
+      .order(field, { ascending: true })
+      .range(offset, offset + pageSize - 1);
+
+    if (safeSearch) {
+      query = query.ilike(field, `%${safeSearch}%`);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    const rows = (data || []) as Record<string, string>[];
+    rows.forEach((row) => {
+      const value = String(row[field] || "").trim();
+      if (value) options.add(value);
+    });
+
+    if (rows.length < pageSize) break;
   }
 
-  const { data, error } = await query;
-  if (error) throw error;
-
-  return Array.from(new Set(((data || []) as Record<string, string>[]).map((row) => String(row[field] || "").trim()).filter(Boolean)));
+  return Array.from(options).slice(0, limit);
 }
 
 export async function countReallocationProducts() {
