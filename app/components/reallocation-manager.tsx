@@ -2904,12 +2904,8 @@ function QuickFilterBox({
     return rankAutocompleteOptions(availableOptions, normalizedQuickValue, 18);
   }, [availableOptions, hideInitialOptions, normalizedQuickValue]);
   const selectedIds = useMemo(() => new Set(selected.map((item) => item.id)), [selected]);
-  const listOptions = useMemo(() => {
-    const merged = new Map<string, QuickFilterItem>();
-    selected.forEach((item) => merged.set(item.id, item));
-    visibleOptions.forEach((item) => merged.set(item.id, item));
-    return Array.from(merged.values());
-  }, [selected, visibleOptions]);
+  const listOptions = useMemo(() => selected, [selected]);
+  const searchResultOptions = useMemo(() => visibleOptions.filter((item) => !selectedIds.has(item.id)), [selectedIds, visibleOptions]);
   const visibleSelectedIds = useMemo(() => new Set(listOptions.filter((item) => selectedIds.has(item.id)).map((item) => item.id)), [listOptions, selectedIds]);
   const visibleMarkedIds = useMemo(() => new Set(listOptions.filter((item) => selectedIds.has(item.id) && markedIds.has(item.id)).map((item) => item.id)), [listOptions, markedIds, selectedIds]);
   const optionGridTemplate = useMemo(() => {
@@ -3020,7 +3016,7 @@ function QuickFilterBox({
   };
 
   const addQuickValue = () => {
-    const match = visibleOptions[0];
+    const match = searchResultOptions[0] || visibleOptions.find((item) => !selectedIds.has(item.id));
     if (match) {
       addItem(match);
       return;
@@ -3063,15 +3059,6 @@ function QuickFilterBox({
       return next;
     });
   };
-  const removeSelectedItem = (itemId: string) => {
-    onChange(selected.filter((item) => item.id !== itemId));
-    setMarkedIds((current) => {
-      if (!current.has(itemId)) return current;
-      const next = new Set(current);
-      next.delete(itemId);
-      return next;
-    });
-  };
   const clearQuickValue = () => {
     setQuickValue('');
     setRemoteOptions([]);
@@ -3082,6 +3069,7 @@ function QuickFilterBox({
     ? 'Nenhum item filtrado.'
     : `${selected.length} ${selected.length === 1 ? 'item filtrado' : 'itens filtrados'}`;
   const selectedPreview = selected.slice(0, 2).map((item) => item.columns[0]).join(', ');
+  const showSearchResults = expanded && (searching || normalizedQuickValue.length >= 2);
 
   return (
     <div ref={containerRef} className={`relative text-slate-950 ${expanded ? 'z-[220]' : 'z-10'}`}>
@@ -3107,7 +3095,7 @@ function QuickFilterBox({
       </div>
 
       {expanded && (
-        <div className={`absolute top-[calc(100%+4px)] z-[240] w-[min(560px,calc(100vw-2rem))] overflow-hidden rounded-[6px] border border-slate-400 bg-white shadow-[0_18px_38px_rgba(15,23,42,0.22)] ${alignPopup === 'right' ? 'right-0' : 'left-0'}`}>
+        <div className={`absolute top-[calc(100%+4px)] z-[240] w-[min(560px,calc(100vw-2rem))] rounded-[6px] border border-slate-400 bg-white shadow-[0_18px_38px_rgba(15,23,42,0.22)] ${alignPopup === 'right' ? 'right-0' : 'left-0'}`}>
           <div className="flex h-7 items-center justify-between border-b border-slate-300 bg-slate-100 px-2">
             <span className="truncate text-xs font-bold text-slate-900">{title}</span>
             <button
@@ -3122,69 +3110,6 @@ function QuickFilterBox({
             >
               <X size={12} className="mx-auto" />
             </button>
-          </div>
-
-          <div className="grid grid-cols-1 gap-2 border-b border-slate-200 bg-slate-50 p-2">
-            {selected.length > 0 && (
-              <div className="flex max-h-16 flex-wrap gap-1 overflow-auto rounded-md border border-violet-100 bg-white p-1.5">
-                {selected.slice(0, 10).map((item) => (
-                  <span
-                    key={`selected-${item.id}`}
-                    className="inline-flex max-w-[180px] items-center gap-1 rounded-md border border-violet-200 bg-violet-50 px-2 py-1 text-[10px] font-black uppercase text-violet-700"
-                  >
-                    <span className="truncate">{item.columns[0]}</span>
-                    <button
-                      type="button"
-                      onClick={() => removeSelectedItem(item.id)}
-                      className="rounded text-violet-500 hover:text-red-600"
-                      aria-label={`Remover ${item.columns[0]}`}
-                    >
-                      <X size={11} />
-                    </button>
-                  </span>
-                ))}
-                {selected.length > 10 && (
-                  <span className="rounded-md bg-slate-100 px-2 py-1 text-[10px] font-black uppercase text-slate-500">
-                    +{selected.length - 10}
-                  </span>
-                )}
-              </div>
-            )}
-            <div className="grid grid-cols-1 items-center gap-2 md:grid-cols-[1fr_36px]">
-            <div className="relative">
-              <Search size={14} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                value={quickValue}
-                onChange={(event) => setQuickValue(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') {
-                    event.preventDefault();
-                    addQuickValue();
-                  }
-                }}
-                placeholder={placeholder}
-                className="h-8 w-full rounded-md border border-slate-300 bg-white pl-8 pr-20 text-xs font-bold outline-none focus:border-violet-500"
-              />
-              {quickValue && (
-                <button
-                  type="button"
-                  onClick={clearQuickValue}
-                  className="absolute right-14 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded bg-slate-100 text-slate-400 hover:bg-red-50 hover:text-red-600"
-                  aria-label="Limpar busca"
-                >
-                  <X size={11} />
-                </button>
-              )}
-              {searching && (
-                <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400">
-                  buscando
-                </span>
-              )}
-            </div>
-            <button type="button" onClick={addQuickValue} className="h-8 w-full md:w-9 rounded-md bg-violet-600 text-white flex items-center justify-center">
-              <Plus size={14} />
-            </button>
-            </div>
           </div>
 
           <div className="max-h-64 min-h-40 overflow-auto border-b border-slate-200 bg-white">
@@ -3215,7 +3140,7 @@ function QuickFilterBox({
               <button
                 key={item.id}
                 type="button"
-                onClick={() => addItem(item)}
+                onClick={() => toggleMarkedItem(item)}
                 className={`mb-1 grid w-full items-center rounded-[3px] border px-0 text-left ${
                   isMarked
                     ? 'border-blue-600 bg-blue-100 shadow-[inset_0_0_0_1px_rgba(37,99,235,0.35)]'
@@ -3254,9 +3179,81 @@ function QuickFilterBox({
             </div>
             {listOptions.length === 0 && (
               <div className="flex h-20 items-center justify-center rounded-md bg-slate-50 px-3 text-center text-xs font-bold text-slate-400">
-                {searching ? 'Buscando...' : normalizedQuickValue ? (allowManual ? 'Nenhum resultado direto. Use + para adicionar o texto digitado.' : 'Nenhum resultado encontrado para essa busca.') : selected.length > 0 ? 'Digite para buscar mais itens ou marque os selecionados para remover.' : 'Digite pelo menos 2 caracteres para buscar.'}
+                Sem dados
               </div>
             )}
+          </div>
+
+          <div className="relative border-b border-slate-200 bg-slate-50 p-2">
+            <div className="grid grid-cols-1 items-center gap-2 md:grid-cols-[96px_1fr_36px]">
+              <span className="text-[11px] font-bold text-slate-700">Inclusao rapida</span>
+              <div className="relative">
+                <Search size={14} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  value={quickValue}
+                  onChange={(event) => setQuickValue(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      addQuickValue();
+                    }
+                  }}
+                  placeholder={placeholder}
+                  className="h-8 w-full rounded-[4px] border border-slate-300 bg-white pl-8 pr-20 text-xs font-bold outline-none focus:border-violet-500"
+                />
+                {quickValue && (
+                  <button
+                    type="button"
+                    onClick={clearQuickValue}
+                    className="absolute right-14 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded bg-slate-100 text-slate-400 hover:bg-red-50 hover:text-red-600"
+                    aria-label="Limpar busca"
+                  >
+                    <X size={11} />
+                  </button>
+                )}
+                {searching && (
+                  <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400">
+                    buscando
+                  </span>
+                )}
+                {showSearchResults && (
+                  <div className="absolute left-0 right-0 top-[calc(100%+4px)] z-[280] overflow-hidden rounded-[4px] border border-slate-300 bg-white shadow-[0_14px_32px_rgba(15,23,42,0.24)]">
+                    <div className="max-h-48 overflow-auto py-1">
+                      {searchResultOptions.map((item) => (
+                        <button
+                          key={`result-${item.id}`}
+                          type="button"
+                          onClick={() => addItem(item)}
+                          className="flex h-9 w-full items-center gap-2 border-b border-slate-100 px-3 text-left text-xs hover:bg-violet-50 last:border-b-0"
+                        >
+                          <span className="shrink-0 text-[11px] font-bold text-slate-500">{columns[0]}:</span>
+                          <span className="truncate font-bold text-slate-950">{item.columns[0]}</span>
+                          {item.columns.slice(1, 3).map((value, index) => (
+                            <span key={`${item.id}-meta-${index}`} className="hidden truncate text-[10px] font-bold text-slate-400 md:inline">
+                              {value}
+                            </span>
+                          ))}
+                        </button>
+                      ))}
+                      {searchResultOptions.length === 0 && (
+                        <div className="flex min-h-16 items-center justify-center px-3 text-center text-xs font-bold text-slate-400">
+                          {searching
+                            ? 'Buscando...'
+                            : visibleOptions.length > 0
+                              ? 'Todos os resultados ja estao no filtro.'
+                              : allowManual
+                                ? 'Nenhum resultado direto. Use + para adicionar o texto digitado.'
+                                : 'Nenhum resultado encontrado para essa busca.'}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+              <button type="button" onClick={addQuickValue} className="flex h-8 w-full items-center justify-center rounded-[4px] bg-violet-600 text-white md:w-9">
+                <Plus size={14} />
+              </button>
+            </div>
           </div>
 
           <div className="p-2 flex flex-wrap items-center justify-between gap-2 bg-white">
