@@ -3,8 +3,19 @@ import { getSupabaseAdmin } from "@/lib/supabase-admin";
 import { requirePerfumePurchasingOrSupreme } from "@/lib/server-auth";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 const REALLOCATION_API_VERSION = "reallocation-api-2026-06-19-keyset-v2";
+
+function reallocationJson(payload: Record<string, unknown>, init?: ResponseInit) {
+  const headers = new Headers(init?.headers);
+  headers.set("Cache-Control", "no-store, max-age=0");
+
+  return NextResponse.json(payload, {
+    ...init,
+    headers,
+  });
+}
 
 type StockItem = {
   store_code?: string | null;
@@ -477,7 +488,7 @@ async function fetchProductEansByAttributes(filters: {
 }
 
 export async function GET() {
-  return NextResponse.json({
+  return reallocationJson({
     apiVersion: REALLOCATION_API_VERSION,
     engine: "typescript",
     nodeEnv: process.env.NODE_ENV || "",
@@ -516,13 +527,13 @@ export async function POST(request: Request) {
       branchLogistics: Object.keys(calculationPayload.branchLogistics).length,
     };
 
-    return NextResponse.json({
+    return reallocationJson({
       ...calculate(calculationPayload),
       ...diagnostics,
       engineNote: "Motor TypeScript unico no ambiente hospedado.",
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Erro ao gerar sugestoes.";
-    return NextResponse.json({ error: message, suggestions: [] }, { status: 400 });
+    return reallocationJson({ error: message, suggestions: [] }, { status: 400 });
   }
 }

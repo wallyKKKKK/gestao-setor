@@ -173,6 +173,7 @@ interface ReallocationAuditLog {
 
 const REALLOCATION_AUDIT_STORAGE_KEY = 'reallocation-audit-v1';
 const REALLOCATION_PREFERENCES_STORAGE_KEY = 'reallocation-preferences-v1';
+const REALLOCATION_API_VERSION = 'reallocation-api-2026-06-19-keyset-v2';
 const REALLOCATION_CLIENT_VERSION = 'reallocation-front-2026-06-19-v3';
 
 const SUGGESTION_COLUMNS = [
@@ -1104,8 +1105,9 @@ export function ReallocationManager({
       const selectedProducts = new Set(productFilters.map((item) => item.source?.ean).filter(Boolean) as string[]);
       const selectedClassifications = classificationFilters.map((item) => item.columns[0]).filter(Boolean);
       const selectedManufacturers = manufacturerFilters.map((item) => item.columns[0]).filter(Boolean);
-      const response = await fetch('/api/reallocation-suggestions', {
+      const response = await fetch(`/api/reallocation-suggestions?ts=${Date.now()}`, {
         method: 'POST',
+        cache: 'no-store',
         headers: { 'Content-Type': 'application/json', ...await getAuthHeaders() },
         body: JSON.stringify({
           snapshotId: stockSnapshot?.id,
@@ -1130,6 +1132,10 @@ export function ReallocationManager({
 
       if (!response.ok || !Array.isArray(data?.suggestions)) {
         throw new Error(data?.error || 'Não foi possível gerar sugestões.');
+      }
+
+      if (data.apiVersion !== REALLOCATION_API_VERSION || data.engine === 'python') {
+        throw new Error('A API de remanejamento no dominio ainda esta em versao antiga. Aguarde o ultimo deploy ficar Ready no Vercel e atualize a pagina com Ctrl+F5.');
       }
 
       const suggestionEngine: SuggestionDiagnostic['engine'] = ['python', 'typescript', 'fallback'].includes(data.engine)
