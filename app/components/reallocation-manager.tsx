@@ -173,6 +173,7 @@ interface ReallocationAuditLog {
 
 const REALLOCATION_AUDIT_STORAGE_KEY = 'reallocation-audit-v1';
 const REALLOCATION_PREFERENCES_STORAGE_KEY = 'reallocation-preferences-v1';
+const REALLOCATION_CLIENT_VERSION = 'reallocation-front-2026-06-19-v3';
 
 const SUGGESTION_COLUMNS = [
   { key: 'selection', label: '', align: 'center', width: 52 },
@@ -2200,6 +2201,9 @@ export function ReallocationManager({
                 {suggestionMessage}
               </span>
             )}
+            <span className="rounded-md bg-slate-100 px-2 py-1 text-slate-500">
+              {REALLOCATION_CLIENT_VERSION}
+            </span>
             {suggestionDiagnostic && (
               <>
                 <span className="rounded-md bg-slate-100 px-2 py-1 text-slate-500">

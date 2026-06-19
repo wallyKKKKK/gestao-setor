@@ -529,7 +529,7 @@ function windowlessTimeout(callback: () => void, delay: number) {
 
 function shouldUsePythonEngine() {
   const engine = String(process.env.REALLOCATION_ENGINE || "").trim().toLowerCase();
-  if (process.env.NODE_ENV === "production" && process.env.REALLOCATION_ENGINE_FORCE_PYTHON !== "1") return false;
+  if (process.env.VERCEL || process.env.NODE_ENV === "production") return false;
   if (engine === "python") return true;
   if (engine === "typescript") return false;
 
