@@ -5,6 +5,8 @@ export interface Subtask {
   done: boolean;
 }
 
+export type TaskPriority = "alta" | "normal" | "baixa";
+
 export interface Task {
   id: string;
   title: string;
@@ -25,6 +27,7 @@ export interface Task {
   google_event_link: string | null;
   schedule_override_date: string | null;
   schedule_override_type: "advanced" | "postponed" | null;
+  priority: TaskPriority;
   lastOcc?: string;
   nextOcc?: string;
   isDoneToday?: boolean;

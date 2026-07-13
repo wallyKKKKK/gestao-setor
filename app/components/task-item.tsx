@@ -2,10 +2,11 @@
 
 import { memo, useRef, useState } from "react";
 import type { PointerEvent, WheelEvent } from "react";
-import { Check, ChevronDown, Edit3, MessageSquare, RotateCcw, Trash2 } from "lucide-react";
+import { Check, ChevronDown, Edit3, Flag, MessageSquare, RotateCcw, Trash2 } from "lucide-react";
 import { addAuditLog, addTaskHistory, updateTaskCompletion, updateTaskSubtasks } from "@/lib/api";
 import { MARGIN_FLOW_CATEGORY, formatMarginPercent, parseMarginFlowTaskNotes } from "@/lib/margin-flow-task";
 import { getPermissionDeniedMessage } from "@/lib/permissions";
+import { taskPriorityBadgeClassName, taskPriorityLabel } from "@/lib/task-priority";
 import { formatToBR, getScheduleDisplayLabel, getTodayStr } from "@/lib/task-recurrence";
 import type { Profile, Subtask, TaskItemProps } from "@/lib/types";
 
@@ -13,6 +14,7 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
   const [expanded, setExpanded] = useState(false);
   const [feedbackOffset, setFeedbackOffset] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
+  const [optimisticSubtasks, setOptimisticSubtasks] = useState<Subtask[] | null>(null);
   const dragStartX = useRef<number | null>(null);
   const cardRef = useRef<HTMLDivElement | null>(null);
   const offsetRef = useRef(0);
@@ -21,9 +23,10 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
   const suppressNextClick = useRef(false);
   const isOwner = task.assigned_to === currentUser?.id;
   const canManage = userRole === "admin" || userRole === "gerente" || isOwner;
-  const subtasks = task.subtasks || [];
+  const subtasks = optimisticSubtasks ?? task.subtasks ?? [];
   const subDone = subtasks.filter((s: Subtask) => s.done).length;
   const subTotal = subtasks.length;
+  const subtaskProgressPercent = subTotal > 0 ? Math.round((subDone / subTotal) * 100) : 0;
   const isLate = task.lastOcc < getTodayStr() && !task.isDoneToday && task.lastOcc !== "1970-01-01";
   const isAdvanced = task.schedule_override_type === "advanced";
   const isPostponed = task.schedule_override_type === "postponed";
@@ -167,45 +170,57 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
       await recordBlockedTaskAttempt("Alterar checklist");
       return alert(manageTaskDeniedMessage);
     }
-    const newSubtasks = [...subtasks];
-    newSubtasks[index].done = !newSubtasks[index].done;
+    const newSubtasks = subtasks.map((subtask, subtaskIndex) => (
+      subtaskIndex === index ? { ...subtask, done: !subtask.done } : { ...subtask }
+    ));
     const allDone = newSubtasks.length > 0 && newSubtasks.every((s: Subtask) => s.done);
     const todayStr = getTodayStr();
 
-    if (allDone && !task.isDoneToday) {
-      if (!currentUser) return alert("Acao bloqueada: usuario nao identificado. Entre novamente no sistema.");
-      const profile = profiles.find((p: Profile) => p.id === currentUser?.id);
-      await addTaskHistory({
-        taskId: task.id,
-        taskTitle: task.title,
-        userName: profile?.full_name || currentUser?.email || "Usuário",
-        userId: currentUser.id,
-        category: task.category,
-        sector: task.sector,
-      });
-    }
+    setOptimisticSubtasks(newSubtasks);
 
-    if (allDone || task.isDoneToday) {
-      await updateTaskCompletion(task.id, allDone ? todayStr : null, newSubtasks, Boolean(task.is_one_off && allDone));
-    } else {
-      await updateTaskSubtasks(task.id, newSubtasks);
-    }
+    try {
+      if (allDone && !task.isDoneToday) {
+        if (!currentUser) {
+          setOptimisticSubtasks(null);
+          return alert("Acao bloqueada: usuario nao identificado. Entre novamente no sistema.");
+        }
+        const profile = profiles.find((p: Profile) => p.id === currentUser?.id);
+        void addTaskHistory({
+          taskId: task.id,
+          taskTitle: task.title,
+          userName: profile?.full_name || currentUser?.email || "Usuario",
+          userId: currentUser.id,
+          category: task.category,
+          sector: task.sector,
+        }).catch((error) => console.error("Erro ao registrar historico da tarefa:", error));
+      }
 
-    if (currentUser) {
-      const profile = profiles.find((p: Profile) => p.id === currentUser.id);
-      await addAuditLog({
-        actorId: currentUser.id,
-        actorName: profile?.full_name || currentUser.email || "Usuário",
-        action: allDone ? "task_completed" : "subtask_updated",
-        entityType: "task",
-        entityId: task.id,
-        entityTitle: task.title,
-        sector: task.sector,
-        details: `Checklist: ${newSubtasks.filter((sub: Subtask) => sub.done).length}/${newSubtasks.length}`,
-      }).catch((error) => console.error("Erro ao registrar auditoria:", error));
-    }
+      if (allDone || task.isDoneToday) {
+        await updateTaskCompletion(task.id, allDone ? todayStr : null, newSubtasks, Boolean(task.is_one_off && allDone));
+      } else {
+        await updateTaskSubtasks(task.id, newSubtasks);
+      }
 
-    onUpdate();
+      if (currentUser) {
+        const profile = profiles.find((p: Profile) => p.id === currentUser.id);
+        void addAuditLog({
+          actorId: currentUser.id,
+          actorName: profile?.full_name || currentUser.email || "Usuario",
+          action: allDone ? "task_completed" : "subtask_updated",
+          entityType: "task",
+          entityId: task.id,
+          entityTitle: task.title,
+          sector: task.sector,
+          details: `Checklist: ${newSubtasks.filter((sub: Subtask) => sub.done).length}/${newSubtasks.length}`,
+        }).catch((error) => console.error("Erro ao registrar auditoria:", error));
+      }
+
+      onUpdate();
+    } catch (error) {
+      setOptimisticSubtasks(null);
+      const message = error instanceof Error ? error.message : "Erro desconhecido";
+      alert(`Erro ao atualizar subtarefa: ${message}`);
+    }
   };
 
   return (
@@ -234,7 +249,7 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
         onPointerUp={finishDrag}
         onPointerCancel={cancelDrag}
         onWheel={handleWheelDrag}
-        className={`relative z-10 flex flex-col border-[3px] rounded-[24px] group touch-pan-y
+        className={`relative z-10 flex flex-col overflow-hidden border-[3px] rounded-[24px] group touch-pan-y
         will-change-transform
         ${isDragging ? "transition-none cursor-grabbing" : "transition-all duration-200"}
         ${dragAction === "advance" ? "ring-4 ring-blue-300" : dragAction === "postpone" ? "ring-4 ring-slate-300" : ""}
@@ -245,6 +260,15 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
           "bg-white border-slate-100 hover:border-slate-900 hover:shadow-[6px_6px_0px_0px_rgba(15,23,42,1)]"
         }`}
       >
+      {subTotal > 0 && (
+        <div
+          aria-hidden="true"
+          className={`pointer-events-none absolute inset-y-0 left-0 z-0 transition-all duration-500 ease-out ${
+            task.isDoneToday ? "bg-green-500/35" : "bg-emerald-300/35"
+          }`}
+          style={{ width: `${subtaskProgressPercent}%` }}
+        />
+      )}
       {hasTradeNotes && task.category === "Trade" && (
         <button
           type="button"
@@ -261,7 +285,7 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
           <span className="hidden sm:inline text-[8px] font-black uppercase tracking-widest">Nota</span>
         </button>
       )}
-      <div className="flex flex-wrap sm:flex-nowrap items-center gap-3 sm:gap-6 p-3 sm:p-4 md:px-8">
+      <div className="relative z-10 flex flex-wrap sm:flex-nowrap items-center gap-3 sm:gap-6 p-3 sm:p-4 md:px-8">
         <div className="flex-shrink-0">
           <button
             type="button"
@@ -318,6 +342,10 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
             </span>
             <span className="inline-flex h-6 items-center rounded-full border border-blue-200 bg-blue-50 px-3 text-[8px] font-black uppercase tracking-wide text-blue-700 shadow-sm">
               {task.category}
+            </span>
+            <span className={`inline-flex h-6 items-center gap-1 rounded-full border px-3 text-[8px] font-black uppercase tracking-wide shadow-sm ${taskPriorityBadgeClassName(task.priority)}`}>
+              <Flag size={11} strokeWidth={3} />
+              {taskPriorityLabel(task.priority)}
             </span>
             {marginFlowData && (
               <>
@@ -434,7 +462,7 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
       </div>
 
       {expanded && subTotal > 0 && (
-        <div className="px-4 sm:px-10 pb-6 space-y-2 animate-in slide-in-from-top-3 duration-300">
+        <div className="relative z-10 px-4 sm:px-10 pb-6 space-y-2 animate-in slide-in-from-top-3 duration-300">
           <div className="h-[2px] bg-slate-100 mb-4 w-full" />
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             {subtasks.map((sub: Subtask, index: number) => (

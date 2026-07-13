@@ -45,8 +45,9 @@ import type { RealtimeChannel, User as SupabaseUser } from '@supabase/supabase-j
 import { addDaysToDateStr, getTodayStr, parseMonthlyWeekdayRepeat } from '@/lib/task-recurrence'
 import { filterTasks, getSectorStats, getTaskStats, processTasks } from '@/lib/task-selectors'
 import type { CreateMeetingInput } from '@/lib/api'
+import { DEFAULT_TASK_PRIORITY } from '@/lib/task-priority'
 import { MARGIN_FLOW_CATEGORY, canUseMarginFlowTasks, parseMarginFlowTaskNotes } from '@/lib/margin-flow-task'
-import type { Announcement, AppDbNotification, AppNotification, AuditLog, NotificationPreferences, PricingMarginRule, ProcessedTask, Profile, Subtask, Task, TaskHistory, UserRole } from '@/lib/types'
+import type { Announcement, AppDbNotification, AppNotification, AuditLog, NotificationPreferences, PricingMarginRule, ProcessedTask, Profile, Subtask, Task, TaskHistory, TaskPriority, UserRole } from '@/lib/types'
 import { ArrowRight, Plus, Search, X } from 'lucide-react'
 
 const SectionLoader = () => (
@@ -56,6 +57,8 @@ const SectionLoader = () => (
     </div>
   </main>
 )
+
+const DEFAULT_TASK_CATEGORY = 'Geral'
 
 const AuditTimeline = dynamic(() => import('@/app/components/audit-timeline').then((mod) => mod.AuditTimeline), { loading: SectionLoader })
 const MeetingCalendarView = dynamic(() => import('@/app/components/meeting-calendar-view').then((mod) => mod.MeetingCalendarView), { loading: SectionLoader })
@@ -243,7 +246,8 @@ export default function App() {
   const [taskTitle, setTaskTitle] = useState('')
   const [notes, setNotes] = useState('')
   const [assignedTo, setAssignedTo] = useState('')
-  const [category, setCategory] = useState('Trade')
+  const [category, setCategory] = useState(DEFAULT_TASK_CATEGORY)
+  const [taskPriority, setTaskPriority] = useState<TaskPriority>(DEFAULT_TASK_PRIORITY)
   const [taskScheduleMode, setTaskScheduleMode] = useState<'pontual' | 'semanal' | 'mensal'>('semanal')
   const [oneOffDate, setOneOffDate] = useState(getTodayStr())
   const [repeatInterval, setRepeatInterval] = useState(1)
@@ -301,7 +305,7 @@ export default function App() {
         setActiveTab('HOJE');
       }
       if (category === MARGIN_FLOW_CATEGORY && !canUseMarginFlow) {
-        setCategory('Trade');
+        setCategory(DEFAULT_TASK_CATEGORY);
         setNotes((current) => parseMarginFlowTaskNotes(current).cleanNotes);
       }
     });
@@ -740,12 +744,15 @@ const toggleDayInEdit = (day: string) => {
       dueDate: isOneOff ? oneOffDate : null,
       sector: taskSector,
       isOneOff,
+      priority: taskPriority,
     });
     await addAudit('task_created', 'task', null, cleanTitle, taskSector, `Categoria: ${category}`);
     setTaskTitle('');
     setDisplayDate('DD/MM/YYYY'); 
     setNotes(''); 
+    setCategory(DEFAULT_TASK_CATEGORY);
     setSelectedDays([]); 
+    setTaskPriority(DEFAULT_TASK_PRIORITY);
     setTaskScheduleMode('semanal');
     setOneOffDate(getTodayStr());
     setTempSubtasks([]); 
@@ -1018,6 +1025,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
       dueDate,
       isOneOff,
       sector: taskSector,
+      priority: editingTask.priority,
     });
     setShowEditModal(false); 
     setShowAssignMenu(false);
@@ -1500,7 +1508,13 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
         showTaskTools={visibleSection === 'TAREFAS'}
         taskAction={visibleSection === 'TAREFAS' ? (
           <button
-            onClick={() => setShowCreateBox(!showCreateBox)}
+            onClick={() => {
+              if (!showCreateBox) {
+                setCategory(DEFAULT_TASK_CATEGORY);
+                setShowCategoryMenu(false);
+              }
+              setShowCreateBox(!showCreateBox);
+            }}
             className={`flex h-12 w-full max-w-[340px] items-center justify-center gap-3 rounded-full border-2 px-7 text-[11px] font-black uppercase tracking-[0.18em] transition-all duration-300 ${
               showCreateBox
                 ? 'border-slate-200 bg-slate-100 text-slate-500 shadow-none'
@@ -1647,6 +1661,8 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
     setAssignedTo={setAssignedTo}
     category={category}
     setCategory={setCategory}
+    taskPriority={taskPriority}
+    setTaskPriority={setTaskPriority}
     taskScheduleMode={taskScheduleMode}
     setTaskScheduleMode={setTaskScheduleMode}
     oneOffDate={oneOffDate}
@@ -1740,7 +1756,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
           }}
         />
       ) : (
-        <main className="max-w-5xl mx-auto p-4 pt-8">
+        <main className="w-full p-4 pt-4">
           <AuditTimeline logs={auditLogs} />
         </main>
       )}

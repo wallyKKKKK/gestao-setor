@@ -160,8 +160,8 @@ export function AuditTimeline({ logs }: AuditTimelineProps) {
         <AuditStat label="Usuarios" value={stats.actors} tone="slate" />
       </section>
 
-      <section className="grid gap-3 rounded-[24px] border border-slate-200 bg-white p-3 shadow-sm xl:grid-cols-[minmax(280px,1fr)_180px_220px_220px]">
-        <div className="relative">
+      <section className="grid grid-cols-1 gap-3 rounded-[24px] border border-slate-200 bg-white p-3 shadow-sm sm:grid-cols-2 xl:grid-cols-[minmax(220px,1fr)_minmax(150px,180px)_minmax(180px,220px)_minmax(180px,220px)]">
+        <div className="relative min-w-0">
           <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
             value={searchTerm}
@@ -174,7 +174,7 @@ export function AuditTimeline({ logs }: AuditTimelineProps) {
         <select
           value={periodFilter}
           onChange={(event) => setPeriodFilter(event.target.value as 'all' | 'today' | 'critical')}
-          className="h-12 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-[10px] font-black uppercase text-slate-700 outline-none transition focus:border-blue-500 focus:bg-white"
+          className="h-12 w-full min-w-0 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-[10px] font-black uppercase text-slate-700 outline-none transition focus:border-blue-500 focus:bg-white"
         >
           <option value="all">Todos periodos</option>
           <option value="today">Somente hoje</option>
@@ -187,6 +187,7 @@ export function AuditTimeline({ logs }: AuditTimelineProps) {
           selectedValues={actionFilters}
           onChange={setActionFilters}
           options={actions.map((action) => ({ value: action, label: ACTION_LABELS[action] || action }))}
+          className="min-w-0"
           buttonClassName="border-slate-200 bg-slate-50"
         />
 
@@ -196,6 +197,7 @@ export function AuditTimeline({ logs }: AuditTimelineProps) {
           selectedValues={sectorFilters}
           onChange={setSectorFilters}
           options={sectors.map((sector) => ({ value: sector, label: sector }))}
+          className="min-w-0"
           buttonClassName="border-slate-200 bg-slate-50"
           dropdownAlign="right"
         />

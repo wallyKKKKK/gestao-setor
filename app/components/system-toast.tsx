@@ -168,6 +168,8 @@ export function SystemToastProvider() {
 }
 
 function SystemToastCard({ toast, onDismiss }: { toast: SystemToastItem; onDismiss: (id: string) => void }) {
+  const [progress, setProgress] = useState(1)
+
   const toneMeta = useMemo(() => {
     if (toast.tone === 'success') return {
       Icon: CheckCircle2,
@@ -193,6 +195,26 @@ function SystemToastCard({ toast, onDismiss }: { toast: SystemToastItem; onDismi
 
   const Icon = toneMeta.Icon
 
+  useEffect(() => {
+    const duration = Math.max(toast.durationMs, 1)
+    const startedAt = performance.now()
+    let frame = 0
+
+    const updateProgress = (timestamp: number) => {
+      const elapsed = timestamp - startedAt
+      const nextProgress = Math.max(0, 1 - elapsed / duration)
+      setProgress(nextProgress)
+
+      if (nextProgress > 0) {
+        frame = window.requestAnimationFrame(updateProgress)
+      }
+    }
+
+    frame = window.requestAnimationFrame(updateProgress)
+
+    return () => window.cancelAnimationFrame(frame)
+  }, [toast.durationMs, toast.id])
+
   return (
     <div
       role="status"
@@ -202,7 +224,13 @@ function SystemToastCard({ toast, onDismiss }: { toast: SystemToastItem; onDismi
         if (toast.onClick) onDismiss(toast.id)
       }}
     >
-      <div className={`h-1 w-full ${toneMeta.barClassName}`} />
+      <div className="h-1 bg-slate-100">
+        <div
+          aria-hidden="true"
+          className={`h-full ${toneMeta.barClassName}`}
+          style={{ width: `${progress * 100}%` }}
+        />
+      </div>
       <div className="flex gap-3 p-3.5">
         <div className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${toneMeta.iconClassName}`}>
           <Icon size={18} strokeWidth={2.7} />

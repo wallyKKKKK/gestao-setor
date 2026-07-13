@@ -1,10 +1,11 @@
 "use client";
 
 import type { RefObject } from "react";
-import { Activity, Calendar, Check, ChevronDown, ListChecks, Plus, User, X } from "lucide-react";
+import { Activity, Calendar, Check, ChevronDown, Flag, ListChecks, Plus, User, X } from "lucide-react";
 import { TASK_CATEGORIES, WEEK_DAYS } from "@/app/constants";
 import { MarginFlowTaskFields } from "@/app/components/margin-flow-task-fields";
 import { buildMarginFlowTaskNotes, MARGIN_FLOW_CATEGORY, canUseMarginFlowTasks, parseMarginFlowTaskNotes } from "@/lib/margin-flow-task";
+import { TASK_PRIORITY_OPTIONS } from "@/lib/task-priority";
 import { buildMonthlyWeekdayRepeat, MONTHLY_WEEKDAY_ORDINALS, parseMonthlyWeekdayRepeat } from "@/lib/task-recurrence";
 import type { PricingMarginRule, ProcessedTask, Profile, Subtask, UserRole } from "@/lib/types";
 
@@ -289,6 +290,31 @@ export function EditTaskModal({
                     </div>
                   </>
                 )}
+              </div>
+
+              <div className="rounded-2xl border-2 border-slate-100 bg-slate-50 p-3">
+                <label className="mb-2 flex items-center gap-2 text-[9px] font-black uppercase tracking-widest text-slate-400">
+                  <Flag size={13} className="text-blue-500" /> Prioridade
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {TASK_PRIORITY_OPTIONS.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => setTask({ ...task, priority: option.value })}
+                      className={`rounded-xl border-2 px-2 py-2 text-left transition-all ${
+                        task.priority === option.value
+                          ? option.activeClassName
+                          : "border-slate-100 bg-white text-slate-500 hover:border-blue-200 hover:text-slate-900"
+                      }`}
+                    >
+                      <span className="block text-[10px] font-black uppercase">{option.label}</span>
+                      <span className={`mt-0.5 block text-[8px] font-black uppercase ${task.priority === option.value ? "text-white/75" : "text-slate-300"}`}>
+                        {option.description}
+                      </span>
+                    </button>
+                  ))}
+                </div>
               </div>
 
               <div className="relative">

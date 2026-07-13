@@ -1,6 +1,7 @@
 import { supabase } from "@/lib/supabase";
 import { getAuthHeaders } from "@/lib/auth-headers";
-import type { AccountStatus, Announcement, AppDbNotification, AuditLog, PricingBranch, PricingMarginRule, PricingProduct, Profile, ReallocationProduct, ReallocationStockItem, ReallocationStockSnapshot, Subtask, SupplierPaymentTerm, Task, TaskHistory, TradeTaskNote, UserRole } from "@/lib/types";
+import { DEFAULT_TASK_PRIORITY, normalizeTaskPriority } from "@/lib/task-priority";
+import type { AccountStatus, Announcement, AppDbNotification, AuditLog, PricingBranch, PricingMarginRule, PricingProduct, Profile, ReallocationProduct, ReallocationStockItem, ReallocationStockSnapshot, Subtask, SupplierPaymentTerm, Task, TaskHistory, TaskPriority, TradeTaskNote, UserRole } from "@/lib/types";
 
 interface CreateAnnouncementInput {
   title: string;
@@ -23,6 +24,7 @@ interface CreateTaskInput {
   googleEventId?: string | null;
   googleEventLink?: string | null;
   isOneOff?: boolean;
+  priority?: TaskPriority;
 }
 
 export interface CreateMeetingInput {
@@ -36,6 +38,7 @@ export interface CreateMeetingInput {
   sector: string;
   googleEventId?: string | null;
   googleEventLink?: string | null;
+  priority?: TaskPriority;
 }
 
 interface TaskHistoryInput {
@@ -61,6 +64,7 @@ interface UpdateTaskInput {
   sector?: string;
   googleEventId?: string | null;
   googleEventLink?: string | null;
+  priority?: TaskPriority;
 }
 
 interface AuditLogInput {
@@ -798,7 +802,7 @@ export async function createAnnouncement({ title, content, createdBy, sector, im
 }
 
 export async function createTask(input: CreateTaskInput) {
-  const { error } = await supabase.from("tasks").insert([{
+  const payload = {
     title: input.title.toUpperCase(),
     assigned_to: input.assignedTo,
     status: "pendente",
@@ -812,7 +816,17 @@ export async function createTask(input: CreateTaskInput) {
     google_event_id: input.googleEventId || null,
     google_event_link: input.googleEventLink || null,
     is_one_off: input.isOneOff || false,
-  }]);
+    priority: normalizeTaskPriority(input.priority || DEFAULT_TASK_PRIORITY),
+  };
+
+  let { error } = await supabase.from("tasks").insert([payload]);
+
+  if (error?.code === "PGRST204") {
+    const { priority, ...fallbackPayload } = payload;
+    void priority;
+    const fallback = await supabase.from("tasks").insert([fallbackPayload]);
+    error = fallback.error;
+  }
 
   if (error) {
     if (error.code === "PGRST204") {
@@ -930,23 +944,36 @@ export async function deleteTask(taskId: string) {
 }
 
 export async function updateTask(input: UpdateTaskInput) {
-  const { error } = await supabase
+  const payload = {
+    title: input.title.toUpperCase(),
+    notes: input.notes,
+    assigned_to: input.assignedTo,
+    category: input.category,
+    repeat_days: input.repeatDays,
+    repeat_interval: input.repeatInterval,
+    subtasks: input.subtasks,
+    ...(input.dueDate !== undefined ? { due_date: input.dueDate } : {}),
+    ...(input.isOneOff !== undefined ? { is_one_off: input.isOneOff } : {}),
+    ...(input.sector !== undefined ? { sector: input.sector } : {}),
+    ...(input.googleEventId !== undefined ? { google_event_id: input.googleEventId } : {}),
+    ...(input.googleEventLink !== undefined ? { google_event_link: input.googleEventLink } : {}),
+    ...(input.priority !== undefined ? { priority: normalizeTaskPriority(input.priority) } : {}),
+  };
+
+  let { error } = await supabase
     .from("tasks")
-    .update({
-      title: input.title.toUpperCase(),
-      notes: input.notes,
-      assigned_to: input.assignedTo,
-      category: input.category,
-      repeat_days: input.repeatDays,
-      repeat_interval: input.repeatInterval,
-      subtasks: input.subtasks,
-      ...(input.dueDate !== undefined ? { due_date: input.dueDate } : {}),
-      ...(input.isOneOff !== undefined ? { is_one_off: input.isOneOff } : {}),
-      ...(input.sector !== undefined ? { sector: input.sector } : {}),
-      ...(input.googleEventId !== undefined ? { google_event_id: input.googleEventId } : {}),
-      ...(input.googleEventLink !== undefined ? { google_event_link: input.googleEventLink } : {}),
-    })
+    .update(payload)
     .eq("id", input.id);
+
+  if (error?.code === "PGRST204" && input.priority !== undefined) {
+    const { priority, ...fallbackPayload } = payload;
+    void priority;
+    const fallback = await supabase
+      .from("tasks")
+      .update(fallbackPayload)
+      .eq("id", input.id);
+    error = fallback.error;
+  }
 
   if (error) throw error;
 }

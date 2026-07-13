@@ -73,7 +73,7 @@ const SECTION_NAV_META: Record<AppSection, { icon: LucideIcon; iconClassName: st
 const NOTIFICATION_GROUPS = [
   { id: 'today', label: 'Hoje', helper: 'Lembretes do dia' },
   { id: 'alerts', label: 'Avisos', helper: 'Comunicados internos' },
-  { id: 'system', label: 'Sistema', helper: 'Movimentos e atualizações' },
+  { id: 'system', label: 'Sistema', helper: 'Movimentos e atualizacoes' },
 ] as const;
 
 const NOTIFICATION_PREFERENCE_OPTIONS: Array<{
@@ -85,7 +85,7 @@ const NOTIFICATION_PREFERENCE_OPTIONS: Array<{
   { key: 'closingSummary', label: 'Fechamento', helper: 'Pendencias das 17h' },
   { key: 'meetingReminders', label: 'Reunioes', helper: 'Agenda e lembretes' },
   { key: 'oneOffTasks', label: 'Pontuais', helper: 'Tarefas sem repeticao' },
-  { key: 'teamCompletions', label: 'Equipe', helper: 'Tarefa concluida no setor' },
+  { key: 'teamCompletions', label: 'Equipe', helper: 'Conclusoes do setor' },
 ];
 
 function getNotificationGroupId(notification: AppNotification) {
@@ -133,7 +133,7 @@ export function AppShellNav({
   const visibleTaskTabs = NAV_CATEGORIES.filter((tab) => tab.id !== MARGIN_FLOW_CATEGORY || canUseMarginFlowTasks(userSector));
   const SectionIcon = SECTION_NAV_META[section].icon;
   const [showNotifications, setShowNotifications] = useState(false);
-  const [showNotificationPreferences, setShowNotificationPreferences] = useState(true);
+  const [showNotificationPreferences, setShowNotificationPreferences] = useState(false);
   const unreadCount = unreadNotificationIds.length;
   const groupedNotifications = useMemo(() => {
     const unreadSet = new Set(unreadNotificationIds);
@@ -198,8 +198,8 @@ export function AppShellNav({
               type="button"
               onClick={() => setShowNotifications((current) => !current)}
               className="relative flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-slate-300 transition-all hover:bg-white/10 hover:text-white"
-              aria-label="Abrir notificações"
-              title="Notificações"
+              aria-label="Abrir notificacoes"
+              title="Notificacoes"
             >
               <Bell size={20} />
               {unreadCount > 0 && (
@@ -213,34 +213,71 @@ export function AppShellNav({
               <>
                 <div className="fixed inset-0 z-[120]" onMouseDown={() => setShowNotifications(false)} />
                 <div
-                  className="fixed right-3 top-[4.5rem] z-[130] flex max-h-[min(520px,calc(100vh-5.25rem))] w-[min(380px,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white text-slate-900 shadow-[0_24px_70px_rgba(15,23,42,0.24)] sm:right-5"
+                  className="fixed right-3 top-[4.5rem] z-[130] flex max-h-[min(620px,calc(100vh-5.25rem))] w-[min(430px,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white text-slate-900 shadow-[0_24px_70px_rgba(15,23,42,0.24)] sm:right-5"
                   onMouseDown={(event) => event.stopPropagation()}
                 >
-                  <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
-                    <div>
-                      <p className="text-[11px] font-black uppercase tracking-widest text-blue-600">Notificações</p>
-                      <p className="text-[10px] font-bold text-slate-400">{unreadCount} nova{unreadCount === 1 ? '' : 's'}</p>
+                  <div className="border-b border-slate-100 bg-gradient-to-br from-white to-blue-50/70 px-4 py-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex min-w-0 items-center gap-3">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-blue-600 text-white shadow-[0_10px_24px_rgba(37,99,235,0.24)]">
+                          <Bell size={18} strokeWidth={2.8} />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-[12px] font-black uppercase tracking-[0.18em] text-slate-950">Notificacoes</p>
+                          <p className="mt-0.5 text-[10px] font-bold text-slate-500">
+                            {unreadCount === 0 ? 'Tudo lido por aqui' : `${unreadCount} nova${unreadCount === 1 ? '' : 's'} para revisar`}
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setShowNotifications(false)}
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-white/80 text-slate-400 transition hover:bg-white hover:text-slate-700"
+                        aria-label="Fechar notificacoes"
+                      >
+                        <X size={16} />
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      onClick={onMarkAllNotificationsRead}
-                      disabled={notifications.length === 0}
-                      className="rounded-full bg-slate-100 px-3 py-1.5 text-[9px] font-black uppercase tracking-widest text-slate-500 transition hover:bg-slate-200 disabled:opacity-40"
-                    >
-                      Marcar lidas
-                    </button>
+
+                    <div className="mt-3 flex flex-wrap justify-end gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setShowNotificationPreferences((current) => !current)}
+                          className={`inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-[9px] font-black uppercase tracking-widest transition ${
+                            showNotificationPreferences
+                              ? 'border-blue-200 bg-blue-600 text-white shadow-sm'
+                              : 'border-slate-200 bg-white text-slate-500 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-600'
+                          }`}
+                          aria-expanded={showNotificationPreferences}
+                          aria-label={showNotificationPreferences ? 'Ocultar preferencias de avisos' : 'Mostrar preferencias de avisos'}
+                          title={showNotificationPreferences ? 'Ocultar preferencias' : 'Mostrar preferencias'}
+                        >
+                          {showNotificationPreferences ? <EyeOff size={13} /> : <Eye size={13} />}
+                          Preferencias
+                        </button>
+                        <button
+                          type="button"
+                          onClick={onMarkAllNotificationsRead}
+                          disabled={notifications.length === 0 || unreadCount === 0}
+                          className="rounded-full bg-slate-950 px-3 py-1.5 text-[9px] font-black uppercase tracking-widest text-white transition hover:bg-blue-600 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400"
+                        >
+                          Marcar tudo como lido
+                        </button>
+                      </div>
+                    </div>
                   </div>
 
                   {browserNotificationPermission !== 'granted' && (
-                    <div className="border-b border-slate-100 bg-slate-50 px-3 py-3">
+                    <div className="border-b border-slate-100 bg-white px-3 py-3">
                       <button
                         type="button"
                         onClick={onRequestBrowserNotifications}
                         disabled={browserNotificationPermission === 'unsupported' || browserNotificationPermission === 'denied'}
-                        className="flex w-full items-center justify-between gap-3 rounded-2xl border border-blue-100 bg-white px-3 py-2 text-left transition hover:border-blue-300 disabled:cursor-not-allowed disabled:opacity-55"
+                        className="flex w-full items-center justify-between gap-3 rounded-2xl border border-blue-100 bg-blue-50/60 px-3 py-2.5 text-left transition hover:border-blue-300 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-55"
                       >
                         <span className="min-w-0">
-                          <span className="block text-[10px] font-black uppercase tracking-widest text-slate-900">
+                          <span className="block text-[10px] font-black uppercase tracking-[0.16em] text-slate-900">
                             Avisos internos do sistema
                           </span>
                           <span className="mt-0.5 block text-[10px] font-bold text-slate-400">
@@ -251,30 +288,20 @@ export function AppShellNav({
                                 : 'Receba alertas com o visual do Wally'}
                           </span>
                         </span>
-                        <span className="shrink-0 rounded-full bg-blue-600 px-3 py-1 text-[9px] font-black uppercase text-white">
-                          Ativar
+                        <span className="shrink-0 rounded-full bg-blue-600 px-3 py-1.5 text-[9px] font-black uppercase text-white">
+                          {browserNotificationPermission === 'denied' ? 'Bloqueado' : 'Ativar'}
                         </span>
                       </button>
                     </div>
                   )}
 
-                  <div className="border-b border-slate-100 bg-white px-3 py-3">
-                    <div className="mb-2 flex items-center justify-between px-1">
-                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Preferencias</p>
-                      <button
-                        type="button"
-                        onClick={() => setShowNotificationPreferences((current) => !current)}
-                        className="inline-flex h-7 items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-2.5 text-[9px] font-black uppercase tracking-widest text-slate-400 transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-600"
-                        aria-expanded={showNotificationPreferences}
-                        aria-label={showNotificationPreferences ? 'Ocultar preferencias de avisos' : 'Mostrar preferencias de avisos'}
-                        title={showNotificationPreferences ? 'Ocultar preferencias' : 'Mostrar preferencias'}
-                      >
-                        {showNotificationPreferences ? <EyeOff size={13} /> : <Eye size={13} />}
-                        Avisos
-                      </button>
-                    </div>
-                    {showNotificationPreferences && (
-                      <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                  {showNotificationPreferences && (
+                    <div className="border-b border-slate-100 bg-white px-3 py-3">
+                      <div className="mb-2 px-1">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Preferencias de avisos</p>
+                        <p className="text-[9px] font-bold uppercase tracking-wide text-slate-300">Escolha o que deve aparecer aqui</p>
+                      </div>
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                         {NOTIFICATION_PREFERENCE_OPTIONS.map((option) => {
                           const enabled = notificationPreferences[option.key];
 
@@ -283,9 +310,9 @@ export function AppShellNav({
                               key={option.key}
                               type="button"
                               onClick={() => onNotificationPreferenceChange(option.key, !enabled)}
-                              className={`flex items-center justify-between gap-2 rounded-2xl border px-3 py-2 text-left transition ${
+                              className={`flex min-h-[54px] items-center justify-between gap-2 rounded-2xl border px-3 py-2.5 text-left transition ${
                                 enabled
-                                  ? 'border-blue-100 bg-blue-50 text-slate-900'
+                                  ? 'border-blue-200 bg-blue-50 text-slate-900 shadow-sm'
                                   : 'border-slate-100 bg-slate-50 text-slate-400'
                               }`}
                               aria-pressed={enabled}
@@ -301,31 +328,32 @@ export function AppShellNav({
                           );
                         })}
                       </div>
-                    )}
-                  </div>
+                    </div>
+                  )}
 
-                  <div className="min-h-0 flex-1 overflow-y-auto p-2">
+                  <div className="no-scrollbar min-h-0 flex-1 overflow-y-auto bg-slate-50/80 p-3">
                     {notifications.length === 0 ? (
-                      <div className="p-8 text-center text-[11px] font-black uppercase tracking-widest text-slate-300">
-                        Nada novo por aqui
+                      <div className="rounded-3xl border border-dashed border-slate-200 bg-white p-8 text-center">
+                        <p className="text-[11px] font-black uppercase tracking-widest text-slate-400">Nada novo por aqui</p>
+                        <p className="mt-1 text-[10px] font-bold text-slate-300">Quando surgir algo importante, aparece neste painel.</p>
                       </div>
                     ) : (
                       <div className="space-y-2">
                         {groupedNotifications.map((group) => (
-                          <section key={group.id} className="rounded-2xl bg-slate-50/80 p-1.5">
-                            <div className="flex items-center justify-between px-2 py-1.5">
+                          <section key={group.id} className="rounded-3xl border border-slate-200 bg-white p-2 shadow-sm">
+                            <div className="flex items-center justify-between px-2 py-2">
                               <div>
-                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">{group.label}</p>
-                                <p className="text-[9px] font-bold uppercase tracking-wide text-slate-300">{group.helper}</p>
+                                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-600">{group.label}</p>
+                                <p className="mt-0.5 text-[9px] font-bold uppercase tracking-wide text-slate-300">{group.helper}</p>
                               </div>
                               {group.unreadCount > 0 && (
-                                <span className="rounded-full bg-blue-600 px-2 py-1 text-[9px] font-black text-white">
+                                <span className="rounded-full bg-blue-600 px-2.5 py-1 text-[9px] font-black text-white shadow-sm">
                                   {group.unreadCount}
                                 </span>
                               )}
                             </div>
 
-                            <div className="space-y-1">
+                            <div className="space-y-1.5">
                               {group.items.map((notification) => {
                                 const isUnread = unreadNotificationIds.includes(notification.id);
                                 const toneClass = {
@@ -344,13 +372,13 @@ export function AppShellNav({
                                       onNotificationSelect(notification);
                                       setShowNotifications(false);
                                     }}
-                                    className={`flex w-full gap-3 rounded-2xl p-3 text-left transition hover:bg-white ${
-                                      isUnread ? 'bg-blue-50/80 shadow-sm' : 'bg-white/70'
+                                    className={`flex w-full gap-3 rounded-2xl border p-3 text-left transition hover:border-blue-200 hover:bg-blue-50/70 ${
+                                      isUnread ? 'border-blue-100 bg-blue-50/80 shadow-sm' : 'border-transparent bg-slate-50/70'
                                     }`}
                                   >
                                     <span className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${toneClass}`} />
                                     <span className="min-w-0 flex-1">
-                                      <span className="block truncate text-[12px] font-black uppercase text-slate-900">
+                                      <span className="block truncate text-[11px] font-black uppercase tracking-wide text-slate-950">
                                         {notification.title}
                                       </span>
                                       <span className="mt-1 line-clamp-2 block text-[11px] font-bold leading-snug text-slate-500">

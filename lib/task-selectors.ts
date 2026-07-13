@@ -1,4 +1,5 @@
 import { GLOBAL_MEMBER_TABS } from "@/app/constants";
+import { compareTaskPriority, normalizeTaskPriority } from "@/lib/task-priority";
 import { formatToBR, getLastOccurrence, getNextOccurrence, getTodayStr } from "@/lib/task-recurrence";
 import type { ProcessedTask, Task, UserRole } from "@/lib/types";
 
@@ -33,6 +34,19 @@ function isActionableTask(task: ProcessedTask, today: string) {
   return task.lastOcc !== "1970-01-01" && task.lastOcc <= today;
 }
 
+function compareFlowTasks(left: ProcessedTask, right: ProcessedTask) {
+  const doneOrder = Number(left.isDoneToday) - Number(right.isDoneToday);
+  if (doneOrder !== 0) return doneOrder;
+
+  const priorityOrder = compareTaskPriority(left, right);
+  if (priorityOrder !== 0) return priorityOrder;
+
+  const dateOrder = left.lastOcc.localeCompare(right.lastOcc);
+  if (dateOrder !== 0) return dateOrder;
+
+  return right.created_at.localeCompare(left.created_at) || left.title.localeCompare(right.title, "pt-BR");
+}
+
 export function processTasks(tasks: Task[]): ProcessedTask[] {
   const today = getTodayStr();
 
@@ -50,6 +64,7 @@ export function processTasks(tasks: Task[]): ProcessedTask[] {
 
     return {
       ...task,
+      priority: normalizeTaskPriority(task.priority),
       subtasks,
       lastOcc,
       nextOcc,
@@ -98,7 +113,7 @@ export function filterTasks({
     if (activeTab === "Todas") return true;
 
     return task.category === activeTab;
-  });
+  }).sort(compareFlowTasks);
 }
 
 export function getTaskStats({ tasks, dashFilter, filterUsers, userRole, userSector, userId }: TaskStatsInput) {

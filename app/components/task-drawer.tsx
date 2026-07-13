@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { CheckCircle2, Edit3, FileText, MessageSquare, Plus, Trash2, X } from "lucide-react";
+import { CheckCircle2, Edit3, FileText, Flag, MessageSquare, Plus, Trash2, X } from "lucide-react";
 import { createTradeTaskNote, deleteTradeTaskNote, fetchTradeTaskNotes } from "@/lib/api";
 import { MARGIN_FLOW_CATEGORY, formatMarginPercent, parseMarginFlowTaskNotes } from "@/lib/margin-flow-task";
+import { taskPriorityBadgeClassName, taskPriorityLabel } from "@/lib/task-priority";
 import { getRecurrenceLabel, getScheduleDisplayLabel } from "@/lib/task-recurrence";
 import type { ProcessedTask, Profile, Subtask, TradeTaskNote, UserRole } from "@/lib/types";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
@@ -139,6 +140,13 @@ export function TaskDrawer({ task, profiles, user, userRole, onTradeNotesChanged
                   <div className="flex items-center gap-2">
                     <div className="w-2 h-2 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.5)]" />
                     <span className="font-bold text-[11px] text-slate-900 uppercase">{task.sector}</span>
+                  </div>
+                </div>
+                <div className={`col-span-2 rounded-2xl border p-4 shadow-sm ${taskPriorityBadgeClassName(task.priority)}`}>
+                  <p className="mb-1 text-[8px] font-black uppercase opacity-70">Prioridade</p>
+                  <div className="flex items-center gap-2 text-[11px] font-black uppercase">
+                    <Flag size={14} strokeWidth={3} />
+                    {taskPriorityLabel(task.priority)}
                   </div>
                 </div>
               </div>

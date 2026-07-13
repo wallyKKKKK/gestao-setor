@@ -98,7 +98,7 @@ export function MultiCheckboxFilter({
   }, [open]);
 
   return (
-    <div className={`relative ${className}`}>
+    <div className={`relative min-w-0 ${className}`}>
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
@@ -108,7 +108,7 @@ export function MultiCheckboxFilter({
             : 'border-slate-100 bg-white text-slate-700'
         } ${buttonClassName}`}
       >
-        <span className="min-w-0">
+        <span className="min-w-0 flex-1">
           <span className="block text-[8px] text-slate-400">{label}</span>
           <span className="line-clamp-2 leading-tight">{summary}</span>
         </span>
