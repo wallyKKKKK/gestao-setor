@@ -18,6 +18,7 @@ interface MultiCheckboxFilterProps {
   className?: string;
   buttonClassName?: string;
   emptyMeansAll?: boolean;
+  dropdownAlign?: 'left' | 'right';
 }
 
 export function MultiCheckboxFilter({
@@ -29,6 +30,7 @@ export function MultiCheckboxFilter({
   className = '',
   buttonClassName = '',
   emptyMeansAll = true,
+  dropdownAlign = 'left',
 }: MultiCheckboxFilterProps) {
   const [open, setOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -108,7 +110,7 @@ export function MultiCheckboxFilter({
       >
         <span className="min-w-0">
           <span className="block text-[8px] text-slate-400">{label}</span>
-          <span className="block truncate">{summary}</span>
+          <span className="line-clamp-2 leading-tight">{summary}</span>
         </span>
         <ChevronDown size={16} className={`shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
@@ -116,7 +118,9 @@ export function MultiCheckboxFilter({
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 right-0 top-full z-50 mt-2 rounded-2xl border border-slate-200 bg-white p-3 shadow-2xl">
+          <div className={`absolute top-full z-50 mt-2 w-[min(420px,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] rounded-2xl border border-slate-200 bg-white p-3 shadow-2xl ${
+            dropdownAlign === 'right' ? 'right-0' : 'left-0'
+          }`}>
             <div className="mb-2 flex items-center justify-between gap-2">
               <button
                 type="button"
@@ -130,7 +134,7 @@ export function MultiCheckboxFilter({
                 }`}>
                   <Check size={11} strokeWidth={4} />
                 </span>
-                <span className="truncate">{searchTerm.trim() ? 'Marcar filtrados' : allLabel}</span>
+                <span className="min-w-0 whitespace-normal break-words leading-tight">{searchTerm.trim() ? 'Marcar filtrados' : allLabel}</span>
               </button>
               <button
                 type="button"
@@ -172,6 +176,7 @@ export function MultiCheckboxFilter({
                     key={option.value}
                     type="button"
                     onClick={() => toggleValue(option.value)}
+                    title={[option.label, option.helper].filter(Boolean).join(' - ')}
                     className={`mb-1 flex w-full items-center gap-3 rounded-xl p-3 text-left transition-all ${
                       checked ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-blue-50'
                     }`}
@@ -181,9 +186,9 @@ export function MultiCheckboxFilter({
                     }`}>
                       <Check size={13} strokeWidth={4} />
                     </span>
-                    <span className="min-w-0">
-                      <span className="block truncate text-[10px] font-black uppercase">{option.label}</span>
-                      {option.helper && <span className={`block truncate text-[8px] font-bold uppercase ${checked ? 'text-blue-100' : 'text-slate-400'}`}>{option.helper}</span>}
+                    <span className="min-w-0 flex-1">
+                      <span className="block whitespace-normal break-words text-[10px] font-black uppercase leading-snug">{option.label}</span>
+                      {option.helper && <span className={`mt-0.5 block whitespace-normal break-words text-[8px] font-bold uppercase leading-snug ${checked ? 'text-blue-100' : 'text-slate-400'}`}>{option.helper}</span>}
                     </span>
                   </button>
                 );

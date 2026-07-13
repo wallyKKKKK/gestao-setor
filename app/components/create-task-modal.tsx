@@ -3,8 +3,10 @@
 import type { RefObject } from "react";
 import { Activity, Calendar, Check, ChevronDown, ListChecks, Plus, User, X } from "lucide-react";
 import { TASK_CATEGORIES, WEEK_DAYS } from "@/app/constants";
+import { MarginFlowTaskFields } from "@/app/components/margin-flow-task-fields";
+import { buildMarginFlowTaskNotes, MARGIN_FLOW_CATEGORY, canUseMarginFlowTasks, parseMarginFlowTaskNotes } from "@/lib/margin-flow-task";
 import { buildMonthlyWeekdayRepeat, MONTHLY_WEEKDAY_ORDINALS, parseMonthlyWeekdayRepeat } from "@/lib/task-recurrence";
-import type { Profile, Subtask, UserRole } from "@/lib/types";
+import type { PricingMarginRule, Profile, Subtask, UserRole } from "@/lib/types";
 
 interface CreateTaskModalProps {
   taskTitle: string;
@@ -31,6 +33,7 @@ interface CreateTaskModalProps {
   profiles: Profile[];
   userRole: UserRole;
   userSector: string;
+  marginRules: PricingMarginRule[];
   showAssignMenu: boolean;
   setShowAssignMenu: (show: boolean) => void;
   showCategoryMenu: boolean;
@@ -65,6 +68,7 @@ export function CreateTaskModal({
   profiles,
   userRole,
   userSector,
+  marginRules,
   showAssignMenu,
   setShowAssignMenu,
   showCategoryMenu,
@@ -79,6 +83,15 @@ export function CreateTaskModal({
   const isMonthlyWeekday = isMonthly && Boolean(monthlyWeekdayRepeat);
   const selectedMonthlyOrdinal = monthlyWeekdayRepeat?.ordinal || "1";
   const selectedMonthlyWeekday = monthlyWeekdayRepeat?.weekday || "seg";
+  const canUseMarginFlow = canUseMarginFlowTasks(userSector);
+  const taskCategoryOptions = TASK_CATEGORIES.filter((option) => option !== MARGIN_FLOW_CATEGORY || canUseMarginFlow);
+  const isMarginFlow = category === MARGIN_FLOW_CATEGORY;
+  const showMarginFlowFields = isMarginFlow && canUseMarginFlow;
+  const marginFlowNotes = parseMarginFlowTaskNotes(notes);
+  const visibleNotes = isMarginFlow ? marginFlowNotes.cleanNotes : notes;
+  const updateVisibleNotes = (value: string) => {
+    setNotes(isMarginFlow ? buildMarginFlowTaskNotes(value, marginFlowNotes.data) : value);
+  };
   const setMonthlyWeekdayRepeat = (ordinal: typeof selectedMonthlyOrdinal, weekday: string) => {
     setSelectedDays([buildMonthlyWeekdayRepeat(ordinal, weekday)]);
   };
@@ -111,7 +124,14 @@ export function CreateTaskModal({
         <div className="flex-1 p-5 space-y-4 no-scrollbar">
           <div className="grid gap-3 md:grid-cols-2">
             <input className="h-12 w-full rounded-2xl border-2 border-slate-100 bg-slate-50 px-4 text-sm font-black uppercase text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-600 md:col-span-2" placeholder="O QUE VAMOS FAZER?" value={taskTitle} onChange={e => setTaskTitle(e.target.value)} />
-            <textarea className="h-20 w-full resize-none rounded-2xl border-2 border-slate-100 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-700 outline-none transition focus:border-blue-600 md:col-span-2" placeholder="Coordenadas e detalhes da tarefa..." value={notes} onChange={e => setNotes(e.target.value)} />
+            <textarea className="h-20 w-full resize-none rounded-2xl border-2 border-slate-100 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-700 outline-none transition focus:border-blue-600 md:col-span-2" placeholder="Coordenadas e detalhes da tarefa..." value={visibleNotes} onChange={e => updateVisibleNotes(e.target.value)} />
+            {showMarginFlowFields && (
+              <MarginFlowTaskFields
+                notes={notes}
+                onNotesChange={setNotes}
+                marginRules={marginRules}
+              />
+            )}
           </div>
 
           <div className="space-y-3 rounded-2xl border-2 border-slate-100 bg-slate-50 p-4">
@@ -213,8 +233,8 @@ export function CreateTaskModal({
                   <>
                     <div className="fixed inset-0 z-[85]" onClick={() => setShowCategoryMenu(false)}></div>
                     <div className="absolute left-0 right-0 bottom-full z-[100] mb-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-2xl animate-in slide-in-from-bottom-2">
-                      <div className="flex flex-col gap-1">{TASK_CATEGORIES.map(opt => (
-                        <button key={opt} type="button" onClick={() => { setCategory(opt); setShowCategoryMenu(false); }} className={`p-3 text-left font-black text-[9px] uppercase rounded-lg transition-all border-2 ${category === opt ? "bg-blue-600 border-blue-600 text-white shadow-md" : "bg-white border-slate-50 text-slate-600 hover:border-blue-300"}`}>{opt}</button>
+                      <div className="flex flex-col gap-1">{taskCategoryOptions.map(opt => (
+                        <button key={opt} type="button" onClick={() => { setCategory(opt); if (opt !== MARGIN_FLOW_CATEGORY) setNotes(parseMarginFlowTaskNotes(notes).cleanNotes); setShowCategoryMenu(false); }} className={`p-3 text-left font-black text-[9px] uppercase rounded-lg transition-all border-2 ${category === opt ? "bg-blue-600 border-blue-600 text-white shadow-md" : "bg-white border-slate-50 text-slate-600 hover:border-blue-300"}`}>{opt}</button>
                       ))}</div>
                     </div>
                   </>

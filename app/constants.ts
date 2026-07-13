@@ -18,7 +18,7 @@ export const WEEK_DAYS = [
   { id: "sex", label: "S" },
 ];
 
-export const TASK_CATEGORIES = ["Trade", "Geral"];
+export const TASK_CATEGORIES = ["Trade", "Geral", "Fluxo de margens"];
 
 export const USER_ROLES: UserRole[] = ["membro", "gerente", "admin"];
 
@@ -39,6 +39,7 @@ export const NAV_CATEGORIES = [
   { id: "Minhas", label: "Minhas", icon: User },
   { id: "Todas", label: "Todas", icon: ListChecks },
   { id: "Trade", label: "Trade", icon: TrendingUp },
+  { id: "Fluxo de margens", label: "Margens", icon: TrendingUp },
   { id: "HISTÓRICO", label: "Histórico", icon: History },
   { id: "DASHBOARD", label: "Dashboard", icon: LayoutDashboard },
   { id: "COMUNICADOS", label: "Alertas", icon: Megaphone },

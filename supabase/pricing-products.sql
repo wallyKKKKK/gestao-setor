@@ -1,3 +1,5 @@
+create extension if not exists pg_trgm;
+
 create table if not exists public.pricing_products (
   id uuid primary key default gen_random_uuid(),
   ean text not null unique,
@@ -15,6 +17,7 @@ create table if not exists public.pricing_products (
   month_end_price numeric(12, 2) not null default 0,
   competitor_prices jsonb not null default '{}'::jsonb,
   store_prices jsonb not null default '{}'::jsonb,
+  is_active boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint pricing_products_sell_in_mode_check check (sell_in_mode in ('currency', 'percent')),
@@ -22,11 +25,26 @@ create table if not exists public.pricing_products (
   constraint pricing_products_trade_mode_check check (trade_mode in ('currency', 'percent'))
 );
 
+alter table public.pricing_products
+add column if not exists is_active boolean not null default true;
+
 create index if not exists pricing_products_description_idx
 on public.pricing_products (description);
 
 create index if not exists pricing_products_brand_idx
 on public.pricing_products (brand);
+
+create index if not exists pricing_products_is_active_idx
+on public.pricing_products (is_active);
+
+create index if not exists pricing_products_description_trgm_idx
+on public.pricing_products using gin (description gin_trgm_ops);
+
+create index if not exists pricing_products_brand_trgm_idx
+on public.pricing_products using gin (brand gin_trgm_ops);
+
+create index if not exists pricing_products_ean_trgm_idx
+on public.pricing_products using gin (ean gin_trgm_ops);
 
 create or replace function public.set_pricing_products_updated_at()
 returns trigger

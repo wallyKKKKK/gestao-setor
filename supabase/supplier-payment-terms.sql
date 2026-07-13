@@ -1,3 +1,5 @@
+create extension if not exists pg_trgm;
+
 create table if not exists public.supplier_payment_terms (
   id uuid primary key default gen_random_uuid(),
   supplier_name text not null unique,
@@ -21,6 +23,15 @@ on public.supplier_payment_terms (supplier_name);
 
 create index if not exists supplier_payment_terms_category_idx
 on public.supplier_payment_terms (category);
+
+create index if not exists supplier_payment_terms_name_trgm_idx
+on public.supplier_payment_terms using gin (supplier_name gin_trgm_ops);
+
+create index if not exists supplier_payment_terms_category_trgm_idx
+on public.supplier_payment_terms using gin (category gin_trgm_ops);
+
+create index if not exists supplier_payment_terms_condition_notes_trgm_idx
+on public.supplier_payment_terms using gin (condition_notes gin_trgm_ops);
 
 create or replace function public.set_supplier_payment_terms_updated_at()
 returns trigger

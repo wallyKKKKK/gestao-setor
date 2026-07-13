@@ -10,9 +10,11 @@ import { EditTaskModal } from '@/app/components/edit-task-modal'
 import { HistoryTimeline } from '@/app/components/history-timeline'
 import { Login } from '@/app/components/login'
 import { ProfileModal } from '@/app/components/profile-modal'
+import { PurchaseAssistant } from '@/app/components/purchase-assistant'
 import { SettingsModal } from '@/app/components/settings-modal'
 import { TaskDrawer } from '@/app/components/task-drawer'
 import { TaskListView } from '@/app/components/task-list-view'
+import { showSystemToast } from '@/app/components/system-toast'
 import { NAV_CATEGORIES } from '@/app/constants'
 import { useAnnouncementActions } from '@/app/hooks/use-announcement-actions'
 import { useProfileActions } from '@/app/hooks/use-profile-actions'
@@ -27,6 +29,7 @@ import {
   fetchAnnouncements as fetchAnnouncementsApi,
   fetchAuditLogs,
   fetchCurrentProfile,
+  fetchPricingMarginRules,
   fetchProfiles as fetchProfilesApi,
   fetchTaskHistory,
   fetchTasks as fetchTasksApi,
@@ -42,7 +45,8 @@ import type { RealtimeChannel, User as SupabaseUser } from '@supabase/supabase-j
 import { addDaysToDateStr, getTodayStr, parseMonthlyWeekdayRepeat } from '@/lib/task-recurrence'
 import { filterTasks, getSectorStats, getTaskStats, processTasks } from '@/lib/task-selectors'
 import type { CreateMeetingInput } from '@/lib/api'
-import type { Announcement, AppDbNotification, AppNotification, AuditLog, NotificationPreferences, ProcessedTask, Profile, Subtask, Task, TaskHistory, UserRole } from '@/lib/types'
+import { MARGIN_FLOW_CATEGORY, canUseMarginFlowTasks, parseMarginFlowTaskNotes } from '@/lib/margin-flow-task'
+import type { Announcement, AppDbNotification, AppNotification, AuditLog, NotificationPreferences, PricingMarginRule, ProcessedTask, Profile, Subtask, Task, TaskHistory, UserRole } from '@/lib/types'
 import { ArrowRight, Plus, Search, X } from 'lucide-react'
 
 const SectionLoader = () => (
@@ -98,6 +102,14 @@ function isLegacyNoisyNotificationId(id: string) {
   return id.startsWith('task-today:') || id.startsWith('task-late:') || id.startsWith('meeting-today:');
 }
 
+function isFreshForBrowserNotification(notification: AppNotification) {
+  const createdTime = new Date(notification.createdAt).getTime();
+  if (!Number.isFinite(createdTime)) return false;
+
+  const ageMs = Date.now() - createdTime;
+  return ageMs >= -15 * 60_000 && ageMs <= 5 * 60_000;
+}
+
 function getMeetingTimeFromNotes(notes: string | null | undefined) {
   const match = notes?.match(/Horário:\s*([0-9]{2}:[0-9]{2})/i);
   return match?.[1] || null;
@@ -112,6 +124,7 @@ function timeToMinutes(time: string | null) {
 
 const SECTION_LABELS: Record<AppSection, string> = {
   TAREFAS: 'Tarefas',
+  COMPRAS_IA: 'Compras IA',
   REUNIAO: 'Reunião',
   CADASTROS: 'Cadastros',
   PRECIFICACAO: 'Precificação',
@@ -123,7 +136,7 @@ const SECTION_LABELS: Record<AppSection, string> = {
 
 const APP_PREFERENCES_KEY_PREFIX = 'wally-app-preferences';
 const NOTIFICATION_PREFERENCES_KEY_PREFIX = 'wally-notification-preferences';
-const APP_SECTIONS: AppSection[] = ['TAREFAS', 'REUNIAO', 'CADASTROS', 'PRECIFICACAO', 'PRAZOS', 'TRANSPORTE', 'BALACUBACO', 'AUDITORIA'];
+const APP_SECTIONS: AppSection[] = ['TAREFAS', 'REUNIAO', 'COMPRAS_IA', 'CADASTROS', 'PRECIFICACAO', 'PRAZOS', 'TRANSPORTE', 'BALACUBACO', 'AUDITORIA'];
 const TASK_TABS = NAV_CATEGORIES.map((category) => category.id);
 
 const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
@@ -209,7 +222,7 @@ export default function App() {
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([])
   const [appNotifications, setAppNotifications] = useState<AppDbNotification[]>([])
   const [readNotificationIds, setReadNotificationIds] = useState<string[]>([])
-  const [browserNotificationPermission, setBrowserNotificationPermission] = useState<NotificationPermission | 'unsupported'>('unsupported')
+  const [browserNotificationPermission, setBrowserNotificationPermission] = useState<NotificationPermission | 'unsupported'>('default')
   const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences>(DEFAULT_NOTIFICATION_PREFERENCES)
   const [notificationDispatchTick, setNotificationDispatchTick] = useState(0)
   const [clockMinute, setClockMinute] = useState('')
@@ -248,6 +261,8 @@ export default function App() {
   const [userSector, setUserSector] = useState('Geral');
   const [showAssignMenu, setShowAssignMenu] = useState(false);
   const [showCategoryMenu, setShowCategoryMenu] = useState(false);
+  const [marginRules, setMarginRules] = useState<PricingMarginRule[]>([]);
+  const canUseMarginFlow = canUseMarginFlowTasks(userSector);
 
   useEffect(() => {
     if (!user?.id) {
@@ -279,6 +294,18 @@ export default function App() {
 
     window.localStorage.setItem(`${APP_PREFERENCES_KEY_PREFIX}:${user.id}`, JSON.stringify(preferences));
   }, [activeSection, activeTab, dashFilter, filterUsers, preferencesReady, searchTerm, user?.id]);
+
+  useEffect(() => {
+    queueMicrotask(() => {
+      if (activeTab === MARGIN_FLOW_CATEGORY && !canUseMarginFlow) {
+        setActiveTab('HOJE');
+      }
+      if (category === MARGIN_FLOW_CATEGORY && !canUseMarginFlow) {
+        setCategory('Trade');
+        setNotes((current) => parseMarginFlowTaskNotes(current).cleanNotes);
+      }
+    });
+  }, [activeTab, canUseMarginFlow, category]);
 
   useEffect(() => {
     if (!user?.id) {
@@ -327,23 +354,9 @@ export default function App() {
     const interval = window.setInterval(() => {
       setClockMinute(currentMinuteKey());
       setNotificationDispatchTick((current) => current + 1);
-    }, 60_000);
+    }, 30_000);
 
     return () => window.clearInterval(interval);
-  }, []);
-
-  useEffect(() => {
-    const scheduleDispatch = () => {
-      setNotificationDispatchTick((current) => current + 1);
-    };
-
-    window.addEventListener('blur', scheduleDispatch);
-    document.addEventListener('visibilitychange', scheduleDispatch);
-
-    return () => {
-      window.removeEventListener('blur', scheduleDispatch);
-      document.removeEventListener('visibilitychange', scheduleDispatch);
-    };
   }, []);
 
   // Trava o scroll do fundo quando modais estao abertos
@@ -449,6 +462,14 @@ useEffect(() => {
     await fetchTradeNoteIndicators(data);
   }, [fetchTradeNoteIndicators]);
 
+  const fetchMarginRules = useCallback(async () => {
+    const data = await fetchPricingMarginRules().catch((error) => {
+      console.error('Erro ao carregar regras de margem:', error);
+      return [] as PricingMarginRule[];
+    });
+    setMarginRules(data);
+  }, []);
+
   const fetchHistory = useCallback(async () => {
     const data = await fetchTaskHistory();
     setHistory(data);
@@ -532,6 +553,7 @@ useEffect(() => {
       
       fetchProfiles(); 
       fetchTasks(); 
+      fetchMarginRules();
       fetchAnnouncements();
       fetchInternalNotifications();
 
@@ -543,21 +565,23 @@ useEffect(() => {
         .on(
           'postgres_changes', 
           { event: '*', schema: 'public', table: 'tasks' }, 
-          (payload) => {
-            console.log("Mudanca detectada!", payload);
+          () => {
             fetchTasks(); 
           }
         )
         .on(
           'postgres_changes',
           { event: 'INSERT', schema: 'public', table: 'app_notifications' },
-          () => {
-            fetchInternalNotifications();
+          (payload) => {
+            const incomingNotification = payload.new as AppDbNotification;
+            setAppNotifications((current) => {
+              if (current.some((notification) => notification.id === incomingNotification.id)) return current;
+              return [incomingNotification, ...current].slice(0, 80);
+            });
+            setNotificationDispatchTick((current) => current + 1);
           }
         )
-        .subscribe((status) => {
-          console.log("Status da conexao realtime:", status);
-        });
+        .subscribe();
     }
   });
 
@@ -567,7 +591,7 @@ useEffect(() => {
       supabase.removeChannel(channel);
     }
   };
-}, [fetchAnnouncements, fetchInternalNotifications, fetchProfiles, fetchTasks, setNewName]);
+}, [fetchAnnouncements, fetchInternalNotifications, fetchMarginRules, fetchProfiles, fetchTasks, setNewName]);
 
   useEffect(() => {
     if (!user) return;
@@ -679,6 +703,16 @@ const toggleDayInEdit = (day: string) => {
     return;
   }
 
+  if (category === MARGIN_FLOW_CATEGORY && !canUseMarginFlow) {
+    alert('Fluxo de margens é exclusivo do setor de Precificação.');
+    return;
+  }
+
+  if (category === MARGIN_FLOW_CATEGORY && !parseMarginFlowTaskNotes(cleanNotes).data?.category) {
+    alert('Selecione linha, departamento e categoria do fluxo de margens.');
+    return;
+  }
+
   if (taskScheduleMode === 'semanal' && selectedDays.length === 0) {
     alert('Selecione ao menos um dia da semana ou use o modo Pontual.');
     return;
@@ -741,7 +775,14 @@ const toggleDayInEdit = (day: string) => {
   const shouldArchive = Boolean(task.is_one_off && !isCurrentlyDone);
 
   setTasks(prevTasks => prevTasks
-    .map(t => t.id === task.id ? { ...t, last_done_date: newDate, subtasks: updatedSubtasks, archived_at: shouldArchive ? new Date().toISOString() : t.archived_at } : t)
+    .map(t => t.id === task.id ? {
+      ...t,
+      last_done_date: newDate,
+      subtasks: updatedSubtasks,
+      schedule_override_date: null,
+      schedule_override_type: null,
+      archived_at: shouldArchive ? new Date().toISOString() : t.archived_at,
+    } : t)
     .filter((t) => !t.archived_at)
   );
 
@@ -946,6 +987,16 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
     return;
   }
 
+  if (editingTask.category === MARGIN_FLOW_CATEGORY && !canUseMarginFlow) {
+    alert('Fluxo de margens é exclusivo do setor de Precificação.');
+    return;
+  }
+
+  if (editingTask.category === MARGIN_FLOW_CATEGORY && !parseMarginFlowTaskNotes(cleanNotes).data?.category) {
+    alert('Selecione linha, departamento e categoria do fluxo de margens.');
+    return;
+  }
+
   if (!isOneOff && !repeatDays) {
     alert('Selecione ao menos um dia para a recorrencia.');
     return;
@@ -1139,6 +1190,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
       }));
 
     const internalNotifications = appNotifications
+      .filter((notification) => notification.actor_id !== user.id)
       .filter((notification) => notification.type !== 'task_completed' || notificationPreferences.teamCompletions)
       .map<AppNotification>((notification) => ({
         id: `internal:${notification.id}`,
@@ -1257,21 +1309,12 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
   }, [markNotificationRead]);
 
   const requestBrowserNotifications = useCallback(async () => {
-    if (!('Notification' in window)) {
-      setBrowserNotificationPermission('unsupported');
-      return;
-    }
-
-    const permission = await Notification.requestPermission();
-    setBrowserNotificationPermission(permission);
-
-    if (permission === 'granted') {
-      new Notification('Wally Task Manager', {
-        body: 'Notificações ativadas. Vou avisar quando aparecer algo importante.',
-        icon: '/icon.png',
-        tag: 'wally-notifications-enabled',
-      });
-    }
+    setBrowserNotificationPermission('granted');
+    showSystemToast({
+      title: 'Avisos internos ativados',
+      description: 'Vou mostrar as notificações importantes aqui dentro do sistema.',
+      tone: 'success',
+    });
   }, []);
 
   const updateNotificationPreference = useCallback((key: keyof NotificationPreferences, value: boolean) => {
@@ -1283,28 +1326,30 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
 
   useEffect(() => {
     if (!user?.id || browserNotificationPermission !== 'granted') return;
-    if (document.visibilityState === 'visible' && document.hasFocus()) return;
 
     const unreadSet = new Set(unreadNotificationIds);
     const nextNotifications = notifications
       .filter((notification) => unreadSet.has(notification.id) && !browserNotifiedIdsRef.current.has(notification.id))
+      .filter(isFreshForBrowserNotification)
       .slice(0, 3);
 
     if (nextNotifications.length === 0) return;
 
     for (const notification of nextNotifications) {
       browserNotifiedIdsRef.current.add(notification.id);
-      const nativeNotification = new Notification(notification.title, {
-        body: notification.description,
-        icon: '/icon.png',
-        tag: notification.id,
+      showSystemToast({
+        title: notification.title,
+        description: notification.description,
+        tone: notification.tone === 'red'
+          ? 'error'
+          : notification.tone === 'green'
+            ? 'success'
+            : notification.tone === 'amber'
+              ? 'warning'
+              : 'info',
+        durationMs: 7200,
+        onClick: () => selectNotification(notification),
       });
-
-      nativeNotification.onclick = () => {
-        window.focus();
-        selectNotification(notification);
-        nativeNotification.close();
-      };
     }
 
     window.localStorage.setItem(
@@ -1318,10 +1363,12 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
   const isPerfumePurchasing = isPerfumePurchasingSector(userSector);
   const canAccessTransport = isSupremeAdmin || isPerfumePurchasing;
   const canAccessReallocation = isSupremeAdmin || isPerfumePurchasing;
-  const canAccessRegistries = userRole === 'admin' || canAccessPricing || canAccessPaymentTerms;
+  const canManageBranches = userRole === 'admin' || canAccessPricing;
+  const canAccessRegistries = true;
   const visibleSection =
     (activeSection === 'AUDITORIA' && userRole !== 'admin') ||
     (activeSection === 'CADASTROS' && !canAccessRegistries) ||
+    (activeSection === 'COMPRAS_IA' && !canAccessPaymentTerms) ||
     (activeSection === 'PRECIFICACAO' && !canAccessPricing) ||
     (activeSection === 'PRAZOS' && !canAccessPaymentTerms) ||
     (activeSection === 'TRANSPORTE' && !canAccessTransport) ||
@@ -1344,6 +1391,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
     ];
 
     if (canAccessRegistries) items.push({ id: 'module:CADASTROS', title: 'Cadastros', description: 'Produtos, lojas e fornecedores', section: 'CADASTROS', type: 'Modulo', keywords: 'cadastros produtos lojas fornecedores' });
+    if (canAccessPaymentTerms) items.push({ id: 'module:COMPRAS_IA', title: 'Compras IA', description: 'Assistente inteligente para compras', section: 'COMPRAS_IA', type: 'Modulo', keywords: 'compras ia assistente inteligencia artificial fornecedores produtos pedido cotacao' });
     if (canAccessPricing) items.push({ id: 'module:PRECIFICACAO', title: 'Price', description: 'Negociações, custos e preços', section: 'PRECIFICACAO', type: 'Modulo', keywords: 'price precificacao negociacoes custos ofertas precos' });
     if (canAccessPaymentTerms) items.push({ id: 'module:PRAZOS', title: 'Prazos', description: 'Prazos de boleto e regras comerciais', section: 'PRAZOS', type: 'Modulo', keywords: 'prazos fornecedores boleto regras comerciais' });
     if (canAccessTransport) items.push({ id: 'module:TRANSPORTE', title: 'Transporte', description: 'Controle de dívidas de transporte', section: 'TRANSPORTE', type: 'Modulo', keywords: 'transporte dividas cobranca fornecedores credito debito' });
@@ -1430,7 +1478,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
   if (!user) return <Login />
 
   return (
-    <div className={`min-h-screen bg-[#E8EEF7] text-slate-900 font-sans overflow-x-hidden w-full ${visibleSection === 'TRANSPORTE' || visibleSection === 'REUNIAO' || visibleSection === 'BALACUBACO' ? 'pb-24 md:pb-0' : 'pb-24 md:pb-20'}`}>
+    <div className={`app-responsive-root app-density-compact min-h-screen bg-[#E8EEF7] text-slate-900 font-sans overflow-x-hidden w-full ${visibleSection === 'TRANSPORTE' || visibleSection === 'REUNIAO' || visibleSection === 'BALACUBACO' || visibleSection === 'COMPRAS_IA' ? 'pb-24 md:pb-0' : 'pb-24 md:pb-20'}`}>
       <AppSidebar
         activeSection={visibleSection}
         userRole={userRole}
@@ -1444,7 +1492,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
         }}
       />
 
-      <div className="md:pl-24">
+      <div className="md:pl-20">
       <AppShellNav
         section={visibleSection}
         sectionTitle={SECTION_LABELS[visibleSection]}
@@ -1615,6 +1663,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
     profiles={profiles}
     userRole={userRole}
     userSector={userSector}
+    marginRules={marginRules}
     showAssignMenu={showAssignMenu}
     setShowAssignMenu={setShowAssignMenu}
     showCategoryMenu={showCategoryMenu}
@@ -1659,8 +1708,14 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
           onCreateMeeting={addMeeting}
           onUpdateMeeting={updateMeeting}
         />
+      ) : visibleSection === 'COMPRAS_IA' ? (
+        <PurchaseAssistant />
       ) : visibleSection === 'CADASTROS' ? (
-        <RegistrationsManager />
+        <RegistrationsManager
+          canManageBranches={canManageBranches}
+          canManageProducts={canManageBranches || permissions.canImportReallocationData}
+          canManageMargins={canAccessPricing}
+        />
       ) : visibleSection === 'PRECIFICACAO' ? (
         <PricingManager />
       ) : visibleSection === 'PRAZOS' ? (
@@ -1713,6 +1768,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
     profiles={profiles}
     userRole={userRole}
     userSector={userSector}
+    marginRules={marginRules}
     editMode={editMode}
     setEditMode={setEditMode}
     editDisplayDate={editDisplayDate}

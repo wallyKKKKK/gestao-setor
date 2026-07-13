@@ -30,6 +30,15 @@ type StockItem = {
   curve?: string | null;
   confirmed_purchase?: number | string | null;
   confirmed_transfer?: number | string | null;
+  last_sale_days?: number | string | null;
+  last_purchase_days?: number | string | null;
+  last_purchase_supplier?: string | null;
+  need_type?: string | null;
+  rupture_sales?: number | string | null;
+  supplied_percent?: number | string | null;
+  min_stock?: number | string | null;
+  max_stock?: number | string | null;
+  need_cost?: number | string | null;
 };
 
 type BranchLogistics = Record<string, {
@@ -221,6 +230,8 @@ function calculate(payload: {
     products?: string[];
     classifications?: string[];
     manufacturers?: string[];
+    needTypes?: string[];
+    lastPurchaseSuppliers?: string[];
   };
   rules?: {
     originMinimumDays?: number;
@@ -228,6 +239,10 @@ function calculate(payload: {
     maxRoutePriority?: number;
     originCurves?: string[];
     destinationCurves?: string[];
+    lastSaleMaxDays?: number;
+    lastPurchaseMaxDays?: number;
+    minRuptureSales?: number;
+    maxSuppliedPercent?: number;
   };
   branchLogistics?: BranchLogistics;
 }) {
@@ -238,9 +253,15 @@ function calculate(payload: {
   const selectedOrigins = new Set((filters.origins || []).map(storeCode));
   const selectedDestinations = new Set((filters.destinations || []).map(storeCode));
   const selectedProducts = new Set((filters.products || []).filter(Boolean).map(String));
+  const selectedNeedTypes = new Set((filters.needTypes || []).map(normalizeRouteText).filter(Boolean));
+  const selectedLastPurchaseSuppliers = new Set((filters.lastPurchaseSuppliers || []).map(normalizeRouteText).filter(Boolean));
   const originMinimumDays = numberValue(rules.originMinimumDays);
   const destinationTargetDays = numberValue(rules.destinationTargetDays);
   const maxRoutePriority = numberValue(rules.maxRoutePriority);
+  const lastSaleMaxDays = numberValue(rules.lastSaleMaxDays);
+  const lastPurchaseMaxDays = numberValue(rules.lastPurchaseMaxDays);
+  const minRuptureSales = numberValue(rules.minRuptureSales);
+  const maxSuppliedPercent = numberValue(rules.maxSuppliedPercent);
   const selectedOriginCurves = new Set((rules.originCurves || []).map(stockCurve).filter(Boolean));
   const selectedDestinationCurves = new Set((rules.destinationCurves || []).map(stockCurve).filter(Boolean));
   const grouped = new Map<string, StockItem[]>();
@@ -251,6 +272,12 @@ function calculate(payload: {
     if (!ean) continue;
     if (!item.erp_code) missingErpCode += 1;
     if (selectedProducts.size > 0 && !selectedProducts.has(ean)) continue;
+    if (lastSaleMaxDays > 0 && numberValue(item.last_sale_days) > lastSaleMaxDays) continue;
+    if (lastPurchaseMaxDays > 0 && numberValue(item.last_purchase_days) > lastPurchaseMaxDays) continue;
+    if (selectedNeedTypes.size > 0 && !selectedNeedTypes.has(normalizeRouteText(item.need_type))) continue;
+    if (selectedLastPurchaseSuppliers.size > 0 && !selectedLastPurchaseSuppliers.has(normalizeRouteText(item.last_purchase_supplier))) continue;
+    if (minRuptureSales > 0 && numberValue(item.rupture_sales) < minRuptureSales) continue;
+    if (maxSuppliedPercent > 0 && numberValue(item.supplied_percent) > maxSuppliedPercent) continue;
     grouped.set(ean, [...(grouped.get(ean) || []), item]);
   }
 

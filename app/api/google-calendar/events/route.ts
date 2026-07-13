@@ -5,6 +5,7 @@ import {
   getGoogleCalendarConfig,
   getTokenExpiration,
   listGoogleCalendarEvents,
+  isGoogleReconnectRequiredError,
   type GoogleCalendarConnection,
   refreshGoogleAccessToken,
 } from "@/lib/google-calendar";
@@ -30,7 +31,18 @@ async function getConnectionAccessToken(userId: string) {
       throw new Error("Google refresh token is missing. Reconnect Google Calendar.");
     }
 
-    const refreshed = await refreshGoogleAccessToken(connection.refresh_token);
+    let refreshed: Awaited<ReturnType<typeof refreshGoogleAccessToken>>;
+    try {
+      refreshed = await refreshGoogleAccessToken(connection.refresh_token);
+    } catch (error) {
+      if (isGoogleReconnectRequiredError(error)) {
+        await supabase
+          .from("google_calendar_connections")
+          .delete()
+          .eq("user_id", userId);
+      }
+      throw error;
+    }
     accessToken = refreshed.access_token;
 
     await supabase
@@ -46,6 +58,28 @@ async function getConnectionAccessToken(userId: string) {
   }
 
   return accessToken;
+}
+
+async function clearGoogleCalendarConnection(userId?: string) {
+  if (!userId) return;
+
+  await getSupabaseAdmin()
+    .from("google_calendar_connections")
+    .delete()
+    .eq("user_id", userId);
+}
+
+async function googleCalendarErrorResponse(error: unknown, userId?: string) {
+  if (isGoogleReconnectRequiredError(error)) {
+    await clearGoogleCalendarConnection(userId);
+    return Response.json({
+      error: "Sua conexão com o Google Calendar expirou. Conecte novamente.",
+      reconnectRequired: true,
+    }, { status: 409 });
+  }
+
+  const message = error instanceof Error ? error.message : "Unknown Google Calendar error.";
+  return Response.json({ error: message }, { status: message.includes("not connected") ? 409 : 500 });
 }
 
 export async function GET(request: Request) {
@@ -70,8 +104,7 @@ export async function GET(request: Request) {
     const events = await listGoogleCalendarEvents(accessToken, timeMin, timeMax);
     return Response.json({ events });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown Google Calendar error.";
-    return Response.json({ error: message }, { status: message.includes("not connected") ? 409 : 500 });
+    return await googleCalendarErrorResponse(error, userId);
   }
 }
 
@@ -93,8 +126,7 @@ export async function POST(request: Request) {
     const event = await createGoogleCalendarEvent(accessToken, body.meeting);
     return Response.json({ event });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown Google Calendar error.";
-    return Response.json({ error: message }, { status: message.includes("not connected") ? 409 : 500 });
+    return await googleCalendarErrorResponse(error, body.userId);
   }
 }
 
@@ -119,7 +151,6 @@ export async function DELETE(request: Request) {
     await deleteGoogleCalendarEvent(accessToken, eventId);
     return Response.json({ ok: true });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown Google Calendar error.";
-    return Response.json({ error: message }, { status: message.includes("not connected") ? 409 : 500 });
+    return await googleCalendarErrorResponse(error, userId);
   }
 }

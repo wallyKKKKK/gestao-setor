@@ -1,6 +1,7 @@
 import { inflateRawSync } from "node:zlib";
 import { NextResponse } from "next/server";
 import { requireAuthenticatedProfile } from "@/lib/server-auth";
+import { getSupabaseAdmin } from "@/lib/supabase-admin";
 import type { DiscountMode } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -45,6 +46,7 @@ type ImportedProduct = {
   month_end_price: number;
   competitor_prices: Record<string, number>;
   store_prices: Record<string, number>;
+  is_active: boolean;
 };
 
 function findEndOfCentralDirectory(buffer: Buffer) {
@@ -287,6 +289,7 @@ function parseProductsFromSheet(rows: Array<Array<string | number>>, sheetName: 
       month_end_price: numeric(getCell(row, headers, "Fecha mes")),
       competitor_prices,
       store_prices,
+      is_active: true,
     };
   }).filter(Boolean) as ImportedProduct[];
 }
@@ -336,7 +339,23 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Cabecalho BARRAS nao encontrado." }, { status: 400 });
     }
 
-    return NextResponse.json({ products, importedSheets: worksheetTargets.map((sheet) => sheet.name) });
+    const { data: masterRows } = await getSupabaseAdmin()
+      .from("reallocation_products")
+      .select("ean,description,manufacturer")
+      .in("ean", products.map((product) => product.ean));
+    const masterByEan = new Map((masterRows || []).map((product) => [String(product.ean || ""), product]));
+    const enrichedProducts = products.map((product) => {
+      const master = masterByEan.get(product.ean);
+      return master
+        ? {
+          ...product,
+          description: String(master.description || product.description),
+          brand: String(master.manufacturer || product.brand),
+        }
+        : product;
+    });
+
+    return NextResponse.json({ products: enrichedProducts, importedSheets: worksheetTargets.map((sheet) => sheet.name) });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Nao foi possivel importar a planilha.";
     return NextResponse.json({ error: message }, { status: 400 });

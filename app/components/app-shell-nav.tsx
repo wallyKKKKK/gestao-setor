@@ -13,6 +13,7 @@ import {
   Moon,
   Search,
   Settings,
+  ShoppingCart,
   Shuffle,
   Sun,
   Tags,
@@ -22,6 +23,7 @@ import {
 } from 'lucide-react';
 import { NAV_CATEGORIES } from '@/app/constants';
 import { MultiCheckboxFilter } from '@/app/components/multi-checkbox-filter';
+import { MARGIN_FLOW_CATEGORY, canUseMarginFlowTasks } from '@/lib/margin-flow-task';
 import type { AppSection } from '@/app/components/app-sidebar';
 import type { AppNotification, NotificationPreferences, Profile, UserRole } from '@/lib/types';
 
@@ -59,6 +61,7 @@ interface AppShellNavProps {
 const SECTION_NAV_META: Record<AppSection, { icon: LucideIcon; iconClassName: string }> = {
   TAREFAS: { icon: ListTodo, iconClassName: 'bg-blue-600 text-white' },
   REUNIAO: { icon: CalendarDays, iconClassName: 'bg-sky-600 text-white' },
+  COMPRAS_IA: { icon: ShoppingCart, iconClassName: 'bg-emerald-600 text-white' },
   CADASTROS: { icon: Database, iconClassName: 'bg-slate-700 text-white' },
   PRECIFICACAO: { icon: Tags, iconClassName: 'bg-indigo-600 text-white' },
   PRAZOS: { icon: Clock3, iconClassName: 'bg-emerald-600 text-white' },
@@ -127,6 +130,7 @@ export function AppShellNav({
 }: AppShellNavProps) {
   const currentProfile = profiles.find((profile) => profile.id === userId);
   const visibleProfiles = profiles.filter((profile) => userRole === 'admin' || profile.sector === userSector);
+  const visibleTaskTabs = NAV_CATEGORIES.filter((tab) => tab.id !== MARGIN_FLOW_CATEGORY || canUseMarginFlowTasks(userSector));
   const SectionIcon = SECTION_NAV_META[section].icon;
   const [showNotifications, setShowNotifications] = useState(false);
   const [showNotificationPreferences, setShowNotificationPreferences] = useState(true);
@@ -237,14 +241,14 @@ export function AppShellNav({
                       >
                         <span className="min-w-0">
                           <span className="block text-[10px] font-black uppercase tracking-widest text-slate-900">
-                            Notificações do navegador
+                            Avisos internos do sistema
                           </span>
                           <span className="mt-0.5 block text-[10px] font-bold text-slate-400">
                             {browserNotificationPermission === 'denied'
-                              ? 'Permissão bloqueada no navegador'
+                              ? 'Avisos internos bloqueados'
                               : browserNotificationPermission === 'unsupported'
-                                ? 'Navegador sem suporte'
-                                : 'Receba avisos mesmo em outra janela'}
+                                ? 'Avisos internos indisponiveis'
+                                : 'Receba alertas com o visual do Wally'}
                           </span>
                         </span>
                         <span className="shrink-0 rounded-full bg-blue-600 px-3 py-1 text-[9px] font-black uppercase text-white">
@@ -404,7 +408,7 @@ export function AppShellNav({
         <div className="sticky top-16 z-30 w-full">
           <div className="bg-[#DCE7F5] px-3 pt-3 sm:px-5">
             <div className="mx-auto flex h-[82px] max-w-[1180px] items-end justify-start gap-2 overflow-x-auto no-scrollbar lg:justify-center">
-                {NAV_CATEGORIES.map((tab) => {
+                {visibleTaskTabs.map((tab) => {
                   const Icon = tab.icon;
                   const isActive = activeTab === tab.id;
 

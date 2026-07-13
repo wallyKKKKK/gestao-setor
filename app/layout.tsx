@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { SystemToastProvider } from "@/app/components/system-toast";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -42,6 +43,7 @@ try {
           }}
         />
         {children}
+        <SystemToastProvider />
       </body>
     </html>
   );

@@ -1,10 +1,10 @@
 'use client';
 
-import { CalendarDays, ClipboardList, Clock3, Database, ListTodo, Shuffle, Tags, Truck } from 'lucide-react';
+import { CalendarDays, ClipboardList, Clock3, Database, ListTodo, ShoppingCart, Shuffle, Tags, Truck } from 'lucide-react';
 import { isPerfumePurchasingSector } from '@/lib/permissions';
 import type { UserRole } from '@/lib/types';
 
-export type AppSection = 'TAREFAS' | 'REUNIAO' | 'CADASTROS' | 'PRECIFICACAO' | 'PRAZOS' | 'TRANSPORTE' | 'BALACUBACO' | 'AUDITORIA';
+export type AppSection = 'TAREFAS' | 'REUNIAO' | 'COMPRAS_IA' | 'CADASTROS' | 'PRECIFICACAO' | 'PRAZOS' | 'TRANSPORTE' | 'BALACUBACO' | 'AUDITORIA';
 
 interface AppSidebarProps {
   activeSection: AppSection;
@@ -16,6 +16,7 @@ interface AppSidebarProps {
 
 const items = [
   { id: 'TAREFAS' as const, label: 'Tarefas', icon: ListTodo },
+  { id: 'COMPRAS_IA' as const, label: 'Compras IA', icon: ShoppingCart, purchaseOnly: true },
   { id: 'REUNIAO' as const, label: 'Reunião', icon: CalendarDays },
   { id: 'CADASTROS' as const, label: 'Cadastros', icon: Database, registryOnly: true },
   { id: 'PRECIFICACAO' as const, label: 'Price', icon: Tags, priceOnly: true },
@@ -45,10 +46,8 @@ export function AppSidebar({
   const isPerfumePurchasing = isPerfumePurchasingSector(userSector);
   const canAccessTransport = isSupremeAdmin || isPerfumePurchasing;
   const canAccessTransfer = isSupremeAdmin || isPerfumePurchasing;
-  const canAccessRegistries = userRole === 'admin' || canAccessPricing || canAccessPaymentTerms;
   const visibleItems = items.filter((item) => {
     if (item.adminOnly && userRole !== 'admin') return false;
-    if (item.registryOnly && !canAccessRegistries) return false;
     if (item.priceOnly && !canAccessPricing) return false;
     if (item.purchaseOnly && !canAccessPaymentTerms) return false;
     if (item.transportOnly && !canAccessTransport) return false;
@@ -57,13 +56,13 @@ export function AppSidebar({
   });
 
   return (
-    <aside className="fixed bottom-0 left-0 right-0 md:top-0 md:bottom-0 md:right-auto md:w-24 bg-[#151D33] text-white z-50 border-t md:border-t-0 md:border-r border-white/10">
-      <div className="h-full flex md:flex-col items-center justify-around md:justify-start md:gap-4 md:py-6 px-3 md:px-0">
-        <div className="hidden md:flex w-12 h-12 rounded-2xl bg-blue-600 items-center justify-center font-black italic shadow-lg">
+    <aside className="fixed bottom-0 left-0 right-0 md:top-0 md:bottom-0 md:right-auto md:w-20 bg-[#151D33] text-white z-50 border-t md:border-t-0 md:border-r border-white/10">
+      <div className="h-full min-h-0 flex md:flex-col items-center justify-around md:justify-start md:gap-3 md:overflow-y-auto md:py-3 px-3 md:px-0 no-scrollbar">
+        <div className="hidden md:flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-blue-600 font-black italic shadow-lg">
           W
         </div>
 
-        <div className="flex md:flex-col items-center justify-around md:justify-start gap-2 md:gap-3 w-full">
+        <div className="flex md:flex-col items-center justify-around md:justify-start gap-2 w-full">
           {visibleItems.map((item) => {
             const Icon = item.icon;
             const isActive = activeSection === item.id;
@@ -72,14 +71,14 @@ export function AppSidebar({
               <button
                 key={item.id}
                 onClick={() => onSectionChange(item.id)}
-                className={`h-16 md:h-[76px] flex-1 md:flex-none md:w-20 rounded-2xl flex flex-col items-center justify-center gap-1 transition-all border ${
+                className={`h-16 md:h-[60px] flex-1 md:flex-none md:w-16 rounded-2xl flex flex-col items-center justify-center gap-1 transition-all border ${
                   isActive
                     ? 'bg-white text-blue-600 border-white shadow-[0_8px_24px_rgba(37,99,235,0.25)]'
                     : 'bg-white/5 text-slate-400 border-white/10 hover:bg-white/10 hover:text-white'
                 }`}
               >
-                <Icon size={22} strokeWidth={isActive ? 3 : 2} />
-                <span className="text-[9px] font-black uppercase tracking-widest">{item.label}</span>
+                <Icon size={20} strokeWidth={isActive ? 3 : 2} />
+                <span className="text-[8px] font-black uppercase tracking-widest">{item.label}</span>
               </button>
             );
           })}

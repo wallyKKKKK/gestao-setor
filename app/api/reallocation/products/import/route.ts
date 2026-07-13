@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
+import * as XLSX from "xlsx";
 import { getSupabaseAdmin } from "@/lib/supabase-admin";
-import { requirePerfumePurchasingOrSupreme } from "@/lib/server-auth";
+import { isPerfumePurchasingSector, normalizePermissionSector } from "@/lib/permissions";
+import { requireAuthenticatedProfile } from "@/lib/server-auth";
 
 interface CatalogRow {
   erp_code: string;
@@ -17,6 +19,20 @@ interface AttributeRow {
   description: string;
   manufacturer: string;
   classification: string;
+}
+
+interface ParsedCatalog {
+  rows: CatalogRow[];
+  attributes: AttributeRow[];
+  skipped: number;
+}
+
+function canManageProductCatalog(role: string, sector: string) {
+  const normalizedSector = normalizePermissionSector(sector || "");
+  return role === "admin"
+    || normalizedSector === "price"
+    || normalizedSector.startsWith("precificacao")
+    || isPerfumePurchasingSector(sector || "");
 }
 
 function parseDelimitedRows(csvText: string) {
@@ -124,8 +140,8 @@ function decodeCsvBuffer(buffer: ArrayBuffer) {
   }
 }
 
-function parseCatalogCsv(csvText: string, sourceFile: string) {
-  const [headerRow = [], ...dataRows] = parseDelimitedRows(csvText);
+function parseCatalogRows(inputRows: string[][], sourceFile: string, sourceLabel: string): ParsedCatalog {
+  const [headerRow = [], ...dataRows] = inputRows;
   const headers = headerRow.map((header) => normalizeSearch(header));
   const erpIndex = headers.findIndex((header) => header.includes("CODIGO PRODUTO") || header === "CODIGO");
   const descriptionIndex = firstHeaderIndex(headers, [
@@ -149,12 +165,13 @@ function parseCatalogCsv(csvText: string, sourceFile: string) {
   const treeIndexes = categoryIndexes(headers);
 
   if (descriptionIndex < 0 || eanIndex < 0) {
-    throw new Error("CSV precisa ter pelo menos as colunas Descricao e Barra/EAN.");
+    throw new Error(`${sourceLabel} precisa ter pelo menos as colunas Descricao/Produto e Barra/EAN.`);
   }
 
   const rows: CatalogRow[] = [];
   const attributes: AttributeRow[] = [];
   const seen = new Set<string>();
+  const seenAttributes = new Set<string>();
   let skipped = 0;
 
   dataRows.forEach((cells) => {
@@ -170,6 +187,12 @@ function parseCatalogCsv(csvText: string, sourceFile: string) {
     }
 
     if (!erpCode) {
+      if (seenAttributes.has(ean)) {
+        skipped += 1;
+        return;
+      }
+
+      seenAttributes.add(ean);
       attributes.push({
         ean,
         description: description.toUpperCase(),
@@ -200,24 +223,49 @@ function parseCatalogCsv(csvText: string, sourceFile: string) {
   return { rows, attributes, skipped };
 }
 
+function parseCatalogCsv(csvText: string, sourceFile: string) {
+  return parseCatalogRows(parseDelimitedRows(csvText), sourceFile, "CSV");
+}
+
+function parseCatalogWorkbook(buffer: ArrayBuffer, sourceFile: string) {
+  const workbook = XLSX.read(Buffer.from(buffer), { type: "buffer", cellDates: false });
+  const sheetName = workbook.SheetNames[0];
+  const worksheet = sheetName ? workbook.Sheets[sheetName] : null;
+
+  if (!worksheet) {
+    throw new Error("Planilha sem abas validas para importar.");
+  }
+
+  const rows = XLSX.utils.sheet_to_json<string[]>(worksheet, {
+    header: 1,
+    defval: "",
+    raw: false,
+  }).map((row) => row.map((cell) => String(cell || "").trim()));
+
+  return parseCatalogRows(rows, sourceFile, "Planilha");
+}
+
 export async function POST(request: Request) {
   try {
-    const auth = await requirePerfumePurchasingOrSupreme(request);
+    const auth = await requireAuthenticatedProfile(request);
     if (!auth.ok) return auth.response;
+
+    if (!canManageProductCatalog(auth.profile.role, auth.profile.sector || "")) {
+      return NextResponse.json({ error: "Acesso liberado apenas para Admin, Price ou Compras Perfumaria." }, { status: 403 });
+    }
 
     const formData = await request.formData();
     const file = formData.get("file");
 
     if (!(file instanceof File)) {
-      return NextResponse.json({ error: "Envie um arquivo CSV." }, { status: 400 });
+      return NextResponse.json({ error: "Envie um arquivo CSV, XLS ou XLSX." }, { status: 400 });
     }
 
-    const csvText = decodeCsvBuffer(await file.arrayBuffer());
-    if (!file.name.toLowerCase().endsWith(".csv")) {
-      return NextResponse.json({ error: "Por enquanto importe esta tabela em CSV. No Excel, use Salvar como CSV UTF-8." }, { status: 400 });
-    }
-
-    const { rows, attributes, skipped } = parseCatalogCsv(csvText, file.name);
+    const buffer = await file.arrayBuffer();
+    const lowerName = file.name.toLowerCase();
+    const { rows, attributes, skipped } = lowerName.endsWith(".xlsx") || lowerName.endsWith(".xls")
+      ? parseCatalogWorkbook(buffer, file.name)
+      : parseCatalogCsv(decodeCsvBuffer(buffer), file.name);
 
     if (!rows.length && !attributes.length) {
       return NextResponse.json({ error: "Nenhum produto valido encontrado." }, { status: 400 });

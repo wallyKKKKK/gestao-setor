@@ -102,6 +102,7 @@ export interface PricingProduct {
   month_end_price: number;
   competitor_prices: Record<string, number>;
   store_prices: Record<string, number>;
+  is_active: boolean;
   created_at?: string;
   updated_at?: string;
 }
@@ -136,6 +137,70 @@ export interface SupplierPaymentTerm {
   sort_order: number;
   created_at?: string;
   updated_at?: string;
+}
+
+export interface PricingMarginRule {
+  id: string;
+  line: string;
+  department: string;
+  category: string;
+  classification_path: string;
+  desired_margin_percent: number;
+  desired_markup_percent: number;
+  source_file: string | null;
+  is_active: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface SupplierCatalogItem {
+  id: string;
+  supplier_name: string;
+  source_system: string;
+  source_file: string;
+  row_key: string;
+  ean: string;
+  supplier_sku: string;
+  description: string;
+  manufacturer: string;
+  category: string;
+  delivery_type: string;
+  available_stock: number;
+  price_nf: number;
+  list_price: number;
+  discount_percent: number;
+  st_value: number;
+  minimum_quantity: number;
+  offer_type: string;
+  offer_valid_until: string | null;
+  is_active: boolean;
+  imported_by: string | null;
+  imported_at: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface PurchaseAssistantImport {
+  id: string;
+  title: string;
+  source_file: string;
+  source_type: string;
+  columns: string[];
+  row_count: number;
+  is_active: boolean;
+  imported_by: string | null;
+  imported_at: string;
+}
+
+export interface PurchaseAssistantImportRow {
+  id: string;
+  import_id: string;
+  row_number: number;
+  row_data: Record<string, string | number | boolean | null>;
+  detected_fields: Record<string, string | number | boolean | null>;
+  normalized_text: string;
+  imported_at: string;
+  purchase_assistant_imports?: Pick<PurchaseAssistantImport, "title" | "source_file" | "source_type" | "imported_at"> | null;
 }
 
 export interface ReallocationProduct {
@@ -175,6 +240,15 @@ export interface ReallocationStockItem {
   curve: string | null;
   confirmed_purchase: number;
   confirmed_transfer: number;
+  last_sale_days?: number;
+  last_purchase_days?: number;
+  last_purchase_supplier?: string | null;
+  need_type?: string | null;
+  rupture_sales?: number;
+  supplied_percent?: number;
+  min_stock?: number;
+  max_stock?: number;
+  need_cost?: number;
   created_at?: string;
 }
 

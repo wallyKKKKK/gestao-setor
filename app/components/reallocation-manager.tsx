@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
-import { Check, Clock, Database, Download, FileSpreadsheet, Filter, Loader2, Plus, RefreshCcw, RotateCcw, Search, Shuffle, SlidersHorizontal, Trash2, Upload, X } from 'lucide-react';
+import { Check, Clock, Database, Download, FileSpreadsheet, Filter, Loader2, Plus, RefreshCcw, RotateCcw, Search, Shuffle, SlidersHorizontal, Trash2, X } from 'lucide-react';
 import { countReallocationProducts, fetchLatestReallocationStockSnapshot, fetchPricingBranches, fetchReallocationAttributeOptions, fetchReallocationProducts, fetchReallocationStockItems } from '@/lib/api';
 import { getAuthHeaders } from '@/lib/auth-headers';
 import { getPermissionDeniedMessage } from '@/lib/permissions';
@@ -54,6 +54,30 @@ function loadReallocationAuditLog() {
     return Array.isArray(parsed) ? parsed : [];
   } catch {
     window.localStorage.removeItem(REALLOCATION_AUDIT_STORAGE_KEY);
+    return [];
+  }
+}
+
+function loadReallocationTransferOrders() {
+  if (typeof window === 'undefined') return [];
+
+  const stored = window.localStorage.getItem(REALLOCATION_TRANSFER_ORDERS_STORAGE_KEY);
+  if (!stored) return [];
+
+  try {
+    const parsed = JSON.parse(stored) as ReallocationTransferOrder[];
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed.filter((order) => (
+      order
+      && typeof order.id === 'string'
+      && typeof order.createdAt === 'string'
+      && typeof order.fileName === 'string'
+      && typeof order.content === 'string'
+      && Array.isArray(order.rows)
+    ));
+  } catch {
+    window.localStorage.removeItem(REALLOCATION_TRANSFER_ORDERS_STORAGE_KEY);
     return [];
   }
 }
@@ -172,7 +196,19 @@ interface ReallocationAuditLog {
   units?: number;
 }
 
+interface ReallocationTransferOrder {
+  id: string;
+  createdAt: string;
+  fileName: string;
+  content: string;
+  rows: TransferSuggestion[];
+  lineCount: number;
+  units: number;
+  sourceSnapshot?: string | null;
+}
+
 const REALLOCATION_AUDIT_STORAGE_KEY = 'reallocation-audit-v1';
+const REALLOCATION_TRANSFER_ORDERS_STORAGE_KEY = 'reallocation-transfer-orders-v1';
 const REALLOCATION_PREFERENCES_STORAGE_KEY = 'reallocation-preferences-v1';
 const REALLOCATION_API_VERSION = 'reallocation-api-2026-06-19-v4';
 const REALLOCATION_CLIENT_VERSION = 'reallocation-front-2026-06-19-v5';
@@ -205,7 +241,7 @@ const SUGGESTION_COLUMNS = [
 
 type SuggestionColumnKey = typeof SUGGESTION_COLUMNS[number]['key'];
 type SuggestionColumn = typeof SUGGESTION_COLUMNS[number];
-type SuggestionView = 'draft' | 'confirmed';
+type SuggestionView = 'draft' | 'confirmed' | 'orders';
 type SuggestionSort = {
   key: SuggestionColumnKey;
   direction: 'asc' | 'desc';
@@ -217,11 +253,17 @@ interface ReallocationPreferences {
   destinationFilters: QuickFilterItem[];
   classificationFilters: QuickFilterItem[];
   manufacturerFilters: QuickFilterItem[];
+  needTypeFilters: QuickFilterItem[];
+  lastPurchaseSupplierFilters: QuickFilterItem[];
   suggestionProfile: SuggestionProfile;
   showAdvancedRules: boolean;
   originMinimumDays: number;
   destinationTargetDays: number;
   maxRoutePriority: number;
+  lastSaleMaxDays: number;
+  lastPurchaseMaxDays: number;
+  minRuptureSales: number;
+  maxSuppliedPercent: number;
   originCurvePriority: string[];
   destinationCurvePriority: string[];
   showOnlyProblemSuggestions: boolean;
@@ -267,11 +309,17 @@ function defaultReallocationPreferences(): ReallocationPreferences {
     destinationFilters: [],
     classificationFilters: [],
     manufacturerFilters: [],
+    needTypeFilters: [],
+    lastPurchaseSupplierFilters: [],
     suggestionProfile: DEFAULT_SUGGESTION_PROFILE,
     showAdvancedRules: false,
     originMinimumDays: preset.originMinimumDays,
     destinationTargetDays: preset.destinationTargetDays,
     maxRoutePriority: preset.maxRoutePriority,
+    lastSaleMaxDays: 0,
+    lastPurchaseMaxDays: 0,
+    minRuptureSales: 0,
+    maxSuppliedPercent: 0,
     originCurvePriority: [],
     destinationCurvePriority: [],
     showOnlyProblemSuggestions: false,
@@ -317,11 +365,17 @@ function loadReallocationPreferences() {
       destinationFilters: readQuickFilterItems(parsed.destinationFilters),
       classificationFilters: readQuickFilterItems(parsed.classificationFilters),
       manufacturerFilters: readQuickFilterItems(parsed.manufacturerFilters),
+      needTypeFilters: readQuickFilterItems(parsed.needTypeFilters),
+      lastPurchaseSupplierFilters: readQuickFilterItems(parsed.lastPurchaseSupplierFilters),
       suggestionProfile: profile,
       showAdvancedRules: Boolean(parsed.showAdvancedRules),
       originMinimumDays: clampPreferenceNumber(parsed.originMinimumDays, defaults.originMinimumDays),
       destinationTargetDays: clampPreferenceNumber(parsed.destinationTargetDays, defaults.destinationTargetDays),
       maxRoutePriority: clampPreferenceNumber(parsed.maxRoutePriority, defaults.maxRoutePriority),
+      lastSaleMaxDays: clampPreferenceNumber(parsed.lastSaleMaxDays, defaults.lastSaleMaxDays),
+      lastPurchaseMaxDays: clampPreferenceNumber(parsed.lastPurchaseMaxDays, defaults.lastPurchaseMaxDays),
+      minRuptureSales: clampPreferenceNumber(parsed.minRuptureSales, defaults.minRuptureSales),
+      maxSuppliedPercent: clampPreferenceNumber(parsed.maxSuppliedPercent, defaults.maxSuppliedPercent),
       originCurvePriority: readCurveList(parsed.originCurvePriority),
       destinationCurvePriority: readCurveList(parsed.destinationCurvePriority),
       showOnlyProblemSuggestions: Boolean(parsed.showOnlyProblemSuggestions),
@@ -403,6 +457,34 @@ function clampSuggestionQuantity(
   }, 0);
   const availableForRow = Math.max(0, originStockLimit - allocatedElsewhere);
   return Math.max(0, Math.min(availableForRow, Math.floor(Number(requestedQuantity) || 0)));
+}
+
+function calculateEqualizedQuantity(suggestions: TransferSuggestion[], targetSuggestion: TransferSuggestion) {
+  const originDailySales = Number(targetSuggestion.originDailySales || 0);
+  const destinationDailySales = Number(targetSuggestion.destinationDailySales || 0);
+
+  if (originDailySales <= 0 || destinationDailySales <= 0) return null;
+
+  const originKey = `${targetSuggestion.ean}:${targetSuggestion.originCode}`;
+  const destinationKey = `${targetSuggestion.ean}:${targetSuggestion.destinationCode}`;
+  const originCoverageStock = Number(targetSuggestion.originStockDays || 0) * originDailySales;
+  const destinationCoverageStock = Number(targetSuggestion.destinationStockDays || 0) * destinationDailySales;
+  const allocatedFromSameOrigin = suggestions.reduce((sum, suggestion) => {
+    if (suggestion.id === targetSuggestion.id) return sum;
+    if (`${suggestion.ean}:${suggestion.originCode}` !== originKey) return sum;
+    return sum + Math.max(0, Number(suggestion.quantity || 0));
+  }, 0);
+  const allocatedToSameDestination = suggestions.reduce((sum, suggestion) => {
+    if (suggestion.id === targetSuggestion.id) return sum;
+    if (`${suggestion.ean}:${suggestion.destinationCode}` !== destinationKey) return sum;
+    return sum + Math.max(0, Number(suggestion.quantity || 0));
+  }, 0);
+  const originDaysBeforeThisRoute = Math.max(0, (originCoverageStock - allocatedFromSameOrigin) / originDailySales);
+  const destinationDaysBeforeThisRoute = Math.max(0, (destinationCoverageStock + allocatedToSameDestination) / destinationDailySales);
+  const exactQuantity = (originDaysBeforeThisRoute - destinationDaysBeforeThisRoute) / ((1 / originDailySales) + (1 / destinationDailySales));
+
+  if (!Number.isFinite(exactQuantity) || exactQuantity <= 0) return 0;
+  return Math.floor(exactQuantity);
 }
 
 function getSuggestionExportIssues(
@@ -491,11 +573,14 @@ export function ReallocationManager({
   const [destinationFilters, setDestinationFilters] = useState<QuickFilterItem[]>(initialPreferences.destinationFilters);
   const [classificationFilters, setClassificationFilters] = useState<QuickFilterItem[]>(initialPreferences.classificationFilters);
   const [manufacturerFilters, setManufacturerFilters] = useState<QuickFilterItem[]>(initialPreferences.manufacturerFilters);
+  const [needTypeFilters, setNeedTypeFilters] = useState<QuickFilterItem[]>(initialPreferences.needTypeFilters);
+  const [lastPurchaseSupplierFilters, setLastPurchaseSupplierFilters] = useState<QuickFilterItem[]>(initialPreferences.lastPurchaseSupplierFilters);
   const [totalProducts, setTotalProducts] = useState(0);
   const [stockSnapshot, setStockSnapshot] = useState<ReallocationStockSnapshot | null>(null);
   const [stockItems, setStockItems] = useState<ReallocationStockItem[]>([]);
   const [transferSuggestions, setTransferSuggestions] = useState<TransferSuggestion[]>([]);
   const [confirmedSuggestions, setConfirmedSuggestions] = useState<TransferSuggestion[]>([]);
+  const [transferOrders, setTransferOrders] = useState<ReallocationTransferOrder[]>(loadReallocationTransferOrders);
   const [suggestionView, setSuggestionView] = useState<SuggestionView>('draft');
   const [selectedSuggestionIds, setSelectedSuggestionIds] = useState<string[]>([]);
   const [suggestionMessage, setSuggestionMessage] = useState('');
@@ -506,11 +591,14 @@ export function ReallocationManager({
   const [originMinimumDays, setOriginMinimumDays] = useState(initialPreferences.originMinimumDays);
   const [destinationTargetDays, setDestinationTargetDays] = useState(initialPreferences.destinationTargetDays);
   const [maxRoutePriority, setMaxRoutePriority] = useState(initialPreferences.maxRoutePriority);
+  const [lastSaleMaxDays, setLastSaleMaxDays] = useState(initialPreferences.lastSaleMaxDays);
+  const [lastPurchaseMaxDays, setLastPurchaseMaxDays] = useState(initialPreferences.lastPurchaseMaxDays);
+  const [minRuptureSales, setMinRuptureSales] = useState(initialPreferences.minRuptureSales);
+  const [maxSuppliedPercent, setMaxSuppliedPercent] = useState(initialPreferences.maxSuppliedPercent);
   const [originCurvePriority, setOriginCurvePriority] = useState<string[]>(initialPreferences.originCurvePriority);
   const [destinationCurvePriority, setDestinationCurvePriority] = useState<string[]>(initialPreferences.destinationCurvePriority);
   const [stockLoading, setStockLoading] = useState(true);
   const [generatingSuggestions, setGeneratingSuggestions] = useState(false);
-  const [importing, setImporting] = useState(false);
   const [stockImporting, setStockImporting] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [showOnlyProblemSuggestions, setShowOnlyProblemSuggestions] = useState(initialPreferences.showOnlyProblemSuggestions);
@@ -524,7 +612,6 @@ export function ReallocationManager({
   const [suggestionColumnOrder, setSuggestionColumnOrder] = useState<SuggestionColumnKey[]>(initialPreferences.suggestionColumnOrder);
   const [suggestionColumnWidths, setSuggestionColumnWidths] = useState<Record<SuggestionColumnKey, number>>(initialPreferences.suggestionColumnWidths);
   const [suggestionSort, setSuggestionSort] = useState<SuggestionSort>(initialPreferences.suggestionSort);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const stockInputRef = useRef<HTMLInputElement>(null);
   const resizingSuggestionColumnRef = useRef<{ key: SuggestionColumnKey; startX: number; startWidth: number } | null>(null);
   const draggedSuggestionColumnRef = useRef<SuggestionColumnKey | null>(null);
@@ -602,17 +689,27 @@ export function ReallocationManager({
   }, [reallocationAuditLog]);
 
   useEffect(() => {
+    window.localStorage.setItem(REALLOCATION_TRANSFER_ORDERS_STORAGE_KEY, JSON.stringify(transferOrders));
+  }, [transferOrders]);
+
+  useEffect(() => {
     const preferences: ReallocationPreferences = {
       productFilters,
       originFilters,
       destinationFilters,
       classificationFilters,
       manufacturerFilters,
+      needTypeFilters,
+      lastPurchaseSupplierFilters,
       suggestionProfile,
       showAdvancedRules,
       originMinimumDays,
       destinationTargetDays,
       maxRoutePriority,
+      lastSaleMaxDays,
+      lastPurchaseMaxDays,
+      minRuptureSales,
+      maxSuppliedPercent,
       originCurvePriority,
       destinationCurvePriority,
       showOnlyProblemSuggestions,
@@ -628,8 +725,14 @@ export function ReallocationManager({
     destinationCurvePriority,
     destinationFilters,
     destinationTargetDays,
+    lastPurchaseMaxDays,
+    lastSaleMaxDays,
+    lastPurchaseSupplierFilters,
     manufacturerFilters,
     maxRoutePriority,
+    maxSuppliedPercent,
+    minRuptureSales,
+    needTypeFilters,
     originCurvePriority,
     originFilters,
     originMinimumDays,
@@ -743,7 +846,29 @@ export function ReallocationManager({
     columns: [branch.code, branch.name, branch.city || '-'],
     searchText: `${branch.code} ${branch.name} ${branch.city} ${branch.cnpj}`.toLowerCase(),
   })), [branches]);
-  const activeSuggestionRows = suggestionView === 'confirmed' ? confirmedSuggestions : transferSuggestions;
+  const needTypeOptions = useMemo<QuickFilterItem[]>(() => Array.from(new Set(
+    stockItems.map((item) => String(item.need_type || '').trim()).filter(Boolean),
+  ))
+    .sort((left, right) => left.localeCompare(right, 'pt-BR', { numeric: true }))
+    .map((needType) => ({
+      id: needType,
+      columns: [needType],
+      searchText: normalizeAutocompleteText(needType),
+    })), [stockItems]);
+  const lastPurchaseSupplierOptions = useMemo<QuickFilterItem[]>(() => Array.from(new Set(
+    stockItems.map((item) => String(item.last_purchase_supplier || '').trim()).filter(Boolean),
+  ))
+    .sort((left, right) => left.localeCompare(right, 'pt-BR', { numeric: true }))
+    .map((supplier) => ({
+      id: supplier,
+      columns: [supplier],
+      searchText: normalizeAutocompleteText(supplier),
+    })), [stockItems]);
+  const activeSuggestionRows = useMemo(() => {
+    if (suggestionView === 'confirmed') return confirmedSuggestions;
+    if (suggestionView === 'orders') return [];
+    return transferSuggestions;
+  }, [confirmedSuggestions, suggestionView, transferSuggestions]);
   const selectedSuggestionIdSet = useMemo(() => new Set(selectedSuggestionIds), [selectedSuggestionIds]);
   const filteredProducts = useMemo(() => {
     const baseProducts = productFilters.length > 0
@@ -895,7 +1020,19 @@ export function ReallocationManager({
       .sort((left, right) => right.units - left.units)
       .slice(0, 6);
   }, [activeSuggestionRows, overAllocatedOrigins]);
-  const activeSuggestionFilterCount = productFilters.length + originFilters.length + destinationFilters.length + classificationFilters.length + manufacturerFilters.length + originCurvePriority.length + destinationCurvePriority.length;
+  const activeSuggestionFilterCount = productFilters.length
+    + originFilters.length
+    + destinationFilters.length
+    + classificationFilters.length
+    + manufacturerFilters.length
+    + needTypeFilters.length
+    + lastPurchaseSupplierFilters.length
+    + originCurvePriority.length
+    + destinationCurvePriority.length
+    + (lastSaleMaxDays > 0 ? 1 : 0)
+    + (lastPurchaseMaxDays > 0 ? 1 : 0)
+    + (minRuptureSales > 0 ? 1 : 0)
+    + (maxSuppliedPercent > 0 ? 1 : 0);
   const suggestionSettingsSignature = useMemo(() => JSON.stringify({
     snapshotId: stockSnapshot?.id || '',
     products: productFilters.map((item) => item.id),
@@ -903,18 +1040,30 @@ export function ReallocationManager({
     destinations: destinationFilters.map((item) => item.id),
     classifications: classificationFilters.map((item) => item.id),
     manufacturers: manufacturerFilters.map((item) => item.id),
+    needTypes: needTypeFilters.map((item) => item.id),
+    lastPurchaseSuppliers: lastPurchaseSupplierFilters.map((item) => item.id),
     originCurves: originCurvePriority,
     destinationCurves: destinationCurvePriority,
     originMinimumDays,
     destinationTargetDays,
     maxRoutePriority,
+    lastSaleMaxDays,
+    lastPurchaseMaxDays,
+    minRuptureSales,
+    maxSuppliedPercent,
   }), [
     classificationFilters,
     destinationCurvePriority,
     destinationFilters,
     destinationTargetDays,
+    lastPurchaseMaxDays,
+    lastPurchaseSupplierFilters,
+    lastSaleMaxDays,
     manufacturerFilters,
     maxRoutePriority,
+    maxSuppliedPercent,
+    minRuptureSales,
+    needTypeFilters,
     originCurvePriority,
     originFilters,
     originMinimumDays,
@@ -951,45 +1100,6 @@ export function ReallocationManager({
     setMaxRoutePriority(preset.maxRoutePriority);
   };
 
-  const importCatalog = async (file: File) => {
-    if (!canImportData) {
-      alert(getBlockedMessage('importar cadastro do remanejamento inteligente', 'perfumePurchasingOrSupreme'));
-      return;
-    }
-    setImporting(true);
-    setErrorMessage('');
-
-    try {
-      const formData = new FormData();
-      formData.append('file', file);
-
-      const response = await fetch('/api/reallocation/products/import', {
-        method: 'POST',
-        headers: await getAuthHeaders(),
-        body: formData,
-      });
-      const data = await response.json().catch(() => null);
-
-      if (!response.ok) {
-        throw new Error(data?.error || 'Erro ao importar catalogo.');
-      }
-
-      alert(`${data.imported || 0} produtos importados. ${data.enriched || 0} produtos enriquecidos. ${data.unmatched || 0} EANs sem vinculo. ${data.skipped || 0} linhas ignoradas/duplicadas.`);
-      addReallocationAuditLog({
-        action: 'Catalogo importado',
-        detail: file.name,
-        count: Number(data.imported || 0),
-      });
-      await loadProducts(searchTerm);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Erro desconhecido';
-      setErrorMessage(message);
-    } finally {
-      setImporting(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-    }
-  };
-
   const importStock = async (file: File) => {
     if (!canImportData) {
       alert(getBlockedMessage('importar estoque do remanejamento inteligente', 'perfumePurchasingOrSupreme'));
@@ -1013,7 +1123,7 @@ export function ReallocationManager({
         throw new Error(data?.error || 'Erro ao importar estoque.');
       }
 
-      alert(`${data.imported || 0} linhas de estoque importadas. ${data.matchedProducts || 0} vinculadas ao código ERP. ${data.unmatchedProducts || 0} sem vínculo. ${data.skipped || 0} ignoradas.`);
+      alert(`${data.imported || 0} linhas de estoque importadas. ${data.matchedProducts || 0} vinculadas ao código ERP. ${data.unmatchedProducts || 0} sem vínculo. ${data.skipped || 0} ignoradas.${data.movementColumnsAvailable === false ? ' Rode o SQL atualizado de estoque para habilitar filtros de ultima venda/compra.' : ''}`);
       addReallocationAuditLog({
         action: 'Estoque importado',
         detail: file.name,
@@ -1099,6 +1209,23 @@ export function ReallocationManager({
     URL.revokeObjectURL(url);
   };
 
+  const buildSuggestionsTxtContent = (suggestions: TransferSuggestion[]) => (
+    suggestions
+      .filter((suggestion) => suggestion.erpCode && suggestion.quantity > 0)
+      .map((suggestion) => txtLine(suggestion.originCode, suggestion.destinationCode, suggestion.erpCode, suggestion.quantity))
+      .join('\n')
+  );
+
+  const downloadTxtContent = (fileName: string, content: string) => {
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
   const generateTransferSuggestions = async ({ preserveManualChanges = false }: { preserveManualChanges?: boolean } = {}) => {
     if (!canGenerateSuggestions) {
       alert(getBlockedMessage('gerar sugestoes de remanejamento inteligente', 'perfumePurchasingOrSupreme'));
@@ -1129,6 +1256,8 @@ export function ReallocationManager({
       const selectedProducts = new Set(productFilters.map((item) => item.source?.ean).filter(Boolean) as string[]);
       const selectedClassifications = classificationFilters.map((item) => item.columns[0]).filter(Boolean);
       const selectedManufacturers = manufacturerFilters.map((item) => item.columns[0]).filter(Boolean);
+      const selectedNeedTypes = needTypeFilters.map((item) => item.columns[0]).filter(Boolean);
+      const selectedLastPurchaseSuppliers = lastPurchaseSupplierFilters.map((item) => item.columns[0]).filter(Boolean);
       const response = await fetch(`/api/reallocation-suggestions-v2?ts=${Date.now()}`, {
         method: 'POST',
         cache: 'no-store',
@@ -1141,6 +1270,8 @@ export function ReallocationManager({
             products: Array.from(selectedProducts),
             classifications: selectedClassifications,
             manufacturers: selectedManufacturers,
+            needTypes: selectedNeedTypes,
+            lastPurchaseSuppliers: selectedLastPurchaseSuppliers,
           },
           rules: {
             originMinimumDays,
@@ -1148,6 +1279,10 @@ export function ReallocationManager({
             maxRoutePriority,
             originCurves: originCurvePriority,
             destinationCurves: destinationCurvePriority,
+            lastSaleMaxDays,
+            lastPurchaseMaxDays,
+            minRuptureSales,
+            maxSuppliedPercent,
           },
           branchLogistics: Object.fromEntries(branchLogisticsByCode),
         }),
@@ -1336,9 +1471,33 @@ export function ReallocationManager({
       return String(leftValue).localeCompare(String(rightValue), 'pt-BR', { numeric: true, sensitivity: 'base' }) * directionFactor;
     });
   }
+  const displayedTransferOrders = useMemo(() => {
+    const query = normalizeAutocompleteText(suggestionTableSearch);
+    if (!query) return transferOrders;
+
+    return transferOrders.filter((order) => {
+      const searchable = [
+        order.fileName,
+        order.sourceSnapshot || '',
+        new Date(order.createdAt).toLocaleString('pt-BR'),
+        ...order.rows.flatMap((row) => [
+          row.description,
+          row.ean,
+          row.erpCode,
+          row.originName,
+          row.originCode,
+          row.destinationName,
+          row.destinationCode,
+        ]),
+      ].join(' ');
+      return normalizeAutocompleteText(searchable).includes(query);
+    });
+  }, [suggestionTableSearch, transferOrders]);
   const visibleSuggestionIds = sortedTransferSuggestions.map((suggestion) => suggestion.id);
   const selectedVisibleSuggestionCount = visibleSuggestionIds.filter((id) => selectedSuggestionIdSet.has(id)).length;
   const allVisibleSuggestionsSelected = visibleSuggestionIds.length > 0 && selectedVisibleSuggestionCount === visibleSuggestionIds.length;
+  const equalizeTargetIds = selectedSuggestionIds.length > 0 ? selectedSuggestionIds : visibleSuggestionIds;
+  const equalizeTargetCount = equalizeTargetIds.length;
 
   const changeSuggestionView = (view: SuggestionView) => {
     setSuggestionView(view);
@@ -1367,6 +1526,53 @@ export function ReallocationManager({
     });
   };
 
+  const equalizeStockDays = () => {
+    const targetIds = new Set(equalizeTargetIds);
+    if (targetIds.size === 0) {
+      alert('Selecione sugestoes ou deixe linhas visiveis para equalizar.');
+      return;
+    }
+
+    let changedRows = 0;
+    let nextUnits = 0;
+    let nextSuggestions = activeSuggestionRows;
+
+    for (const suggestion of activeSuggestionRows) {
+      if (!targetIds.has(suggestion.id)) continue;
+
+      const currentSuggestion = nextSuggestions.find((item) => item.id === suggestion.id) || suggestion;
+      const equalizedQuantity = calculateEqualizedQuantity(nextSuggestions, currentSuggestion);
+      if (equalizedQuantity === null) continue;
+
+      const nextQuantity = clampSuggestionQuantity(nextSuggestions, currentSuggestion, equalizedQuantity);
+      if (nextQuantity === currentSuggestion.quantity) continue;
+
+      changedRows += 1;
+      nextUnits += nextQuantity;
+      nextSuggestions = nextSuggestions.map((item) => (
+        item.id === currentSuggestion.id ? { ...item, quantity: nextQuantity } : item
+      ));
+    }
+
+    if (changedRows === 0) {
+      setSuggestionMessage('Nenhuma linha precisava de ajuste para equalizar dias de estoque.');
+      return;
+    }
+
+    if (suggestionView === 'confirmed') {
+      setConfirmedSuggestions(nextSuggestions);
+    } else {
+      setTransferSuggestions(nextSuggestions);
+    }
+    setSuggestionMessage(`${changedRows} linha${changedRows === 1 ? '' : 's'} equalizada${changedRows === 1 ? '' : 's'} por dias de estoque.`);
+    addReallocationAuditLog({
+      action: 'Dias equalizados',
+      detail: `${changedRows} linha${changedRows === 1 ? '' : 's'} ajustada${changedRows === 1 ? '' : 's'} (${suggestionView === 'confirmed' ? 'confirmadas' : 'sugestoes'})`,
+      count: changedRows,
+      units: nextUnits,
+    });
+  };
+
   const confirmSelectedSuggestions = () => {
     const selectedRows = transferSuggestions.filter((suggestion) => selectedSuggestionIdSet.has(suggestion.id));
     if (selectedRows.length === 0) {
@@ -1374,21 +1580,31 @@ export function ReallocationManager({
       return;
     }
 
+    const exportableRows = selectedRows.filter((suggestion) => suggestion.erpCode && suggestion.quantity > 0);
+    const heldRows = selectedRows.length - exportableRows.length;
+
+    if (exportableRows.length === 0) {
+      alert('Nenhuma das sugestões selecionadas tem quantidade e código ERP para exportar. As linhas zeradas continuam em sugestões.');
+      return;
+    }
+
     setConfirmedSuggestions((current) => {
       const byIdentity = new Map(current.map((suggestion) => [suggestionIdentityKey(suggestion), suggestion]));
-      selectedRows.forEach((suggestion) => {
+      exportableRows.forEach((suggestion) => {
         byIdentity.set(suggestionIdentityKey(suggestion), suggestion);
       });
       return Array.from(byIdentity.values());
     });
-    setTransferSuggestions((current) => current.filter((suggestion) => !selectedSuggestionIdSet.has(suggestion.id)));
+    const exportableIds = new Set(exportableRows.map((suggestion) => suggestion.id));
+    setTransferSuggestions((current) => current.filter((suggestion) => !exportableIds.has(suggestion.id)));
     setSelectedSuggestionIds([]);
     setSuggestionView('confirmed');
+    setSuggestionMessage(`${exportableRows.length} sugestão${exportableRows.length === 1 ? '' : 'es'} exportável${exportableRows.length === 1 ? '' : 'is'} confirmada${exportableRows.length === 1 ? '' : 's'}.${heldRows > 0 ? ` ${heldRows} linha${heldRows === 1 ? '' : 's'} zerada${heldRows === 1 ? '' : 's'} ou sem ERP continuou${heldRows === 1 ? '' : 'aram'} em sugestões.` : ''}`);
     addReallocationAuditLog({
       action: 'Sugestão confirmada',
-      detail: `${selectedRows.length} linhas enviadas para a etapa confirmada`,
-      count: selectedRows.length,
-      units: selectedRows.reduce((sum, suggestion) => sum + suggestion.quantity, 0),
+      detail: `${exportableRows.length} linhas enviadas para a etapa confirmada${heldRows > 0 ? `; ${heldRows} mantidas em sugestoes` : ''}`,
+      count: exportableRows.length,
+      units: exportableRows.reduce((sum, suggestion) => sum + suggestion.quantity, 0),
     });
   };
 
@@ -1507,10 +1723,7 @@ export function ReallocationManager({
 
     const exportableSuggestions = confirmedSuggestions.filter((suggestion) => suggestion.erpCode && suggestion.quantity > 0);
     const missingCodeCount = confirmedSuggestions.filter((suggestion) => !suggestion.erpCode && suggestion.quantity > 0).length;
-    const content = exportableSuggestions
-      .filter((suggestion) => suggestion.erpCode && suggestion.quantity > 0)
-      .map((suggestion) => txtLine(suggestion.originCode, suggestion.destinationCode, suggestion.erpCode, suggestion.quantity))
-      .join('\n');
+    const content = buildSuggestionsTxtContent(exportableSuggestions);
 
     if (!content) {
       if (confirmedSuggestions.length === 0) {
@@ -1524,20 +1737,29 @@ export function ReallocationManager({
       return;
     }
 
-    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    const fileName = `sugestao-remanejamento-${downloadTimestamp()}.txt`;
-    link.href = url;
-    link.download = fileName;
-    link.click();
-    URL.revokeObjectURL(url);
+    const fileName = `pedido-transferencia-${downloadTimestamp()}.txt`;
+    downloadTxtContent(fileName, content);
+    const order: ReallocationTransferOrder = {
+      id: `transfer-order|${Date.now()}|${Math.random().toString(36).slice(2)}`,
+      createdAt: new Date().toISOString(),
+      fileName,
+      content,
+      rows: exportableSuggestions,
+      lineCount: exportableSuggestions.length,
+      units: exportableSuggestions.reduce((sum, suggestion) => sum + suggestion.quantity, 0),
+      sourceSnapshot: stockSnapshot?.source_file || null,
+    };
+    const exportedIds = new Set(exportableSuggestions.map((suggestion) => suggestion.id));
+    setTransferOrders((current) => [order, ...current].slice(0, 40));
+    setConfirmedSuggestions((current) => current.filter((suggestion) => !exportedIds.has(suggestion.id)));
+    setSuggestionView('orders');
     setShowExportConfirm(false);
+    setSuggestionMessage(`${order.lineCount} linha${order.lineCount === 1 ? '' : 's'} exportada${order.lineCount === 1 ? '' : 's'} e registrada${order.lineCount === 1 ? '' : 's'} em Pedidos.`);
     addReallocationAuditLog({
       action: 'TXT exportado',
       detail: `${fileName} - ${exportableSuggestions.length} linhas`,
       count: exportableSuggestions.length,
-      units: exportableSuggestions.reduce((sum, suggestion) => sum + suggestion.quantity, 0),
+      units: order.units,
     });
   };
 
@@ -1570,6 +1792,27 @@ export function ReallocationManager({
     setSuggestionView('confirmed');
     setSelectedSuggestionIds([]);
     setShowExportConfirm(true);
+  };
+
+  const reexportTransferOrder = (order: ReallocationTransferOrder) => {
+    if (!canExport) {
+      alert(getBlockedMessage('reexportar pedido de transferencia', 'perfumePurchasingOrSupreme'));
+      return;
+    }
+
+    const content = order.content || buildSuggestionsTxtContent(order.rows);
+    if (!content) {
+      alert('Esse pedido não possui linhas para reexportar.');
+      return;
+    }
+
+    downloadTxtContent(order.fileName, content);
+    addReallocationAuditLog({
+      action: 'Pedido reexportado',
+      detail: `${order.fileName} - ${order.lineCount} linhas`,
+      count: order.lineCount,
+      units: order.units,
+    });
   };
 
   const exportConferenceCsv = () => {
@@ -1915,16 +2158,6 @@ export function ReallocationManager({
   return (
     <main className="reallocation-workbench flex h-[calc(100dvh-4rem)] w-full max-w-none flex-col overflow-hidden px-2 py-2 sm:px-3 sm:py-2">
       <input
-        ref={fileInputRef}
-        type="file"
-        accept=".csv"
-        className="hidden"
-        onChange={(event) => {
-          const file = event.target.files?.[0];
-          if (file) importCatalog(file);
-        }}
-      />
-      <input
         ref={stockInputRef}
         type="file"
         accept=".csv,.xlsx,.xls"
@@ -1965,7 +2198,7 @@ export function ReallocationManager({
         {showTopPanel ? (
         <div className="relative z-[90] grid gap-1.5 border-b border-slate-300 bg-slate-100/80 p-1.5 xl:grid-cols-[minmax(980px,1fr)_420px_150px]">
           <div className="min-w-0">
-            <div className="grid grid-cols-1 items-start gap-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
+            <div className="grid grid-cols-1 items-start gap-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-9">
               <QuickFilterBox
                 title="Un. Negocio Origem"
                 columns={['Codigo', 'Apelido', 'Cidade']}
@@ -2013,6 +2246,25 @@ export function ReallocationManager({
                 onChange={setClassificationFilters}
                 onQuickSearch={searchClassificationOptions}
                 allowManual
+                alignPopup="right"
+              />
+              <QuickFilterBox
+                title="Tipo necessidade"
+                columns={['Tipo']}
+                placeholder="Filtre ruptura, excesso, atencao..."
+                options={needTypeOptions}
+                selected={needTypeFilters}
+                onChange={setNeedTypeFilters}
+                hideInitialOptions
+              />
+              <QuickFilterBox
+                title="Fornecedor ult. compra"
+                columns={['Fornecedor']}
+                placeholder="Informe fornecedor da ultima compra"
+                options={lastPurchaseSupplierOptions}
+                selected={lastPurchaseSupplierFilters}
+                onChange={setLastPurchaseSupplierFilters}
+                hideInitialOptions
                 alignPopup="right"
               />
               <CurvePriorityBox
@@ -2066,6 +2318,7 @@ export function ReallocationManager({
             <StatusMetric label="Estoque" value={stockItems.length.toLocaleString('pt-BR')} tone="indigo" compact />
             <StatusMetric label="Sugestões" value={transferSuggestions.length.toLocaleString('pt-BR')} tone="violet" compact />
             <StatusMetric label="Confirmadas" value={confirmedSuggestions.length.toLocaleString('pt-BR')} tone="emerald" compact />
+            <StatusMetric label="Pedidos" value={transferOrders.length.toLocaleString('pt-BR')} tone="indigo" compact />
             <StatusMetric label="Produtos mov." value={new Set(transferSuggestions.map((item) => item.ean)).size.toLocaleString('pt-BR')} tone="violet" compact />
             <StatusMetric label="Produtos" value={totalProducts.toLocaleString('pt-BR')} compact />
           </div>
@@ -2098,18 +2351,6 @@ export function ReallocationManager({
                 <>
                   <div className="fixed inset-0 z-[95]" onClick={() => setShowDataActions(false)} />
                   <div className="absolute right-0 top-[calc(100%+6px)] z-[100] w-56 rounded-xl border border-slate-200 bg-white p-1.5 shadow-2xl">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowDataActions(false);
-                        fileInputRef.current?.click();
-                      }}
-                      disabled={importing || !canImportData}
-                      title={dataImportPermissionTitle}
-                      className="flex h-9 w-full items-center gap-2 rounded-lg px-3 text-left text-[10px] font-black uppercase text-slate-700 hover:bg-violet-50 disabled:opacity-50"
-                    >
-                      <Upload size={13} /> {importing ? 'Importando...' : 'Importar CSV'}
-                    </button>
                     <button
                       type="button"
                       onClick={() => {
@@ -2293,6 +2534,13 @@ export function ReallocationManager({
               >
                 Sugestão confirmada {confirmedSuggestions.length > 0 ? `(${confirmedSuggestions.length})` : ''}
               </button>
+              <button
+                type="button"
+                onClick={() => changeSuggestionView('orders')}
+                className={`rounded px-3 text-[10px] font-black uppercase transition ${suggestionView === 'orders' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-100'}`}
+              >
+                Pedidos {transferOrders.length > 0 ? `(${transferOrders.length})` : ''}
+              </button>
             </div>
             {suggestionView === 'draft' ? (
               <button
@@ -2303,7 +2551,7 @@ export function ReallocationManager({
               >
                 <Check size={13} className="mr-1 inline-block" /> Confirmar sugestão
               </button>
-            ) : (
+            ) : suggestionView === 'confirmed' ? (
               <button
                 type="button"
                 onClick={removeSelectedConfirmedSuggestions}
@@ -2312,6 +2560,10 @@ export function ReallocationManager({
               >
                 <Trash2 size={13} className="mr-1 inline-block" /> Remover selecionadas
               </button>
+            ) : (
+              <span className="inline-flex h-8 items-center rounded-md bg-slate-100 px-3 text-[10px] font-black uppercase text-slate-500">
+                Histórico de pedidos
+              </span>
             )}
             <button
               type="button"
@@ -2320,6 +2572,15 @@ export function ReallocationManager({
               className={`h-8 rounded-md px-3 text-[10px] font-black uppercase disabled:opacity-40 ${showOnlyProblemSuggestions ? 'bg-slate-900 text-white' : 'bg-amber-50 text-amber-700'}`}
             >
               {showOnlyProblemSuggestions ? 'Mostrar todos' : 'So problemas'}
+            </button>
+            <button
+              type="button"
+              onClick={equalizeStockDays}
+              disabled={equalizeTargetCount === 0}
+              title={selectedSuggestionIds.length > 0 ? 'Equalizar dias das sugestoes selecionadas' : 'Equalizar dias das sugestoes visiveis'}
+              className="h-8 rounded-md bg-teal-600 px-3 text-[10px] font-black uppercase text-white shadow-sm disabled:opacity-40"
+            >
+              <SlidersHorizontal size={13} className="mr-1 inline-block" /> Equalizar dias {selectedSuggestionIds.length > 0 ? `(${selectedSuggestionIds.length})` : ''}
             </button>
             <button
               type="button"
@@ -2350,7 +2611,9 @@ export function ReallocationManager({
           <div className="ml-auto flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto">
             {suggestionTableSearch && (
               <span className="rounded-md bg-white px-2 py-1 text-[10px] font-black uppercase text-slate-500 shadow-sm">
-                {sortedTransferSuggestions.length.toLocaleString('pt-BR')} de {tableSearchBaseCount.toLocaleString('pt-BR')}
+                {suggestionView === 'orders'
+                  ? `${displayedTransferOrders.length.toLocaleString('pt-BR')} de ${transferOrders.length.toLocaleString('pt-BR')}`
+                  : `${sortedTransferSuggestions.length.toLocaleString('pt-BR')} de ${tableSearchBaseCount.toLocaleString('pt-BR')}`}
               </span>
             )}
             <div className="relative w-full sm:w-[360px] xl:w-[440px]">
@@ -2359,7 +2622,7 @@ export function ReallocationManager({
                 type="search"
                 value={suggestionTableSearch}
                 onChange={(event) => setSuggestionTableSearch(event.target.value)}
-                placeholder="Pesquisar na tabela..."
+                placeholder={suggestionView === 'orders' ? 'Pesquisar pedidos...' : 'Pesquisar na tabela...'}
                 className="h-9 w-full rounded-md border border-slate-200 bg-white px-9 text-xs font-bold text-slate-800 outline-none shadow-sm placeholder:text-slate-400 focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
               />
               {suggestionTableSearch && (
@@ -2376,6 +2639,54 @@ export function ReallocationManager({
           </div>
         </div>
 
+        {suggestionView === 'orders' ? (
+          <div className="min-h-0 flex-1 overflow-auto rounded-2xl border border-slate-200 bg-white p-3">
+            <div className="grid gap-2">
+              {displayedTransferOrders.map((order) => (
+                <div key={order.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-black uppercase text-slate-900">{order.fileName}</p>
+                      <p className="mt-1 text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                        {new Date(order.createdAt).toLocaleString('pt-BR')} {order.sourceSnapshot ? `- ${order.sourceSnapshot}` : ''}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => reexportTransferOrder(order)}
+                      disabled={!canExport}
+                      title={exportPermissionTitle}
+                      className="h-9 rounded-md bg-slate-900 px-3 text-[10px] font-black uppercase text-white shadow-sm disabled:opacity-40"
+                    >
+                      <Download size={13} className="mr-1 inline-block" /> Reexportar TXT
+                    </button>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <span className="rounded-full bg-white px-2 py-1 text-[10px] font-black uppercase text-slate-600">{order.lineCount.toLocaleString('pt-BR')} linhas</span>
+                    <span className="rounded-full bg-white px-2 py-1 text-[10px] font-black uppercase text-violet-700">{wholeNumber(order.units)} un.</span>
+                    <span className="rounded-full bg-white px-2 py-1 text-[10px] font-black uppercase text-slate-500">{new Set(order.rows.map((row) => row.ean)).size.toLocaleString('pt-BR')} produtos</span>
+                    <span className="rounded-full bg-white px-2 py-1 text-[10px] font-black uppercase text-slate-500">{new Set(order.rows.map((row) => row.originCode)).size.toLocaleString('pt-BR')} origens</span>
+                    <span className="rounded-full bg-white px-2 py-1 text-[10px] font-black uppercase text-slate-500">{new Set(order.rows.map((row) => row.destinationCode)).size.toLocaleString('pt-BR')} destinos</span>
+                  </div>
+                  <div className="mt-3 max-h-28 overflow-auto rounded-lg border border-slate-200 bg-white">
+                    {order.rows.slice(0, 12).map((row) => (
+                      <div key={`${order.id}-${row.id}`} className="grid grid-cols-[1fr_90px_80px] gap-2 border-b border-slate-100 px-3 py-2 text-[10px] font-bold uppercase last:border-b-0">
+                        <span className="truncate text-slate-700">{row.description}</span>
+                        <span className="text-slate-400">{row.originCode} - {row.destinationCode}</span>
+                        <span className="text-right font-black text-emerald-700">{wholeNumber(row.quantity)} un.</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+              {displayedTransferOrders.length === 0 && (
+                <div className="flex h-72 items-center justify-center rounded-xl border border-dashed border-slate-300 text-center text-[10px] font-black uppercase tracking-widest text-slate-400">
+                  {suggestionTableSearch ? 'Nenhum pedido encontrado na pesquisa' : 'Nenhum pedido de transferencia exportado ainda'}
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
         <div className="min-h-0 flex-1 overflow-auto rounded-2xl border border-slate-200 bg-white">
           <table className="table-fixed border-separate border-spacing-0 text-sm whitespace-nowrap" style={{ width: `${suggestionTableWidth}px`, minWidth: `${suggestionTableWidth}px` }}>
             <colgroup>
@@ -2404,6 +2715,7 @@ export function ReallocationManager({
             </tbody>
           </table>
         </div>
+        )}
       </section>
 
       {showAdvancedRules && (
@@ -2484,6 +2796,41 @@ export function ReallocationManager({
                   max={10}
                 />
               </div>
+              <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
+                <TransferRuleInput
+                  label="Ult. venda ate dias"
+                  value={lastSaleMaxDays}
+                  onChange={setLastSaleMaxDays}
+                  min={0}
+                  max={9999}
+                />
+                <TransferRuleInput
+                  label="Ult. compra ate dias"
+                  value={lastPurchaseMaxDays}
+                  onChange={setLastPurchaseMaxDays}
+                  min={0}
+                  max={9999}
+                />
+              </div>
+              <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
+                <TransferRuleInput
+                  label="Ruptura venda minima"
+                  value={minRuptureSales}
+                  onChange={setMinRuptureSales}
+                  min={0}
+                  max={999999}
+                />
+                <TransferRuleInput
+                  label="% suprida maxima"
+                  value={maxSuppliedPercent}
+                  onChange={setMaxSuppliedPercent}
+                  min={0}
+                  max={9999}
+                />
+              </div>
+              <p className="mt-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                Use 0 para desligar. Os filtros numericos mantem apenas linhas dentro dos limites informados.
+              </p>
             </div>
 
             <div className="flex justify-end gap-2 border-t border-slate-200 bg-slate-50 px-4 py-3">

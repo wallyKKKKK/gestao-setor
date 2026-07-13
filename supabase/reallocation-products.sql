@@ -36,6 +36,21 @@ on public.reallocation_products (classification);
 create index if not exists reallocation_products_search_trgm_idx
 on public.reallocation_products using gin (search_text gin_trgm_ops);
 
+create index if not exists reallocation_products_description_trgm_idx
+on public.reallocation_products using gin (description gin_trgm_ops);
+
+create index if not exists reallocation_products_manufacturer_trgm_idx
+on public.reallocation_products using gin (manufacturer gin_trgm_ops);
+
+create index if not exists reallocation_products_classification_trgm_idx
+on public.reallocation_products using gin (classification gin_trgm_ops);
+
+create index if not exists reallocation_products_erp_code_trgm_idx
+on public.reallocation_products using gin (erp_code gin_trgm_ops);
+
+create index if not exists reallocation_products_ean_trgm_idx
+on public.reallocation_products using gin (ean gin_trgm_ops);
+
 create or replace function public.set_reallocation_products_updated_at()
 returns trigger as $$
 begin

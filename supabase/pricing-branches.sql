@@ -6,6 +6,7 @@ create table if not exists public.pricing_branches (
   legal_name text not null default '',
   uf text not null default '',
   cnpj text not null default '',
+  logistics_group text not null default '',
   is_active boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -20,8 +21,14 @@ add column if not exists uf text not null default '';
 alter table public.pricing_branches
 add column if not exists cnpj text not null default '';
 
+alter table public.pricing_branches
+add column if not exists logistics_group text not null default '';
+
 create index if not exists pricing_branches_name_idx
 on public.pricing_branches (name);
+
+create index if not exists pricing_branches_logistics_group_idx
+on public.pricing_branches (logistics_group);
 
 create or replace function public.set_pricing_branches_updated_at()
 returns trigger
@@ -41,7 +48,8 @@ for each row execute function public.set_pricing_branches_updated_at();
 alter table public.pricing_branches enable row level security;
 
 drop policy if exists "Pricing team can read branches" on public.pricing_branches;
-create policy "Pricing team can read branches"
+drop policy if exists "Approved users can read branches" on public.pricing_branches;
+create policy "Approved users can read branches"
 on public.pricing_branches
 for select
 to authenticated
@@ -52,10 +60,6 @@ using (
     where profiles.id = auth.uid()
       and profiles.is_active = true
       and profiles.account_status = 'approved'
-      and (
-        profiles.role = 'admin'
-        or lower(profiles.sector) in ('precificação', 'price')
-      )
   )
 );
 
@@ -73,7 +77,8 @@ with check (
       and profiles.account_status = 'approved'
       and (
         profiles.role = 'admin'
-        or lower(profiles.sector) in ('precificação', 'price')
+        or lower(profiles.sector) = 'price'
+        or lower(profiles.sector) like 'precifica%'
       )
   )
 );
@@ -92,7 +97,8 @@ using (
       and profiles.account_status = 'approved'
       and (
         profiles.role = 'admin'
-        or lower(profiles.sector) in ('precificação', 'price')
+        or lower(profiles.sector) = 'price'
+        or lower(profiles.sector) like 'precifica%'
       )
   )
 )
@@ -105,7 +111,8 @@ with check (
       and profiles.account_status = 'approved'
       and (
         profiles.role = 'admin'
-        or lower(profiles.sector) in ('precificação', 'price')
+        or lower(profiles.sector) = 'price'
+        or lower(profiles.sector) like 'precifica%'
       )
   )
 );
@@ -124,7 +131,8 @@ using (
       and profiles.account_status = 'approved'
       and (
         profiles.role = 'admin'
-        or lower(profiles.sector) in ('precificação', 'price')
+        or lower(profiles.sector) = 'price'
+        or lower(profiles.sector) like 'precifica%'
       )
   )
 );

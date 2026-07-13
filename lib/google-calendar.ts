@@ -20,6 +20,52 @@ interface CalendarEventResponse {
   htmlLink?: string;
 }
 
+export class GoogleCalendarReconnectRequiredError extends Error {
+  constructor(message = "Sua conexão com o Google Calendar expirou. Conecte novamente.") {
+    super(message);
+    this.name = "GoogleCalendarReconnectRequiredError";
+  }
+}
+
+export function isGoogleReconnectRequiredError(error: unknown) {
+  return error instanceof GoogleCalendarReconnectRequiredError;
+}
+
+async function googleTokenError(response: Response) {
+  const text = await response.text();
+  try {
+    const data = JSON.parse(text) as { error?: string; error_description?: string };
+    if (data.error === "invalid_grant") {
+      return new GoogleCalendarReconnectRequiredError();
+    }
+    return new Error(data.error_description || data.error || text);
+  } catch {
+    return new Error(text);
+  }
+}
+
+async function googleCalendarApiError(response: Response) {
+  const text = await response.text();
+  try {
+    const data = JSON.parse(text) as {
+      error?: {
+        code?: number;
+        message?: string;
+        status?: string;
+      };
+    };
+    if (response.status === 401 || data.error?.status === "UNAUTHENTICATED") {
+      return new GoogleCalendarReconnectRequiredError();
+    }
+    return new Error(data.error?.message || text);
+  } catch {
+    if (response.status === 401) {
+      return new GoogleCalendarReconnectRequiredError();
+    }
+    return new Error(text);
+  }
+}
+
 export interface GoogleCalendarEvent {
   id: string;
   summary?: string;
@@ -129,7 +175,7 @@ export async function exchangeGoogleCodeForTokens(code: string) {
     }),
   });
 
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await googleTokenError(response);
   return await response.json() as GoogleTokensResponse;
 }
 
@@ -148,7 +194,7 @@ export async function refreshGoogleAccessToken(refreshToken: string) {
     }),
   });
 
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await googleTokenError(response);
   return await response.json() as GoogleTokensResponse;
 }
 
@@ -191,7 +237,7 @@ export async function createGoogleCalendarEvent(accessToken: string, meeting: Cr
     }),
   });
 
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await googleCalendarApiError(response);
   return await response.json() as CalendarEventResponse;
 }
 
@@ -208,7 +254,7 @@ export async function listGoogleCalendarEvents(accessToken: string, timeMin: str
     },
   });
 
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await googleCalendarApiError(response);
   const data = await response.json() as { items?: GoogleCalendarEvent[] };
 
   return data.items || [];
@@ -223,6 +269,6 @@ export async function deleteGoogleCalendarEvent(accessToken: string, eventId: st
   });
 
   if (!response.ok && response.status !== 410) {
-    throw new Error(await response.text());
+    throw await googleCalendarApiError(response);
   }
 }

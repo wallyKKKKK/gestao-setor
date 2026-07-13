@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { CheckCircle2, Edit3, FileText, MessageSquare, Plus, Trash2, X } from "lucide-react";
 import { createTradeTaskNote, deleteTradeTaskNote, fetchTradeTaskNotes } from "@/lib/api";
+import { MARGIN_FLOW_CATEGORY, formatMarginPercent, parseMarginFlowTaskNotes } from "@/lib/margin-flow-task";
 import { getRecurrenceLabel, getScheduleDisplayLabel } from "@/lib/task-recurrence";
 import type { ProcessedTask, Profile, Subtask, TradeTaskNote, UserRole } from "@/lib/types";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
@@ -23,6 +24,11 @@ export function TaskDrawer({ task, profiles, user, userRole, onTradeNotesChanged
   const [loadingTradeNotes, setLoadingTradeNotes] = useState(false);
   const [savingTradeNote, setSavingTradeNote] = useState(false);
   const isTradeTask = task?.category === "Trade";
+  const parsedMarginFlow = task?.category === MARGIN_FLOW_CATEGORY
+    ? parseMarginFlowTaskNotes(task.notes)
+    : { data: null, cleanNotes: task?.notes || "" };
+  const marginFlowData = parsedMarginFlow.data;
+  const displayNotes = parsedMarginFlow.cleanNotes;
 
   useEffect(() => {
     let isCurrent = true;
@@ -148,12 +154,32 @@ export function TaskDrawer({ task, profiles, user, userRole, onTradeNotesChanged
                 </div>
               </div>
 
+              {marginFlowData && (
+                <div className="rounded-2xl border border-emerald-100 bg-emerald-50/70 p-4 shadow-sm">
+                  <p className="mb-3 text-[8px] font-black uppercase tracking-widest text-emerald-500">Fluxo de margens</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="col-span-2 rounded-xl bg-white p-3">
+                      <p className="text-[8px] font-black uppercase text-slate-400">Categoria</p>
+                      <p className="mt-1 text-[11px] font-black uppercase leading-snug text-slate-900">{marginFlowData.category}</p>
+                    </div>
+                    <div className="rounded-xl bg-white p-3">
+                      <p className="text-[8px] font-black uppercase text-slate-400">Margem</p>
+                      <p className="mt-1 text-sm font-black text-emerald-700">{formatMarginPercent(marginFlowData.marginPercent)}</p>
+                    </div>
+                    <div className="rounded-xl bg-white p-3">
+                      <p className="text-[8px] font-black uppercase text-slate-400">Markup</p>
+                      <p className="mt-1 text-sm font-black text-indigo-700">{formatMarginPercent(marginFlowData.markupPercent)}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div className="space-y-2">
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2 flex items-center gap-2">
                   <FileText size={12}/> Instruções da Missão
                 </label>
                 <div className="bg-white p-6 rounded-2xl border border-slate-200 text-slate-700 font-medium leading-relaxed whitespace-pre-wrap text-sm break-all shadow-sm">
-                  {task.notes || "Sem notas adicionais."}
+                  {displayNotes || "Sem notas adicionais."}
                 </div>
               </div>
 

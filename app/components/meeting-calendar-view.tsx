@@ -227,7 +227,15 @@ export function MeetingCalendarView({
 
     getAuthHeaders()
       .then((headers) => fetch(`/api/google-calendar/events?userId=${defaultAssignedTo}&timeMin=${encodeURIComponent(start.toISOString())}&timeMax=${encodeURIComponent(end.toISOString())}`, { headers }))
-      .then((response) => response.ok ? response.json() : Promise.reject(response))
+      .then(async (response) => {
+        if (response.ok) return response.json();
+        const data = await response.json().catch(() => null);
+        if (data?.reconnectRequired && !cancelled) {
+          setGoogleStatus((current) => ({ ...current, connected: false }));
+          setSyncGoogleCalendar(false);
+        }
+        throw new Error(data?.error || 'Não foi possível carregar eventos do Google Calendar.');
+      })
       .then((data) => {
         if (!cancelled) setGoogleEvents(data.events || []);
       })
@@ -299,6 +307,12 @@ export function MeetingCalendarView({
 
   const getAssigneeName = (task: ProcessedTask) =>
     profiles.find((profile) => profile.id === task.assigned_to)?.full_name || 'Sem responsável';
+
+  const handleGoogleReconnectRequired = useCallback((message?: string) => {
+    setGoogleStatus((current) => ({ ...current, connected: false }));
+    setSyncGoogleCalendar(false);
+    alert(message || 'Sua conexão com o Google Calendar expirou. Conecte novamente.');
+  }, []);
 
   const getMeetingTime = (task: ProcessedTask) => {
     const match = task.notes?.match(/Horário:\s*([0-9]{2}:[0-9]{2})/i);
@@ -390,6 +404,10 @@ export function MeetingCalendarView({
 
         if (!response.ok) {
           const data = await response.json().catch(() => null);
+          if (data?.reconnectRequired) {
+            handleGoogleReconnectRequired(data.error);
+            return;
+          }
           alert(data?.error || 'Não foi possível enviar ao Google Calendar.');
           return;
         }
@@ -429,6 +447,10 @@ export function MeetingCalendarView({
 
     if (!response.ok) {
       const data = await response.json().catch(() => null);
+      if (data?.reconnectRequired) {
+        handleGoogleReconnectRequired(data.error);
+        return;
+      }
       alert(data?.error || 'Não foi possível excluir o evento do Google Calendar.');
       return;
     }

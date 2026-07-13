@@ -17,6 +17,15 @@ interface StockRow {
   curve: string;
   confirmed_purchase: number;
   confirmed_transfer: number;
+  last_sale_days: number;
+  last_purchase_days: number;
+  last_purchase_supplier: string | null;
+  need_type: string | null;
+  rupture_sales: number;
+  supplied_percent: number;
+  min_stock: number;
+  max_stock: number;
+  need_cost: number;
 }
 
 interface StockProductAttribute {
@@ -270,6 +279,15 @@ function parseStockRows(allRows: string[][]) {
   });
   const confirmedPurchaseIndex = findHeader(headers, ["COMPRA CONFIRMADA", "COMPRA CONF", "COMPRA"]);
   const confirmedTransferIndex = findHeader(headers, ["TRANSF CONFIRMADA", "TRANSFERENCIA CONFIRMADA", "TRANSF CONF", "TRANSFERENCIA CONF"]);
+  const lastSaleDaysIndex = findHeader(headers, ["ULT VENDA DIAS", "ULTIMA VENDA DIAS", "ULT VENDA", "ULTIMA VENDA"]);
+  const lastPurchaseDaysIndex = findHeader(headers, ["ULT COMPRA DIAS", "ULTIMA COMPRA DIAS", "ULT COMPRA", "ULTIMA COMPRA"]);
+  const lastPurchaseSupplierIndex = findHeader(headers, ["FORNECEDOR ULT COMPRA", "FORNECEDOR ULTIMA COMPRA", "ULTIMO FORNECEDOR"]);
+  const needTypeIndex = findHeader(headers, ["TIPO NECESSIDADE", "NECESSIDADE TIPO"]);
+  const ruptureSalesIndex = findHeader(headers, ["RUPTURA VENDA"]);
+  const suppliedPercentIndex = findHeader(headers, ["% SUPRIDA QTD", "PERCENTUAL SUPRIDA", "SUPRIDA QTD"]);
+  const minStockIndex = findHeader(headers, ["EST MIN", "ESTOQUE MINIMO"], { reject: ["ORIGEM", "DIAS", "VIG"] });
+  const maxStockIndex = findHeader(headers, ["EST MAX", "ESTOQUE MAXIMO"], { reject: ["ORIGEM", "DIAS", "VIG"] });
+  const needCostIndex = findHeader(headers, ["CUSTO X NECESSIDADE"]);
 
   if (storeCodeIndex < 0 || storeNameIndex < 0 || eanIndex < 0 || productIndex < 0 || stockIndex < 0 || (monthlyAvgIndex < 0 && dailyAvgIndex < 0)) {
     throw new Error("Arquivo precisa ter loja, apelido da loja, EAN, produto, estoque e media de venda mensal ou diaria.");
@@ -322,10 +340,36 @@ function parseStockRows(allRows: string[][]) {
       curve: requiredCell(cells, curveIndex).toUpperCase(),
       confirmed_purchase: parseNumber(requiredCell(cells, confirmedPurchaseIndex)),
       confirmed_transfer: parseNumber(requiredCell(cells, confirmedTransferIndex)),
+      last_sale_days: parseNumber(requiredCell(cells, lastSaleDaysIndex)),
+      last_purchase_days: parseNumber(requiredCell(cells, lastPurchaseDaysIndex)),
+      last_purchase_supplier: requiredCell(cells, lastPurchaseSupplierIndex).toUpperCase() || null,
+      need_type: requiredCell(cells, needTypeIndex).toUpperCase() || null,
+      rupture_sales: parseNumber(requiredCell(cells, ruptureSalesIndex)),
+      supplied_percent: parseNumber(requiredCell(cells, suppliedPercentIndex)),
+      min_stock: parseNumber(requiredCell(cells, minStockIndex)),
+      max_stock: parseNumber(requiredCell(cells, maxStockIndex)),
+      need_cost: parseNumber(requiredCell(cells, needCostIndex)),
     }];
   });
 
   return { rows, skipped, attributes: Array.from(attributesByEan.values()) };
+}
+
+function stripMovementColumns(rows: StockRow[]) {
+  return rows.map((row) => {
+    const fallbackRow: Partial<StockRow> = { ...row };
+    delete fallbackRow.last_sale_days;
+    delete fallbackRow.last_purchase_days;
+    delete fallbackRow.last_purchase_supplier;
+    delete fallbackRow.need_type;
+    delete fallbackRow.rupture_sales;
+    delete fallbackRow.supplied_percent;
+    delete fallbackRow.min_stock;
+    delete fallbackRow.max_stock;
+    delete fallbackRow.need_cost;
+
+    return fallbackRow;
+  });
 }
 
 export async function POST(request: Request) {
@@ -445,10 +489,20 @@ export async function POST(request: Request) {
 
     importStage = "salvar linhas de estoque";
     const insertChunkSize = 1000;
+    let movementColumnsAvailable = true;
     for (let index = 0; index < payload.length; index += insertChunkSize) {
-      const { error } = await supabase
+      const chunk = payload.slice(index, index + insertChunkSize);
+      let { error } = await supabase
         .from("reallocation_stock_items")
-        .insert(payload.slice(index, index + insertChunkSize));
+        .insert(chunk);
+
+      if (error && /last_sale_days|last_purchase_days|last_purchase_supplier|need_type|rupture_sales|supplied_percent|min_stock|max_stock|need_cost|schema cache/i.test(error.message || "")) {
+        movementColumnsAvailable = false;
+        const fallback = await supabase
+          .from("reallocation_stock_items")
+          .insert(stripMovementColumns(chunk));
+        error = fallback.error;
+      }
 
       if (error) throw error;
     }
@@ -462,6 +516,7 @@ export async function POST(request: Request) {
       unmatchedProducts: payload.length - matchedProducts,
       enrichedProducts,
       skipped,
+      movementColumnsAvailable,
     });
   } catch (error) {
     if (createdSnapshotId && supabase) {

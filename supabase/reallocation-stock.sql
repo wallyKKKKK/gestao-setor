@@ -1,3 +1,5 @@
+create extension if not exists pg_trgm;
+
 create table if not exists public.reallocation_stock_snapshots (
   id uuid primary key default gen_random_uuid(),
   source_file text,
@@ -21,8 +23,44 @@ create table if not exists public.reallocation_stock_items (
   curve text,
   confirmed_purchase numeric not null default 0,
   confirmed_transfer numeric not null default 0,
+  last_sale_days numeric not null default 0,
+  last_purchase_days numeric not null default 0,
+  last_purchase_supplier text,
+  need_type text,
+  rupture_sales numeric not null default 0,
+  supplied_percent numeric not null default 0,
+  min_stock numeric not null default 0,
+  max_stock numeric not null default 0,
+  need_cost numeric not null default 0,
   created_at timestamptz not null default now()
 );
+
+alter table public.reallocation_stock_items
+add column if not exists last_sale_days numeric not null default 0;
+
+alter table public.reallocation_stock_items
+add column if not exists last_purchase_days numeric not null default 0;
+
+alter table public.reallocation_stock_items
+add column if not exists last_purchase_supplier text;
+
+alter table public.reallocation_stock_items
+add column if not exists need_type text;
+
+alter table public.reallocation_stock_items
+add column if not exists rupture_sales numeric not null default 0;
+
+alter table public.reallocation_stock_items
+add column if not exists supplied_percent numeric not null default 0;
+
+alter table public.reallocation_stock_items
+add column if not exists min_stock numeric not null default 0;
+
+alter table public.reallocation_stock_items
+add column if not exists max_stock numeric not null default 0;
+
+alter table public.reallocation_stock_items
+add column if not exists need_cost numeric not null default 0;
 
 create index if not exists reallocation_stock_items_snapshot_idx
 on public.reallocation_stock_items (snapshot_id);
@@ -35,6 +73,54 @@ on public.reallocation_stock_items (ean);
 
 create index if not exists reallocation_stock_items_erp_idx
 on public.reallocation_stock_items (erp_code);
+
+create index if not exists reallocation_stock_items_last_sale_days_idx
+on public.reallocation_stock_items (last_sale_days);
+
+create index if not exists reallocation_stock_items_last_purchase_days_idx
+on public.reallocation_stock_items (last_purchase_days);
+
+create index if not exists reallocation_stock_items_need_type_idx
+on public.reallocation_stock_items (need_type);
+
+create index if not exists reallocation_stock_items_last_purchase_supplier_idx
+on public.reallocation_stock_items (last_purchase_supplier);
+
+create index if not exists reallocation_stock_items_rupture_sales_idx
+on public.reallocation_stock_items (rupture_sales);
+
+create index if not exists reallocation_stock_items_supplied_percent_idx
+on public.reallocation_stock_items (supplied_percent);
+
+create index if not exists reallocation_stock_items_snapshot_store_idx
+on public.reallocation_stock_items (snapshot_id, store_code);
+
+create index if not exists reallocation_stock_items_snapshot_ean_idx
+on public.reallocation_stock_items (snapshot_id, ean);
+
+create index if not exists reallocation_stock_items_snapshot_erp_idx
+on public.reallocation_stock_items (snapshot_id, erp_code);
+
+create index if not exists reallocation_stock_items_snapshot_need_type_idx
+on public.reallocation_stock_items (snapshot_id, need_type);
+
+create index if not exists reallocation_stock_items_store_code_trgm_idx
+on public.reallocation_stock_items using gin (store_code gin_trgm_ops);
+
+create index if not exists reallocation_stock_items_store_name_trgm_idx
+on public.reallocation_stock_items using gin (store_name gin_trgm_ops);
+
+create index if not exists reallocation_stock_items_ean_trgm_idx
+on public.reallocation_stock_items using gin (ean gin_trgm_ops);
+
+create index if not exists reallocation_stock_items_erp_code_trgm_idx
+on public.reallocation_stock_items using gin (erp_code gin_trgm_ops);
+
+create index if not exists reallocation_stock_items_product_description_trgm_idx
+on public.reallocation_stock_items using gin (product_description gin_trgm_ops);
+
+create index if not exists reallocation_stock_items_curve_trgm_idx
+on public.reallocation_stock_items using gin (curve gin_trgm_ops);
 
 alter table public.reallocation_stock_snapshots enable row level security;
 alter table public.reallocation_stock_items enable row level security;

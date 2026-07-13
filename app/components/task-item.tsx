@@ -3,7 +3,8 @@
 import { memo, useRef, useState } from "react";
 import type { PointerEvent, WheelEvent } from "react";
 import { Check, ChevronDown, Edit3, MessageSquare, RotateCcw, Trash2 } from "lucide-react";
-import { addAuditLog, addTaskHistory, updateTaskCompletion } from "@/lib/api";
+import { addAuditLog, addTaskHistory, updateTaskCompletion, updateTaskSubtasks } from "@/lib/api";
+import { MARGIN_FLOW_CATEGORY, formatMarginPercent, parseMarginFlowTaskNotes } from "@/lib/margin-flow-task";
 import { getPermissionDeniedMessage } from "@/lib/permissions";
 import { formatToBR, getScheduleDisplayLabel, getTodayStr } from "@/lib/task-recurrence";
 import type { Profile, Subtask, TaskItemProps } from "@/lib/types";
@@ -32,6 +33,11 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
   const assignedFirstName = assignedProfile?.full_name?.split(" ")[0] || "Sem dono";
   const assignedInitial = assignedProfile?.full_name?.charAt(0) || "?";
   const scheduleDisplayLabel = getScheduleDisplayLabel(task);
+  const parsedMarginFlow = task.category === MARGIN_FLOW_CATEGORY
+    ? parseMarginFlowTaskNotes(task.notes)
+    : { data: null, cleanNotes: task.notes || "" };
+  const marginFlowData = parsedMarginFlow.data;
+  const displayNotes = parsedMarginFlow.cleanNotes;
   const scheduleLabel = isLate
     ? `DESDE ${formatToBR(task.lastOcc)}`
     : isAdvanced
@@ -179,7 +185,11 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
       });
     }
 
-    await updateTaskCompletion(task.id, allDone ? todayStr : null, newSubtasks, Boolean(task.is_one_off && allDone));
+    if (allDone || task.isDoneToday) {
+      await updateTaskCompletion(task.id, allDone ? todayStr : null, newSubtasks, Boolean(task.is_one_off && allDone));
+    } else {
+      await updateTaskSubtasks(task.id, newSubtasks);
+    }
 
     if (currentUser) {
       const profile = profiles.find((p: Profile) => p.id === currentUser.id);
@@ -293,9 +303,9 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
             </h3>
             <p className={`text-[10px] font-bold text-slate-400 italic line-clamp-1 mt-1 max-w-[400px] min-h-[14px]
               ${task.isDoneToday ? "text-green-700/30" : ""}
-              ${task.notes ? "" : "invisible"}`}
+              ${displayNotes ? "" : "invisible"}`}
             >
-              {task.notes || "Sem descrição"}
+              {displayNotes || "Sem descrição"}
             </p>
           </div>
 
@@ -309,6 +319,19 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
             <span className="inline-flex h-6 items-center rounded-full border border-blue-200 bg-blue-50 px-3 text-[8px] font-black uppercase tracking-wide text-blue-700 shadow-sm">
               {task.category}
             </span>
+            {marginFlowData && (
+              <>
+                <span className="inline-flex h-6 max-w-[240px] items-center rounded-full border border-slate-200 bg-white px-3 text-[8px] font-black uppercase tracking-wide text-slate-700 shadow-sm">
+                  <span className="truncate">{marginFlowData.category}</span>
+                </span>
+                <span className="inline-flex h-6 items-center rounded-full border border-emerald-200 bg-emerald-50 px-3 text-[8px] font-black uppercase tracking-wide text-emerald-700 shadow-sm">
+                  Margem: {formatMarginPercent(marginFlowData.marginPercent)}
+                </span>
+                <span className="inline-flex h-6 items-center rounded-full border border-indigo-200 bg-indigo-50 px-3 text-[8px] font-black uppercase tracking-wide text-indigo-700 shadow-sm">
+                  Markup: {formatMarginPercent(marginFlowData.markupPercent)}
+                </span>
+              </>
+            )}
             {hasScheduleOverride && (
               <span className={`inline-flex h-6 items-center rounded-full px-3 text-[8px] font-black uppercase tracking-wide border shadow-sm ${
                 isAdvanced ? "bg-blue-600 border-blue-700 text-white" : "bg-[#232D4A] border-slate-900 text-white"

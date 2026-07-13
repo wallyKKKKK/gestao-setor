@@ -1,5 +1,6 @@
 import { supabase } from "@/lib/supabase";
-import type { AccountStatus, Announcement, AppDbNotification, AuditLog, PricingBranch, PricingProduct, Profile, ReallocationProduct, ReallocationStockItem, ReallocationStockSnapshot, Subtask, SupplierPaymentTerm, Task, TaskHistory, TradeTaskNote, UserRole } from "@/lib/types";
+import { getAuthHeaders } from "@/lib/auth-headers";
+import type { AccountStatus, Announcement, AppDbNotification, AuditLog, PricingBranch, PricingMarginRule, PricingProduct, Profile, ReallocationProduct, ReallocationStockItem, ReallocationStockSnapshot, Subtask, SupplierPaymentTerm, Task, TaskHistory, TradeTaskNote, UserRole } from "@/lib/types";
 
 interface CreateAnnouncementInput {
   title: string;
@@ -95,6 +96,21 @@ export type PricingBranchInput = Omit<PricingBranch, "id" | "created_at" | "upda
 export type SupplierPaymentTermInput = Omit<SupplierPaymentTerm, "id" | "created_at" | "updated_at"> & {
   id?: string;
 };
+
+export type PricingMarginRuleInput = Omit<PricingMarginRule, "id" | "created_at" | "updated_at"> & {
+  id?: string;
+};
+
+export type ReallocationProductInput = Omit<ReallocationProduct, "id" | "search_text" | "imported_at" | "created_at" | "updated_at"> & {
+  id?: string;
+};
+
+export type ReallocationProductAttributeField = "manufacturer" | "classification";
+
+export interface ReallocationProductAttributeSummary {
+  value: string;
+  count: number;
+}
 
 interface ReallocationProductFilters {
   searchTerm?: string;
@@ -246,13 +262,22 @@ export async function createAppNotification(input: CreateAppNotificationInput) {
 }
 
 export async function fetchPricingProducts() {
-  const { data, error } = await supabase
-    .from("pricing_products")
-    .select("*")
-    .order("description", { ascending: true });
+  const pageSize = 1000;
+  const rows: PricingProduct[] = [];
 
-  if (error) throw error;
-  return (data || []) as PricingProduct[];
+  for (let offset = 0; ; offset += pageSize) {
+    const { data, error } = await supabase
+      .from("pricing_products")
+      .select("*")
+      .order("description", { ascending: true })
+      .range(offset, offset + pageSize - 1);
+
+    if (error) throw error;
+    rows.push(...((data || []) as PricingProduct[]));
+    if (!data || data.length < pageSize) break;
+  }
+
+  return rows;
 }
 
 export async function fetchPricingBranches() {
@@ -263,6 +288,56 @@ export async function fetchPricingBranches() {
 
   if (error) throw error;
   return (data || []) as PricingBranch[];
+}
+
+export async function fetchPricingMarginRules() {
+  const { data, error } = await supabase
+    .from("pricing_margin_rules")
+    .select("*")
+    .order("line", { ascending: true })
+    .order("department", { ascending: true })
+    .order("category", { ascending: true });
+
+  if (error) {
+    if (error.code === "42P01" || error.code === "PGRST205") return [];
+    throw error;
+  }
+
+  return (data || []) as PricingMarginRule[];
+}
+
+export async function savePricingMarginRule(input: PricingMarginRuleInput) {
+  const response = await fetch("/api/pricing/margins", {
+    method: "POST",
+    headers: {
+      ...(await getAuthHeaders()),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+  const data = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    throw new Error(data?.error || "Erro ao salvar regra de margem.");
+  }
+
+  return data.rule as PricingMarginRule;
+}
+
+export async function deletePricingMarginRule(ruleId: string) {
+  const response = await fetch("/api/pricing/margins", {
+    method: "DELETE",
+    headers: {
+      ...(await getAuthHeaders()),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ id: ruleId }),
+  });
+  const data = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    throw new Error(data?.error || "Erro ao excluir regra de margem.");
+  }
 }
 
 export async function savePricingBranch(input: PricingBranchInput) {
@@ -345,25 +420,51 @@ export async function savePricingProduct(input: PricingProductInput) {
     month_end_price: input.month_end_price,
     competitor_prices: input.competitor_prices,
     store_prices: input.store_prices,
+    is_active: input.is_active !== false,
   };
 
   if (input.id) {
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from("pricing_products")
       .update(payload)
       .eq("id", input.id)
       .select("*")
       .single();
 
+    if (error?.code === "PGRST204") {
+      const { is_active, ...fallbackPayload } = payload;
+      void is_active;
+      const fallback = await supabase
+        .from("pricing_products")
+        .update(fallbackPayload)
+        .eq("id", input.id)
+        .select("*")
+        .single();
+      data = fallback.data;
+      error = fallback.error;
+    }
+
     if (error) throw error;
     return data as PricingProduct;
   }
 
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from("pricing_products")
     .upsert([payload], { onConflict: "ean" })
     .select("*")
     .single();
+
+  if (error?.code === "PGRST204") {
+    const { is_active, ...fallbackPayload } = payload;
+    void is_active;
+    const fallback = await supabase
+      .from("pricing_products")
+      .upsert([fallbackPayload], { onConflict: "ean" })
+      .select("*")
+      .single();
+    data = fallback.data;
+    error = fallback.error;
+  }
 
   if (error) throw error;
   return data as PricingProduct;
@@ -434,7 +535,7 @@ export async function fetchReallocationProducts(searchTermOrFilters: string | Re
     : searchTermOrFilters;
   let query = supabase
     .from("reallocation_products")
-    .select("*")
+    .select("id,erp_code,ean,description,manufacturer,classification,search_text,source_file,imported_at,created_at,updated_at")
     .order("description", { ascending: true })
     .limit(filters.limit || limit);
 
@@ -505,6 +606,42 @@ export async function fetchReallocationAttributeOptions(field: "manufacturer" | 
   return Array.from(options).slice(0, limit);
 }
 
+export async function fetchReallocationAttributeSummary(field: ReallocationProductAttributeField) {
+  const search = new URLSearchParams({ field });
+  const response = await fetch(`/api/reallocation/products/attributes?${search.toString()}`, {
+    headers: await getAuthHeaders(),
+  });
+  const data = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    throw new Error(data?.error || "Erro ao carregar resumo do cadastro de produtos.");
+  }
+
+  return (data.options || []) as ReallocationProductAttributeSummary[];
+}
+
+export async function renameReallocationProductAttribute(input: {
+  field: ReallocationProductAttributeField;
+  fromValue: string;
+  toValue: string;
+}) {
+  const response = await fetch("/api/reallocation/products/attributes", {
+    method: "PATCH",
+    headers: {
+      ...(await getAuthHeaders()),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+  const data = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    throw new Error(data?.error || "Erro ao atualizar cadastro de produtos.");
+  }
+
+  return data as { updated: number };
+}
+
 export async function countReallocationProducts() {
   const { count, error } = await supabase
     .from("reallocation_products")
@@ -512,6 +649,40 @@ export async function countReallocationProducts() {
 
   if (error) throw error;
   return count || 0;
+}
+
+export async function saveReallocationProduct(input: ReallocationProductInput) {
+  const response = await fetch("/api/reallocation/products", {
+    method: "POST",
+    headers: {
+      ...(await getAuthHeaders()),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+  const data = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    throw new Error(data?.error || "Erro ao salvar produto mestre.");
+  }
+
+  return data.product as ReallocationProduct;
+}
+
+export async function deleteReallocationProduct(productId: string) {
+  const response = await fetch("/api/reallocation/products", {
+    method: "DELETE",
+    headers: {
+      ...(await getAuthHeaders()),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ id: productId }),
+  });
+  const data = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    throw new Error(data?.error || "Erro ao excluir produto mestre.");
+  }
 }
 
 export async function fetchLatestReallocationStockSnapshot() {
@@ -726,6 +897,11 @@ export async function updateTaskCompletion(taskId: string, lastDoneDate: string 
     error = fallback.error;
   }
 
+  if (error) throw error;
+}
+
+export async function updateTaskSubtasks(taskId: string, subtasks: Subtask[]) {
+  const { error } = await supabase.from("tasks").update({ subtasks }).eq("id", taskId);
   if (error) throw error;
 }
 
