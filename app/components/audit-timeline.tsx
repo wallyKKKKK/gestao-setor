@@ -197,6 +197,7 @@ export function AuditTimeline({ logs }: AuditTimelineProps) {
           onChange={setSectorFilters}
           options={sectors.map((sector) => ({ value: sector, label: sector }))}
           buttonClassName="border-slate-200 bg-slate-50"
+          dropdownAlign="right"
         />
       </section>
 
