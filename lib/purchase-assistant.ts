@@ -727,6 +727,9 @@ async function loadContext(message: string) {
   const matchedOffers = dedupeOfferMatches(offers.map(offerToMatch)).slice(0, 24);
   const exportQuery = exportQueryFromMessage(message, keywords);
   const exportRows = exportQuery ? await fetchPurchaseAssistantExportRows(exportQuery) : [];
+  const salePriceByEan = new Map(products
+    .filter((product) => product.ean)
+    .map((product) => [product.ean, numberValue(product.sale_price)]));
 
   return {
     keywords,
@@ -734,7 +737,7 @@ async function loadContext(message: string) {
     suppliers: suppliers.map(supplierToMatch),
     offers: matchedOffers,
     importedRows: matchedImportedRows,
-    quoteOpportunities: buildQuoteOpportunities(matchedOffers, matchedImportedRows),
+    quoteOpportunities: buildQuoteOpportunities(matchedOffers, matchedImportedRows, salePriceByEan),
     exportSuggestion: exportQuery ? {
       query: exportQuery,
       label: `Exportar itens disponiveis com "${exportQuery}"`,
