@@ -1,6 +1,5 @@
 import { getSupabaseAdmin } from "@/lib/supabase-admin";
 import { parseLocaleNumber } from "@/lib/number";
-import { isMateusMaisConnectorConfigured, searchMateusMaisConnector } from "@/lib/supplier-web-connectors";
 import type { PricingProduct, PurchaseAssistantImportRow, ReallocationProduct, ReallocationStockItem, SupplierCatalogItem, SupplierPaymentTerm } from "@/lib/types";
 
 const PRICING_PRODUCT_SELECT = "id,ean,description,brand,purchase_price,sell_in_value,sell_in_mode,sell_out_value,sell_out_mode,trade_value,trade_mode,sale_price,baby_wednesday_price,month_end_price,competitor_prices,store_prices,is_active,created_at,updated_at";
@@ -31,6 +30,8 @@ export interface PurchaseAssistantProductMatch {
   lastSaleSummary: string;
   lastPurchaseSummary: string;
   suggestedAction: string;
+  suggestedPurchaseQty: number | null;
+  coverageTargetDays: number;
 }
 
 export interface PurchaseAssistantSupplierMatch {
@@ -78,6 +79,11 @@ export interface PurchaseAssistantQuoteCandidate {
   code: string;
   description: string;
   price: number;
+  listPrice: number;
+  discountPercent: number;
+  stValue: number;
+  minimumQuantity: number;
+  effectiveCost: number;
   stock: number | null;
   delivery: string;
   validUntil: string | null;
@@ -88,8 +94,10 @@ export interface PurchaseAssistantQuoteOpportunity {
   description: string;
   bestSupplier: string;
   bestPrice: number;
+  bestEffectiveCost: number;
   bestStock: number | null;
   savingsVsNext: number | null;
+  resultingMarginPercent: number | null;
   recommendation: string;
   candidates: PurchaseAssistantQuoteCandidate[];
 }
@@ -98,12 +106,6 @@ export interface PurchaseAssistantExportSuggestion {
   query: string;
   label: string;
   estimatedRows: number;
-}
-
-export interface PurchaseAssistantConnectorStatus {
-  mateusMaisRequested: boolean;
-  mateusMaisConfigured: boolean;
-  mateusMaisSearch: string;
 }
 
 export type PurchaseAssistantTone = "green" | "amber" | "red" | "blue" | "slate";
@@ -193,7 +195,6 @@ const STOP_WORDS = new Set([
   "quais",
   "quero",
   "melhor",
-  "mateus",
   "mais",
   "oportunidade",
   "quantidade",
@@ -230,17 +231,29 @@ function exportQueryFromMessage(message: string, keywords: string[]) {
   return keywords[0] || normalize(message).split(/\s+/).find((word) => word.length >= 3 && !STOP_WORDS.has(word)) || "";
 }
 
-function mentionsMateusMais(message: string) {
-  const normalized = normalize(message);
-  return normalized.includes("mateus mais") || normalized.includes("mateusmais");
-}
-
 function isOpenAiConfigured() {
   return Boolean(process.env.OPENAI_API_KEY);
 }
 
 function money(value: number) {
   return value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
+// Dias de cobertura-alvo usados para sugerir quantidade de compra (padrao: 30 dias / 1 mes).
+const COVERAGE_TARGET_DAYS = Number(process.env.PURCHASE_ASSISTANT_COVERAGE_DAYS) || 30;
+
+// Custo unitario efetivo de uma cotacao: preco NF menos desconto (%) mais ST (valor por unidade).
+function effectiveUnitCost(input: { price: number; discountPercent?: number; stValue?: number }) {
+  const base = input.price > 0 ? input.price : 0;
+  const discounted = base * (1 - (input.discountPercent || 0) / 100);
+  return Number((Math.max(discounted, 0) + (input.stValue || 0)).toFixed(4));
+}
+
+// Quantidade sugerida de compra: cobre COVERAGE_TARGET_DAYS de venda media, descontando o estoque atual.
+function suggestedPurchaseQtyFor(signal: PurchaseAssistantStockSignal | null) {
+  if (!signal || signal.monthlySales <= 0) return null;
+  const target = signal.monthlySales * (COVERAGE_TARGET_DAYS / 30);
+  return Math.max(0, Math.ceil(target - signal.totalStock));
 }
 
 function marginPercent(product: Pick<PricingProduct, "purchase_price" | "sale_price">) {
@@ -356,6 +369,8 @@ function productToMatch(product: PricingProduct, stockItems: ReallocationStockIt
     lastSaleSummary: summarizeLastSale(productStock),
     lastPurchaseSummary: summarizeLastPurchase(productStock),
     suggestedAction: suggestedActionFor(stockSignal, margin),
+    suggestedPurchaseQty: suggestedPurchaseQtyFor(stockSignal),
+    coverageTargetDays: COVERAGE_TARGET_DAYS,
   };
 }
 
@@ -438,17 +453,27 @@ function quoteItemKey(input: { ean?: string; code?: string; description: string 
 
 function quoteCandidatesFromOffers(offers: PurchaseAssistantSupplierOffer[]): PurchaseAssistantQuoteCandidate[] {
   return offers
-    .map((offer) => ({
-      supplierName: offer.supplierName || "Fornecedor nao informado",
-      source: offer.sourceSystem || "Catalogo fornecedor",
-      ean: offer.ean,
-      code: offer.supplierSku,
-      description: offer.description,
-      price: numberValue(offer.priceNf || offer.listPrice),
-      stock: offer.availableStock ?? null,
-      delivery: offer.deliveryType,
-      validUntil: offer.offerValidUntil,
-    }))
+    .map((offer) => {
+      const price = numberValue(offer.priceNf || offer.listPrice);
+      const discountPercent = numberValue(offer.discountPercent);
+      const stValue = numberValue(offer.stValue);
+      return {
+        supplierName: offer.supplierName || "Fornecedor nao informado",
+        source: offer.sourceSystem || "Catalogo fornecedor",
+        ean: offer.ean,
+        code: offer.supplierSku,
+        description: offer.description,
+        price,
+        listPrice: numberValue(offer.listPrice),
+        discountPercent,
+        stValue,
+        minimumQuantity: numberValue(offer.minimumQuantity),
+        effectiveCost: effectiveUnitCost({ price, discountPercent, stValue }),
+        stock: offer.availableStock ?? null,
+        delivery: offer.deliveryType,
+        validUntil: offer.offerValidUntil,
+      };
+    })
     .filter((candidate) => candidate.description && candidate.price > 0);
 }
 
@@ -460,6 +485,8 @@ function quoteCandidatesFromImportedRows(rows: PurchaseAssistantImportedDataMatc
       const fieldValue = (key: string) => fields[key] ?? previewMap.get(key) ?? "";
       const description = String(fieldValue("description") || row.preview.find((item) => normalize(item.label).includes("descr"))?.value || row.preview[0]?.value || "");
       const price = parseLooseNumber(fieldValue("price"));
+      const discountPercent = parseLooseNumber(fieldValue("discount"));
+      const stValue = parseLooseNumber(fieldValue("st"));
 
       return {
         supplierName: String(fieldValue("supplier") || row.sourceTitle || "Fornecedor nao informado"),
@@ -468,6 +495,11 @@ function quoteCandidatesFromImportedRows(rows: PurchaseAssistantImportedDataMatc
         code: String(fieldValue("code") || ""),
         description,
         price,
+        listPrice: price,
+        discountPercent,
+        stValue,
+        minimumQuantity: parseLooseNumber(fieldValue("min")),
+        effectiveCost: effectiveUnitCost({ price, discountPercent, stValue }),
         stock: fieldValue("stock") === "" ? null : parseLooseNumber(fieldValue("stock")),
         delivery: "",
         validUntil: null,
@@ -479,6 +511,7 @@ function quoteCandidatesFromImportedRows(rows: PurchaseAssistantImportedDataMatc
 function buildQuoteOpportunities(
   offers: PurchaseAssistantSupplierOffer[],
   importedRows: PurchaseAssistantImportedDataMatch[],
+  salePriceByEan: Map<string, number>,
 ): PurchaseAssistantQuoteOpportunity[] {
   const candidates = [
     ...quoteCandidatesFromOffers(offers),
@@ -503,25 +536,35 @@ function buildQuoteOpportunities(
       const sorted = uniqueBySupplier.sort((left, right) => {
         const leftHasStock = left.stock === null || left.stock > 0 ? 0 : 1;
         const rightHasStock = right.stock === null || right.stock > 0 ? 0 : 1;
-        return leftHasStock - rightHasStock || left.price - right.price;
+        return leftHasStock - rightHasStock || left.effectiveCost - right.effectiveCost;
       });
       const best = sorted[0];
-      const next = sorted.find((candidate) => candidate.supplierName !== best?.supplierName && candidate.price >= (best?.price || 0));
+      const next = sorted.find((candidate) => candidate.supplierName !== best?.supplierName && candidate.effectiveCost >= (best?.effectiveCost || 0));
 
       if (!best) return null;
+
+      const salePrice = best.ean ? salePriceByEan.get(best.ean) || 0 : 0;
+      const resultingMarginPercent = salePrice > 0 && best.effectiveCost > 0
+        ? Number((((salePrice - best.effectiveCost) / best.effectiveCost) * 100).toFixed(1))
+        : null;
+      const marginSuffix = resultingMarginPercent === null
+        ? ""
+        : ` Margem estimada de ${resultingMarginPercent.toFixed(1).replace(".", ",")}% no preco de venda atual.`;
 
       return {
         itemKey,
         description: best.description,
         bestSupplier: best.supplierName,
         bestPrice: best.price,
+        bestEffectiveCost: best.effectiveCost,
         bestStock: best.stock,
-        savingsVsNext: next ? Number((next.price - best.price).toFixed(2)) : null,
+        savingsVsNext: next ? Number((next.effectiveCost - best.effectiveCost).toFixed(2)) : null,
+        resultingMarginPercent,
         recommendation: best.stock === 0
-          ? "Menor preco encontrado, mas estoque informado esta zerado. Confirmar disponibilidade antes de fechar."
+          ? `Menor custo efetivo (${money(best.effectiveCost)}/un.), mas estoque informado esta zerado. Confirmar disponibilidade antes de fechar.${marginSuffix}`
           : next
-            ? `Melhor preco entre ${sorted.length} cotacao(oes). Economia de ${money(next.price - best.price)} contra a proxima opcao.`
-            : "Unica cotacao encontrada para este item. Validar com mais fornecedores antes de fechar volume grande.",
+            ? `Melhor custo efetivo entre ${sorted.length} cotacao(oes): ${money(best.effectiveCost)}/un. Economia de ${money(next.effectiveCost - best.effectiveCost)} por unidade contra a proxima opcao.${marginSuffix}`
+            : `Unica cotacao encontrada (${money(best.effectiveCost)}/un.). Validar com mais fornecedores antes de fechar volume grande.${marginSuffix}`,
         candidates: sorted.slice(0, 5),
       };
     })
@@ -680,16 +723,8 @@ async function loadContext(message: string) {
     .order("imported_at", { ascending: false })
     .limit(12));
 
-  const connectorStatus: PurchaseAssistantConnectorStatus = {
-    mateusMaisRequested: mentionsMateusMais(message),
-    mateusMaisConfigured: isMateusMaisConnectorConfigured(),
-    mateusMaisSearch: search,
-  };
-  const connectorOffers = connectorStatus.mateusMaisConfigured
-    ? await searchMateusMaisConnector({ query: search }).catch(() => [])
-    : [];
   const matchedImportedRows = importedRows.map(importedRowToMatch);
-  const matchedOffers = dedupeOfferMatches([...connectorOffers, ...offers.map(offerToMatch)]).slice(0, 24);
+  const matchedOffers = dedupeOfferMatches(offers.map(offerToMatch)).slice(0, 24);
   const exportQuery = exportQueryFromMessage(message, keywords);
   const exportRows = exportQuery ? await fetchPurchaseAssistantExportRows(exportQuery) : [];
 
@@ -700,7 +735,6 @@ async function loadContext(message: string) {
     offers: matchedOffers,
     importedRows: matchedImportedRows,
     quoteOpportunities: buildQuoteOpportunities(matchedOffers, matchedImportedRows),
-    connectorStatus,
     exportSuggestion: exportQuery ? {
       query: exportQuery,
       label: `Exportar itens disponiveis com "${exportQuery}"`,
@@ -716,7 +750,6 @@ function buildRulesAnswer(
   offers: PurchaseAssistantSupplierOffer[],
   importedRows: PurchaseAssistantImportedDataMatch[],
   quoteOpportunities: PurchaseAssistantQuoteOpportunity[],
-  connectorStatus: PurchaseAssistantConnectorStatus,
   exportSuggestion: PurchaseAssistantExportSuggestion | null,
 ) {
   const intro = products.length
@@ -751,15 +784,7 @@ function buildRulesAnswer(
   const exportLine = exportSuggestion
     ? `Exportacao: posso gerar uma planilha com ${exportSuggestion.estimatedRows} item(ns) disponiveis para "${exportSuggestion.query}". Use o botao de exportar na lateral.`
     : "";
-  const connectorLine = connectorStatus.mateusMaisRequested
-    ? connectorStatus.mateusMaisConfigured
-      ? offers.length
-        ? `Mateus Mais: usei a busca do conector para procurar "${connectorStatus.mateusMaisSearch}".`
-        : `Mateus Mais: consultei o conector por "${connectorStatus.mateusMaisSearch}", mas nao recebi oferta/estoque para esse termo. Tente EAN, SKU ou uma descricao mais curta.`
-      : `Mateus Mais: ainda nao consigo consultar estoque/preco direto porque o conector nao esta configurado no servidor. Para eu responder sobre "${connectorStatus.mateusMaisSearch}", configure MATEUS_MAIS_SEARCH_URL ou importe uma oferta/planilha desse fornecedor.`
-    : "";
-
-  return `${intro} ${supplierIntro}\n\n${recommendation}\n\n${stockLine}\n\n${offerLine}\n\n${importedLine}\n\n${quoteLine}${connectorLine ? `\n\n${connectorLine}` : ""}${exportLine ? `\n\n${exportLine}` : ""}\n\n${supplierLine}\n\nPedido analisado: "${message.trim()}".`;
+  return `${intro} ${supplierIntro}\n\n${recommendation}\n\n${stockLine}\n\n${offerLine}\n\n${importedLine}\n\n${quoteLine}${exportLine ? `\n\n${exportLine}` : ""}\n\n${supplierLine}\n\nPedido analisado: "${message.trim()}".`;
 }
 
 function buildAiSetupAnswer(message: string) {
@@ -1015,7 +1040,6 @@ async function generateAiAnswer(
   offers: PurchaseAssistantSupplierOffer[],
   importedRows: PurchaseAssistantImportedDataMatch[],
   quoteOpportunities: PurchaseAssistantQuoteOpportunity[],
-  connectorStatus: PurchaseAssistantConnectorStatus,
   exportSuggestion: PurchaseAssistantExportSuggestion | null,
 ) {
   const apiKey = process.env.OPENAI_API_KEY;
@@ -1041,7 +1065,6 @@ async function generateAiAnswer(
               "Priorize sinais de cobertura, ultima venda, ultima compra, margem e fornecedor antes de sugerir compra.",
               "Use ofertas importadas de fornecedores quando existirem; elas podem conter preco, estoque, entrega e validade.",
               "Use dados genericos importados quando a pergunta pedir preco especifico, EAN, estoque, codigo, coluna ou valor de arquivo.",
-              "Se o pedido citar Mateus Mais e o conector nao estiver configurado, diga isso claramente e oriente configurar o conector ou importar oferta/planilha; nao responda como se fosse falta de produto interno.",
               "Quando houver cotacoes do mesmo item em fornecedores diferentes, compare preco, estoque, entrega e validade. Recomende a melhor oportunidade de compra e explique o motivo.",
               "Se houver excesso em lojas, recomende checar remanejamento antes de comprar mais.",
               "Nao invente fornecedor, preco, estoque ou prazo.",
@@ -1060,7 +1083,6 @@ async function generateAiAnswer(
               ofertas_fornecedores: offers,
               dados_importados_genericos: importedRows,
               cotacoes_comparadas: quoteOpportunities,
-              conectores: connectorStatus,
               exportacao_sugerida: exportSuggestion,
             }),
           },
@@ -1098,13 +1120,13 @@ export async function runPurchaseAssistant(request: PurchaseAssistantRequest): P
   const context = await loadContext(message);
   const aiConfigured = isOpenAiConfigured();
   const aiAnswer = aiConfigured
-    ? await generateAiAnswer(request, context.products, context.suppliers, context.offers, context.importedRows, context.quoteOpportunities, context.connectorStatus, context.exportSuggestion)
+    ? await generateAiAnswer(request, context.products, context.suppliers, context.offers, context.importedRows, context.quoteOpportunities, context.exportSuggestion)
     : null;
 
   return {
     answer: aiAnswer
       || (aiConfigured
-        ? buildRulesAnswer(message, context.products, context.suppliers, context.offers, context.importedRows, context.quoteOpportunities, context.connectorStatus, context.exportSuggestion)
+        ? buildRulesAnswer(message, context.products, context.suppliers, context.offers, context.importedRows, context.quoteOpportunities, context.exportSuggestion)
         : buildAiSetupAnswer(message)),
     products: context.products,
     suppliers: context.suppliers,

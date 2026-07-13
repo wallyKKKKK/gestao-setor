@@ -329,7 +329,7 @@ function downloadTextFile(filename: string, content: string, type = 'text/plain;
 }
 
 function formatTxtNumber(value: number) {
-  return Number(value || 0).toFixed(2).replace('.', ',');
+  return Number(value || 0).toFixed(2);
 }
 
 export function PricingManager() {
@@ -1402,7 +1402,7 @@ export function PricingManager() {
     const lines = visibleProductGroups.flatMap((group) => {
       const product = primaryProductForGroup(group);
       const value = txtExportType === 'B'
-        ? String(Number(txtDiscountPercent || 0)).replace('.', ',')
+        ? String(Number(txtDiscountPercent || 0))
         : formatTxtNumber(priceForTxt(product));
       const eans = Array.from(new Set(productsForActiveFilter(group)
         .map((product) => masterProductInfo(product).ean || product.ean)

@@ -149,11 +149,8 @@ export function PurchaseAssistant() {
   const [genericImportTitle, setGenericImportTitle] = useState('');
   const [genericImportType, setGenericImportType] = useState('ARQUIVO LIVRE');
   const [importingGeneric, setImportingGeneric] = useState(false);
-  const [mateusQuery, setMateusQuery] = useState('');
-  const [searchingMateus, setSearchingMateus] = useState(false);
   const [exportingSheet, setExportingSheet] = useState(false);
   const [importMessage, setImportMessage] = useState('');
-  const [connectorNotice, setConnectorNotice] = useState('');
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const catalogFileRef = useRef<HTMLInputElement>(null);
   const genericFileRef = useRef<HTMLInputElement>(null);
@@ -275,47 +272,6 @@ export function PurchaseAssistant() {
     } finally {
       setImportingGeneric(false);
       if (genericFileRef.current) genericFileRef.current.value = '';
-    }
-  }
-
-  async function searchMateusMais() {
-    const query = mateusQuery.trim() || input.trim();
-    if (!query) {
-      setErrorMessage('Digite um produto, EAN ou codigo para consultar o Mateus Mais.');
-      return;
-    }
-
-    setSearchingMateus(true);
-    setImportMessage('');
-    setConnectorNotice('');
-    setErrorMessage('');
-
-    try {
-      const headers = await getAuthHeaders();
-      const response = await fetch('/api/supplier-connectors/mateusmais/search', {
-        method: 'POST',
-        headers: {
-          ...headers,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ query, persist: true }),
-      });
-      const data = await response.json();
-
-      if (!response.ok) {
-        if (data?.code === 'MATEUS_MAIS_NOT_CONFIGURED') {
-          setConnectorNotice('Mateus Mais ainda aguarda configuracao no servidor. Enquanto isso, importe oferta/estoque ou arquivo livre e o assistente continua analisando normalmente.');
-          return;
-        }
-
-        throw new Error(data.error || 'Falha ao consultar Mateus Mais.');
-      }
-
-      setImportMessage(`${data.count || 0} oferta(s) encontradas no Mateus Mais e salvas no catalogo.`);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Nao foi possivel consultar Mateus Mais.');
-    } finally {
-      setSearchingMateus(false);
     }
   }
 
@@ -474,24 +430,6 @@ export function PurchaseAssistant() {
             <h2 className="text-xs font-black uppercase tracking-widest text-slate-900">Fonte de fornecedor</h2>
           </div>
           <div className="space-y-2">
-            <input
-              value={mateusQuery}
-              onChange={(event) => setMateusQuery(event.target.value)}
-              placeholder="Buscar no Mateus Mais por EAN/produto"
-              className="h-10 w-full rounded-2xl border border-emerald-100 bg-emerald-50 px-3 text-[11px] font-black uppercase outline-none focus:border-emerald-400"
-            />
-            <button
-              type="button"
-              onClick={() => void searchMateusMais()}
-              disabled={searchingMateus}
-              className="flex h-11 w-full items-center justify-center gap-2 rounded-2xl bg-emerald-600 text-[10px] font-black uppercase tracking-wide text-white transition hover:bg-emerald-700 disabled:opacity-50"
-            >
-              {searchingMateus ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
-              {searchingMateus ? 'Consultando...' : 'Consultar Mateus Mais'}
-            </button>
-            {connectorNotice && (
-              <p className="rounded-2xl border border-amber-100 bg-amber-50 px-3 py-2 text-[10px] font-bold leading-relaxed text-amber-700">{connectorNotice}</p>
-            )}
             <input
               value={supplierName}
               onChange={(event) => setSupplierName(event.target.value)}
