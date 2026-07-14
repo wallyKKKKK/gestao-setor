@@ -1370,7 +1370,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
   const canAccessPaymentTerms = userRole === 'admin' || normalizedSector.startsWith('compras');
   const isPerfumePurchasing = isPerfumePurchasingSector(userSector);
   const canAccessTransport = isSupremeAdmin || isPerfumePurchasing;
-  const canAccessReallocation = isSupremeAdmin || isPerfumePurchasing;
+  const canAccessReallocation = true;
   const canManageBranches = userRole === 'admin' || canAccessPricing;
   const canAccessRegistries = true;
   const visibleSection =

@@ -22,7 +22,7 @@ const items = [
   { id: 'PRECIFICACAO' as const, label: 'Price', icon: Tags, priceOnly: true },
   { id: 'PRAZOS' as const, label: 'Prazos', icon: Clock3, purchaseOnly: true },
   { id: 'TRANSPORTE' as const, label: 'Transporte', icon: Truck, transportOnly: true },
-  { id: 'BALACUBACO' as const, label: 'Remanej.', icon: Shuffle, transferOnly: true },
+  { id: 'BALACUBACO' as const, label: 'Remanej.', icon: Shuffle },
   { id: 'AUDITORIA' as const, label: 'Auditoria', icon: ClipboardList, adminOnly: true },
 ];
 
@@ -45,13 +45,11 @@ export function AppSidebar({
   const canAccessPaymentTerms = userRole === 'admin' || normalizedSector.startsWith('compras');
   const isPerfumePurchasing = isPerfumePurchasingSector(userSector);
   const canAccessTransport = isSupremeAdmin || isPerfumePurchasing;
-  const canAccessTransfer = isSupremeAdmin || isPerfumePurchasing;
   const visibleItems = items.filter((item) => {
     if (item.adminOnly && userRole !== 'admin') return false;
     if (item.priceOnly && !canAccessPricing) return false;
     if (item.purchaseOnly && !canAccessPaymentTerms) return false;
     if (item.transportOnly && !canAccessTransport) return false;
-    if (item.transferOnly && !canAccessTransfer) return false;
     return true;
   });
 
