@@ -4,6 +4,10 @@ import { getSupabaseAdmin } from "@/lib/supabase-admin";
 import { requireAuthenticatedProfile } from "@/lib/server-auth";
 import { normalizeReallocationSector } from "@/lib/reallocation-sector";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const maxDuration = 300;
+
 interface StockRow {
   snapshot_id: string;
   store_code: string;
@@ -373,35 +377,37 @@ function stripMovementColumns(rows: StockRow[]) {
   });
 }
 
-function stockRowKey(row: Pick<StockRow, "store_code" | "ean">) {
-  return `${row.store_code}::${row.ean}`;
-}
-
 async function deleteExistingStockRows(
   supabase: ReturnType<typeof getSupabaseAdmin>,
   snapshotId: string,
   rows: Array<Pick<StockRow, "store_code" | "ean">>,
 ) {
-  const uniqueRows = Array.from(
-    new Map(rows.map((row) => [stockRowKey(row), row])).values(),
-  );
-  const deleteChunkSize = 80;
+  const eansByStore = new Map<string, Set<string>>();
+  rows.forEach((row) => {
+    if (!row.store_code || !row.ean) return;
+    const eans = eansByStore.get(row.store_code) || new Set<string>();
+    eans.add(row.ean);
+    eansByStore.set(row.store_code, eans);
+  });
+
+  const deleteChunkSize = 500;
   let deletedRows = 0;
 
-  for (let index = 0; index < uniqueRows.length; index += deleteChunkSize) {
-    const chunk = uniqueRows.slice(index, index + deleteChunkSize);
-    const orFilter = chunk
-      .map((row) => `and(store_code.eq.${row.store_code},ean.eq.${row.ean})`)
-      .join(",");
+  for (const [storeCode, eans] of eansByStore.entries()) {
+    const uniqueEans = Array.from(eans);
 
-    const { count, error } = await supabase
-      .from("reallocation_stock_items")
-      .delete({ count: "exact" })
-      .eq("snapshot_id", snapshotId)
-      .or(orFilter);
+    for (let index = 0; index < uniqueEans.length; index += deleteChunkSize) {
+      const chunk = uniqueEans.slice(index, index + deleteChunkSize);
+      const { count, error } = await supabase
+        .from("reallocation_stock_items")
+        .delete({ count: "exact" })
+        .eq("snapshot_id", snapshotId)
+        .eq("store_code", storeCode)
+        .in("ean", chunk);
 
-    if (error) throw error;
-    deletedRows += count || 0;
+      if (error) throw error;
+      deletedRows += count || 0;
+    }
   }
 
   return deletedRows;
@@ -600,9 +606,15 @@ export async function POST(request: Request) {
     }
 
     const baseMessage = error instanceof Error ? error.message : "Erro ao importar estoque.";
-    const message = /^(Arquivo|Nenhuma|Importe|Envie)/i.test(baseMessage)
-      ? baseMessage
-      : `Erro ao ${importStage}: ${baseMessage}`;
+    const lowerMessage = baseMessage.toLowerCase();
+    const friendlyMessage = /sector|schema cache/.test(lowerMessage)
+      ? "A separacao de estoque por setor ainda nao foi aplicada no banco. Rode o SQL atualizado de reallocation-stock.sql no Supabase e tente importar novamente."
+      : /statement timeout|timeout|timed out/.test(lowerMessage)
+        ? "A importacao demorou mais que o banco permitiu. Tente novamente; o processamento foi otimizado para arquivos grandes. Se persistir, divida o arquivo por classificacao ou loja."
+        : baseMessage;
+    const message = /^(Arquivo|Nenhuma|Importe|Envie|A separacao|A importacao)/i.test(friendlyMessage)
+      ? friendlyMessage
+      : `Erro ao ${importStage}: ${friendlyMessage}`;
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }
