@@ -2882,14 +2882,14 @@ export function ReallocationManager({
               </div>
               <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
                 <TransferRuleInput
-                  label="Ult. venda ate dias"
+                  label="Min. dias sem venda"
                   value={lastSaleMaxDays}
                   onChange={setLastSaleMaxDays}
                   min={0}
                   max={9999}
                 />
                 <TransferRuleInput
-                  label="Ult. compra ate dias"
+                  label="Min. dias sem compra"
                   value={lastPurchaseMaxDays}
                   onChange={setLastPurchaseMaxDays}
                   min={0}
@@ -2913,7 +2913,7 @@ export function ReallocationManager({
                 />
               </div>
               <p className="mt-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">
-                Use 0 para desligar. Os filtros numericos mantem apenas linhas dentro dos limites informados.
+                Use 0 para desligar. Compra/venda filtram apenas itens sem movimento por pelo menos a quantidade de dias informada.
               </p>
             </div>
 

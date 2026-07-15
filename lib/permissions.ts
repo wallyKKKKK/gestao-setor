@@ -69,8 +69,8 @@ export function getAppPermissions({
     canExportTransport: isSupremeAdmin || isPerfumePurchasing,
     canBulkEditTransport: isSupremeAdmin || isManager || isPerfumePurchasing,
     canDeleteTransportEntries: isSupremeAdmin || isManager,
-    canImportReallocationData: isSupremeAdmin || isPerfumePurchasing,
-    canGenerateReallocationSuggestions: isSupremeAdmin || isPerfumePurchasing,
-    canExportReallocation: isSupremeAdmin || isPerfumePurchasing,
+    canImportReallocationData: true,
+    canGenerateReallocationSuggestions: true,
+    canExportReallocation: true,
   };
 }

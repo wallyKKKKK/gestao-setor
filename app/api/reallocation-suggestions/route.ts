@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase-admin";
-import { requirePerfumePurchasingOrSupreme } from "@/lib/server-auth";
+import { requireAuthenticatedProfile } from "@/lib/server-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -312,8 +312,8 @@ function calculate(payload: {
     if (!ean) continue;
     if (!item.erp_code) missingErpCode += 1;
     if (selectedProducts.size > 0 && !selectedProducts.has(ean)) continue;
-    if (lastSaleMaxDays > 0 && numberValue(item.last_sale_days) > lastSaleMaxDays) continue;
-    if (lastPurchaseMaxDays > 0 && numberValue(item.last_purchase_days) > lastPurchaseMaxDays) continue;
+    if (lastSaleMaxDays > 0 && numberValue(item.last_sale_days) < lastSaleMaxDays) continue;
+    if (lastPurchaseMaxDays > 0 && numberValue(item.last_purchase_days) < lastPurchaseMaxDays) continue;
     if (selectedNeedTypes.size > 0 && !selectedNeedTypes.has(normalizeRouteText(item.need_type))) continue;
     if (selectedLastPurchaseSuppliers.size > 0 && !selectedLastPurchaseSuppliers.has(normalizeRouteText(item.last_purchase_supplier))) continue;
     if (minRuptureSales > 0 && numberValue(item.rupture_sales) < minRuptureSales) continue;
@@ -577,7 +577,7 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const auth = await requirePerfumePurchasingOrSupreme(request);
+  const auth = await requireAuthenticatedProfile(request);
   if (!auth.ok) return auth.response;
 
   try {

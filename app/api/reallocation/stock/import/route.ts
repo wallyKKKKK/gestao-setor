@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import * as XLSX from "xlsx";
 import { getSupabaseAdmin } from "@/lib/supabase-admin";
-import { requirePerfumePurchasingOrSupreme } from "@/lib/server-auth";
+import { requireAuthenticatedProfile } from "@/lib/server-auth";
 
 interface StockRow {
   snapshot_id: string;
@@ -413,7 +413,7 @@ export async function POST(request: Request) {
 
   try {
     importStage = "validar permissao";
-    const auth = await requirePerfumePurchasingOrSupreme(request);
+    const auth = await requireAuthenticatedProfile(request);
     if (!auth.ok) return auth.response;
 
     importStage = "ler formulario";
