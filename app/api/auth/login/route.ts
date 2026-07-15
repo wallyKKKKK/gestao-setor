@@ -2,8 +2,46 @@ import { NextResponse } from "next/server";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseAdmin } from "@/lib/supabase-admin";
 
+const LOGIN_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_RATE_LIMIT_MAX_ATTEMPTS = 8;
+const loginAttempts = new Map<string, { count: number; resetAt: number }>();
+
 function isEmailLike(value: string) {
   return value.includes("@");
+}
+
+function getClientIp(request: Request) {
+  const forwardedFor = request.headers.get("x-forwarded-for") || "";
+  return forwardedFor.split(",")[0]?.trim()
+    || request.headers.get("x-real-ip")
+    || "unknown";
+}
+
+function getLoginRateLimitKey(request: Request, identifier: string) {
+  return `${getClientIp(request)}:${identifier.trim().toLowerCase()}`;
+}
+
+function checkLoginRateLimit(request: Request, identifier: string) {
+  const key = getLoginRateLimitKey(request, identifier);
+  const now = Date.now();
+  const current = loginAttempts.get(key);
+
+  if (!current || current.resetAt <= now) {
+    loginAttempts.set(key, { count: 1, resetAt: now + LOGIN_RATE_LIMIT_WINDOW_MS });
+    return null;
+  }
+
+  if (current.count >= LOGIN_RATE_LIMIT_MAX_ATTEMPTS) {
+    return Math.ceil((current.resetAt - now) / 60000);
+  }
+
+  current.count += 1;
+  loginAttempts.set(key, current);
+  return null;
+}
+
+function clearLoginRateLimit(request: Request, identifier: string) {
+  loginAttempts.delete(getLoginRateLimitKey(request, identifier));
 }
 
 async function assertProfileCanAccess(userId: string, supabaseAdmin: SupabaseClient | null) {
@@ -87,6 +125,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Preencha usuário e senha." }, { status: 400 });
     }
 
+    const limitedMinutes = checkLoginRateLimit(request, String(identifier));
+    if (limitedMinutes !== null) {
+      return NextResponse.json({
+        error: `Muitas tentativas de login. Aguarde cerca de ${limitedMinutes} minuto${limitedMinutes === 1 ? "" : "s"} e tente novamente.`,
+      }, { status: 429 });
+    }
+
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
@@ -113,6 +158,7 @@ export async function POST(request: Request) {
     }
 
     await assertProfileCanAccess(data.user.id, supabaseAdmin);
+    clearLoginRateLimit(request, String(identifier));
 
     return NextResponse.json({
       session: {

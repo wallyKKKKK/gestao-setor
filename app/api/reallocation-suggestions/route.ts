@@ -269,6 +269,9 @@ function calculate(payload: {
     destinations?: string[];
     products?: string[];
     classifications?: string[];
+    classificationLines?: string[];
+    classificationDepartments?: string[];
+    classificationCategories?: string[];
     manufacturers?: string[];
     needTypes?: string[];
     lastPurchaseSuppliers?: string[];
@@ -497,6 +500,91 @@ function normalizeTerm(value: unknown) {
   return String(value || "").trim();
 }
 
+function normalizeFilterText(value: unknown) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Za-z0-9]+/g, " ")
+    .trim()
+    .toUpperCase();
+}
+
+function normalizedIncludes(value: unknown, term: unknown) {
+  const normalizedValue = normalizeFilterText(value);
+  const normalizedTerm = normalizeFilterText(term);
+  if (!normalizedTerm) return true;
+  return normalizedValue === normalizedTerm || normalizedValue.includes(normalizedTerm);
+}
+
+function splitClassificationPath(classificationPath: unknown) {
+  return String(classificationPath || "")
+    .replace(/\s*[>\\\/|]+\s*/g, " > ")
+    .split(">")
+    .map((part) => part.trim().toUpperCase().replace(/\s+/g, " "))
+    .filter((part) => part && part !== "PRINCIPAL" && part !== "-" && part !== ".");
+}
+
+function parseClassificationHierarchy(classificationPath: unknown) {
+  const parts = splitClassificationPath(classificationPath);
+
+  if (parts.length >= 3) {
+    return {
+      line: parts[0] || "",
+      department: parts[1] || "",
+      category: parts.slice(2).join(" > "),
+    };
+  }
+
+  if (parts.length === 2) {
+    return {
+      line: parts[0] || "",
+      department: "",
+      category: parts[1] || "",
+    };
+  }
+
+  return {
+    line: "",
+    department: "",
+    category: parts[0] || String(classificationPath || "").trim().toUpperCase(),
+  };
+}
+
+function matchesAnyPart(value: string, filters: string[]) {
+  return filters.length === 0 || filters.some((filter) => normalizedIncludes(value, filter));
+}
+
+function classificationMatchesFilters(classification: string, filters: {
+  classifications: string[];
+  classificationLines: string[];
+  classificationDepartments: string[];
+  classificationCategories: string[];
+}) {
+  if (
+    filters.classifications.length === 0
+    && filters.classificationLines.length === 0
+    && filters.classificationDepartments.length === 0
+    && filters.classificationCategories.length === 0
+  ) {
+    return true;
+  }
+
+  const hierarchy = parseClassificationHierarchy(classification);
+  const matchesLegacy = filters.classifications.length === 0
+    || filters.classifications.some((filter) => normalizedIncludes(classification, filter));
+
+  return matchesLegacy
+    && matchesAnyPart(hierarchy.line, filters.classificationLines)
+    && matchesAnyPart(hierarchy.department, filters.classificationDepartments)
+    && (
+      filters.classificationCategories.length === 0
+      || filters.classificationCategories.some((filter) => (
+        normalizedIncludes(hierarchy.category, filter)
+        || normalizedIncludes(classification, filter)
+      ))
+    );
+}
+
 function mergeProductFilters(filters: {
   products?: string[];
   classifications?: string[];
@@ -516,22 +604,34 @@ function mergeProductFilters(filters: {
 
 async function fetchProductEansByAttributes(filters: {
   classifications?: string[];
+  classificationLines?: string[];
+  classificationDepartments?: string[];
+  classificationCategories?: string[];
   manufacturers?: string[];
 }) {
   const classifications = (filters.classifications || []).map(normalizeTerm).filter(Boolean);
+  const classificationLines = (filters.classificationLines || []).map(normalizeTerm).filter(Boolean);
+  const classificationDepartments = (filters.classificationDepartments || []).map(normalizeTerm).filter(Boolean);
+  const classificationCategories = (filters.classificationCategories || []).map(normalizeTerm).filter(Boolean);
   const manufacturers = (filters.manufacturers || []).map(normalizeTerm).filter(Boolean);
 
-  if (classifications.length === 0 && manufacturers.length === 0) return [];
+  if (
+    classifications.length === 0
+    && classificationLines.length === 0
+    && classificationDepartments.length === 0
+    && classificationCategories.length === 0
+    && manufacturers.length === 0
+  ) return [];
 
   const supabase = getSupabaseAdmin();
-  const rows: Array<{ id: string | null; ean: string | null }> = [];
+  const rows: Array<{ id: string | null; ean: string | null; manufacturer: string | null; classification: string | null }> = [];
   const chunkSize = 1000;
   let lastId = "";
 
   for (;;) {
     let query = supabase
       .from("reallocation_products")
-      .select("id,ean")
+      .select("id,ean,manufacturer,classification")
       .not("ean", "is", null)
       .order("id", { ascending: true })
       .limit(chunkSize);
@@ -540,22 +640,10 @@ async function fetchProductEansByAttributes(filters: {
       query = query.gt("id", lastId);
     }
 
-    if (manufacturers.length === 1) {
-      query = query.ilike("manufacturer", `%${manufacturers[0]}%`);
-    } else if (manufacturers.length > 1) {
-      query = query.or(manufacturers.map((term) => `manufacturer.ilike.%${term}%`).join(","));
-    }
-
-    if (classifications.length === 1) {
-      query = query.ilike("classification", `%${classifications[0]}%`);
-    } else if (classifications.length > 1) {
-      query = query.or(classifications.map((term) => `classification.ilike.%${term}%`).join(","));
-    }
-
     const { data, error } = await query;
     if (error) throw error;
 
-    const chunk = (data || []) as Array<{ id: string | null; ean: string | null }>;
+    const chunk = (data || []) as Array<{ id: string | null; ean: string | null; manufacturer: string | null; classification: string | null }>;
     rows.push(...chunk);
     if (chunk.length < chunkSize) break;
 
@@ -564,7 +652,16 @@ async function fetchProductEansByAttributes(filters: {
     lastId = nextLastId;
   }
 
-  return Array.from(new Set(rows.map((row) => row.ean).filter((ean): ean is string => Boolean(ean))));
+  return Array.from(new Set(rows
+    .filter((row) => manufacturers.length === 0 || manufacturers.some((manufacturer) => normalizedIncludes(row.manufacturer, manufacturer)))
+    .filter((row) => classificationMatchesFilters(String(row.classification || ""), {
+      classifications,
+      classificationLines,
+      classificationDepartments,
+      classificationCategories,
+    }))
+    .map((row) => row.ean)
+    .filter((ean): ean is string => Boolean(ean))));
 }
 
 export async function GET() {

@@ -121,6 +121,9 @@ interface ReallocationProductFilters {
   searchTerm?: string;
   manufacturers?: string[];
   classifications?: string[];
+  classificationLines?: string[];
+  classificationDepartments?: string[];
+  classificationCategories?: string[];
   limit?: number;
 }
 
@@ -561,8 +564,15 @@ export async function fetchReallocationProducts(searchTermOrFilters: string | Re
     }
   }
 
-  if (filters.classifications?.length) {
-    const classificationTerms = filters.classifications
+  const classificationFilterTerms = [
+    ...(filters.classifications || []),
+    ...(filters.classificationLines || []),
+    ...(filters.classificationDepartments || []),
+    ...(filters.classificationCategories || []),
+  ];
+
+  if (classificationFilterTerms.length) {
+    const classificationTerms = classificationFilterTerms
       .map((term) => term.trim().replace(/[%_]/g, ""))
       .filter(Boolean);
     if (classificationTerms.length === 1) {
@@ -743,29 +753,49 @@ export async function fetchReallocationStockItems(snapshotId: string, searchTerm
   ));
 }
 
+async function updateProfileViaApi(input: {
+  profileId: string;
+  fullName?: string;
+  role?: UserRole;
+  sector?: string;
+  accountStatus?: AccountStatus;
+  isActive?: boolean;
+}) {
+  const response = await fetch("/api/profiles", {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      ...(await getAuthHeaders()),
+    },
+    body: JSON.stringify(input),
+  });
+  const data = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    throw new Error(data?.error || "Erro ao atualizar perfil.");
+  }
+
+  return data?.profile as Profile | undefined;
+}
+
 export async function updateProfileName(userId: string, fullName: string) {
-  const { error } = await supabase.from("profiles").update({ full_name: fullName }).eq("id", userId);
-  if (error) throw error;
+  await updateProfileViaApi({ profileId: userId, fullName });
 }
 
 export async function updateProfileRole(profileId: string, role: UserRole) {
-  const { error } = await supabase.from("profiles").update({ role }).eq("id", profileId);
-  if (error) throw error;
+  await updateProfileViaApi({ profileId, role });
 }
 
 export async function updateProfileSector(profileId: string, sector: string) {
-  const { error } = await supabase.from("profiles").update({ sector }).eq("id", profileId);
-  if (error) throw error;
+  await updateProfileViaApi({ profileId, sector });
 }
 
 export async function updateProfileAccountStatus(profileId: string, accountStatus: AccountStatus) {
-  const { error } = await supabase.from("profiles").update({ account_status: accountStatus }).eq("id", profileId);
-  if (error) throw error;
+  await updateProfileViaApi({ profileId, accountStatus });
 }
 
 export async function updateProfileActive(profileId: string, isActive: boolean) {
-  const { error } = await supabase.from("profiles").update({ is_active: isActive }).eq("id", profileId);
-  if (error) throw error;
+  await updateProfileViaApi({ profileId, isActive });
 }
 
 export async function deleteAnnouncement(announcementId: string) {

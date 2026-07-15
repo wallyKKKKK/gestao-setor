@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { Check, Clock, Database, Download, FileSpreadsheet, Filter, Loader2, Plus, RefreshCcw, RotateCcw, Search, Shuffle, SlidersHorizontal, Trash2, X } from 'lucide-react';
-import { countReallocationProducts, fetchLatestReallocationStockSnapshot, fetchPricingBranches, fetchReallocationAttributeOptions, fetchReallocationProducts, fetchReallocationStockItems } from '@/lib/api';
+import { countReallocationProducts, fetchLatestReallocationStockSnapshot, fetchPricingBranches, fetchReallocationAttributeOptions, fetchReallocationAttributeSummary, fetchReallocationProducts, fetchReallocationStockItems } from '@/lib/api';
 import { getAuthHeaders } from '@/lib/auth-headers';
 import { getPermissionDeniedMessage } from '@/lib/permissions';
 import type { PricingBranch, ReallocationProduct, ReallocationStockItem, ReallocationStockSnapshot } from '@/lib/types';
@@ -288,6 +288,9 @@ interface ReallocationPreferences {
   originFilters: QuickFilterItem[];
   destinationFilters: QuickFilterItem[];
   classificationFilters: QuickFilterItem[];
+  classificationLineFilters: QuickFilterItem[];
+  classificationDepartmentFilters: QuickFilterItem[];
+  classificationCategoryFilters: QuickFilterItem[];
   manufacturerFilters: QuickFilterItem[];
   needTypeFilters: QuickFilterItem[];
   lastPurchaseSupplierFilters: QuickFilterItem[];
@@ -344,6 +347,9 @@ function defaultReallocationPreferences(): ReallocationPreferences {
     originFilters: [],
     destinationFilters: [],
     classificationFilters: [],
+    classificationLineFilters: [],
+    classificationDepartmentFilters: [],
+    classificationCategoryFilters: [],
     manufacturerFilters: [],
     needTypeFilters: [],
     lastPurchaseSupplierFilters: [],
@@ -395,11 +401,19 @@ function loadReallocationPreferences() {
       ? parsed.suggestionSort
       : null;
 
+    const legacyClassificationFilters = readQuickFilterItems(parsed.classificationFilters);
+    const parsedLineFilters = readQuickFilterItems(parsed.classificationLineFilters);
+    const parsedDepartmentFilters = readQuickFilterItems(parsed.classificationDepartmentFilters);
+    const parsedCategoryFilters = readQuickFilterItems(parsed.classificationCategoryFilters);
+
     return {
       productFilters: readQuickFilterItems(parsed.productFilters),
       originFilters: readQuickFilterItems(parsed.originFilters),
       destinationFilters: readQuickFilterItems(parsed.destinationFilters),
-      classificationFilters: readQuickFilterItems(parsed.classificationFilters),
+      classificationFilters: [],
+      classificationLineFilters: parsedLineFilters,
+      classificationDepartmentFilters: parsedDepartmentFilters,
+      classificationCategoryFilters: parsedCategoryFilters.length > 0 ? parsedCategoryFilters : legacyClassificationFilters,
       manufacturerFilters: readQuickFilterItems(parsed.manufacturerFilters),
       needTypeFilters: readQuickFilterItems(parsed.needTypeFilters),
       lastPurchaseSupplierFilters: readQuickFilterItems(parsed.lastPurchaseSupplierFilters),
@@ -608,7 +622,11 @@ export function ReallocationManager({
   const [originFilters, setOriginFilters] = useState<QuickFilterItem[]>(initialPreferences.originFilters);
   const [destinationFilters, setDestinationFilters] = useState<QuickFilterItem[]>(initialPreferences.destinationFilters);
   const [classificationFilters, setClassificationFilters] = useState<QuickFilterItem[]>(initialPreferences.classificationFilters);
+  const [classificationLineFilters, setClassificationLineFilters] = useState<QuickFilterItem[]>(initialPreferences.classificationLineFilters);
+  const [classificationDepartmentFilters, setClassificationDepartmentFilters] = useState<QuickFilterItem[]>(initialPreferences.classificationDepartmentFilters);
+  const [classificationCategoryFilters, setClassificationCategoryFilters] = useState<QuickFilterItem[]>(initialPreferences.classificationCategoryFilters);
   const [manufacturerFilters, setManufacturerFilters] = useState<QuickFilterItem[]>(initialPreferences.manufacturerFilters);
+  const [classificationPaths, setClassificationPaths] = useState<string[]>([]);
   const [needTypeFilters, setNeedTypeFilters] = useState<QuickFilterItem[]>(initialPreferences.needTypeFilters);
   const [lastPurchaseSupplierFilters, setLastPurchaseSupplierFilters] = useState<QuickFilterItem[]>(initialPreferences.lastPurchaseSupplierFilters);
   const [totalProducts, setTotalProducts] = useState(0);
@@ -656,14 +674,22 @@ export function ReallocationManager({
   const loadProducts = useCallback(async (term = searchTerm) => {
     try {
       const manufacturers = manufacturerFilters.map((item) => item.columns[0]).filter(Boolean);
-      const classifications = classificationFilters.map((item) => item.columns[0]).filter(Boolean);
-      const shouldListProducts = term.trim() || manufacturers.length > 0 || classifications.length > 0;
+      const classificationLookupTerms = buildClassificationLookupTerms({
+        legacy: classificationFilters,
+        lines: classificationLineFilters,
+        departments: classificationDepartmentFilters,
+        categories: classificationCategoryFilters,
+      });
+      const shouldListProducts = term.trim() || manufacturers.length > 0 || classificationLookupTerms.length > 0;
       const [rows, total] = await Promise.all([
         shouldListProducts
           ? fetchReallocationProducts({
             searchTerm: term,
             manufacturers,
-            classifications,
+            classifications: classificationLookupTerms,
+            classificationLines: classificationLineFilters.map((item) => item.columns[0]).filter(Boolean),
+            classificationDepartments: classificationDepartmentFilters.map((item) => item.columns[0]).filter(Boolean),
+            classificationCategories: classificationCategoryFilters.map((item) => item.columns[0]).filter(Boolean),
             limit: 120,
           })
           : Promise.resolve([]),
@@ -678,7 +704,7 @@ export function ReallocationManager({
       setErrorMessage('Tabela de remanejamento não encontrada. Rode o SQL de produtos do remanejamento no Supabase.');
     } finally {
     }
-  }, [classificationFilters, manufacturerFilters, searchTerm]);
+  }, [classificationCategoryFilters, classificationDepartmentFilters, classificationFilters, classificationLineFilters, manufacturerFilters, searchTerm]);
 
   const loadStockSnapshot = useCallback(async (term = '', includeItems = false) => {
     setStockLoading(true);
@@ -716,6 +742,14 @@ export function ReallocationManager({
   }, []);
 
   useEffect(() => {
+    fetchReallocationAttributeSummary('classification')
+      .then((rows) => {
+        setClassificationPaths(rows.map((row) => row.value).filter(Boolean));
+      })
+      .catch(() => setClassificationPaths([]));
+  }, []);
+
+  useEffect(() => {
     queueMicrotask(() => {
       void loadStockSnapshot('', true);
     });
@@ -745,6 +779,9 @@ export function ReallocationManager({
       originFilters,
       destinationFilters,
       classificationFilters,
+      classificationLineFilters,
+      classificationDepartmentFilters,
+      classificationCategoryFilters,
       manufacturerFilters,
       needTypeFilters,
       lastPurchaseSupplierFilters,
@@ -769,6 +806,9 @@ export function ReallocationManager({
     window.localStorage.setItem(REALLOCATION_PREFERENCES_STORAGE_KEY, JSON.stringify(preferences));
   }, [
     classificationFilters,
+    classificationLineFilters,
+    classificationDepartmentFilters,
+    classificationCategoryFilters,
     destinationCurvePriority,
     destinationFilters,
     destinationTargetDays,
@@ -836,7 +876,15 @@ export function ReallocationManager({
     }, 300);
 
     return () => window.clearTimeout(timeout);
-  }, [classificationFilters, loadProducts, manufacturerFilters, searchTerm]);
+  }, [
+    classificationCategoryFilters,
+    classificationDepartmentFilters,
+    classificationFilters,
+    classificationLineFilters,
+    loadProducts,
+    manufacturerFilters,
+    searchTerm,
+  ]);
 
   useEffect(() => {
     const handleEscape = (event: KeyboardEvent) => {
@@ -929,6 +977,41 @@ export function ReallocationManager({
       columns: [supplier],
       searchText: normalizeAutocompleteText(supplier),
     })), [stockItems]);
+  const classificationHierarchyRows = useMemo(() => (
+    classificationPaths
+      .map((path) => ({ path, ...parseClassificationHierarchy(path) }))
+      .filter((item) => item.line || item.department || item.category)
+  ), [classificationPaths]);
+  const selectedClassificationLineValues = useMemo(() => (
+    classificationLineFilters.map((item) => item.columns[0]).filter(Boolean)
+  ), [classificationLineFilters]);
+  const selectedClassificationDepartmentValues = useMemo(() => (
+    classificationDepartmentFilters.map((item) => item.columns[0]).filter(Boolean)
+  ), [classificationDepartmentFilters]);
+  const classificationLineOptions = useMemo(() => (
+    buildClassificationPartOptions(classificationHierarchyRows, 'line')
+  ), [classificationHierarchyRows]);
+  const classificationDepartmentOptions = useMemo(() => (
+    buildClassificationPartOptions(
+      classificationHierarchyRows.filter((item) => (
+        selectedClassificationLineValues.length === 0
+          || selectedClassificationLineValues.some((line) => normalizedTextIncludes(item.line, line))
+      )),
+      'department',
+    )
+  ), [classificationHierarchyRows, selectedClassificationLineValues]);
+  const classificationCategoryOptions = useMemo(() => (
+    buildClassificationPartOptions(
+      classificationHierarchyRows.filter((item) => {
+        const matchesLine = selectedClassificationLineValues.length === 0
+          || selectedClassificationLineValues.some((line) => normalizedTextIncludes(item.line, line));
+        const matchesDepartment = selectedClassificationDepartmentValues.length === 0
+          || selectedClassificationDepartmentValues.some((department) => normalizedTextIncludes(item.department, department));
+        return matchesLine && matchesDepartment;
+      }),
+      'category',
+    )
+  ), [classificationHierarchyRows, selectedClassificationDepartmentValues, selectedClassificationLineValues]);
   const activeSuggestionRows = useMemo(() => {
     if (suggestionView === 'confirmed') return confirmedSuggestions;
     if (suggestionView === 'orders') return [];
@@ -945,10 +1028,15 @@ export function ReallocationManager({
     return baseProducts.filter((product) => {
       const text = `${product.description} ${product.erp_code} ${product.ean} ${product.manufacturer} ${product.classification}`.toLowerCase();
       if (classificationFilters.length > 0 && !classificationFilters.some((item) => text.includes(item.searchText))) return false;
+      if (!classificationPathMatchesFilters(product.classification, {
+        lines: classificationLineFilters,
+        departments: classificationDepartmentFilters,
+        categories: classificationCategoryFilters,
+      })) return false;
       if (manufacturerFilters.length > 0 && !manufacturerFilters.some((item) => text.includes(item.searchText))) return false;
       return true;
     });
-  }, [classificationFilters, manufacturerFilters, productFilters, products]);
+  }, [classificationCategoryFilters, classificationDepartmentFilters, classificationFilters, classificationLineFilters, manufacturerFilters, productFilters, products]);
   const suggestionExportStats = useMemo(() => {
     const exportable = activeSuggestionRows.filter((suggestion) => suggestion.erpCode && suggestion.quantity > 0);
     const missingErpCode = activeSuggestionRows.filter((suggestion) => !suggestion.erpCode && suggestion.quantity > 0);
@@ -1089,6 +1177,9 @@ export function ReallocationManager({
     + originFilters.length
     + destinationFilters.length
     + classificationFilters.length
+    + classificationLineFilters.length
+    + classificationDepartmentFilters.length
+    + classificationCategoryFilters.length
     + manufacturerFilters.length
     + needTypeFilters.length
     + lastPurchaseSupplierFilters.length
@@ -1104,6 +1195,9 @@ export function ReallocationManager({
     origins: originFilters.map((item) => item.id),
     destinations: destinationFilters.map((item) => item.id),
     classifications: classificationFilters.map((item) => item.id),
+    classificationLines: classificationLineFilters.map((item) => item.id),
+    classificationDepartments: classificationDepartmentFilters.map((item) => item.id),
+    classificationCategories: classificationCategoryFilters.map((item) => item.id),
     manufacturers: manufacturerFilters.map((item) => item.id),
     needTypes: needTypeFilters.map((item) => item.id),
     lastPurchaseSuppliers: lastPurchaseSupplierFilters.map((item) => item.id),
@@ -1117,7 +1211,10 @@ export function ReallocationManager({
     minRuptureSales,
     maxSuppliedPercent,
   }), [
+    classificationCategoryFilters,
+    classificationDepartmentFilters,
     classificationFilters,
+    classificationLineFilters,
     destinationCurvePriority,
     destinationFilters,
     destinationTargetDays,
@@ -1244,19 +1341,25 @@ export function ReallocationManager({
     );
   }, []);
 
-  const searchClassificationOptions = useCallback(async (term: string) => {
+  const searchClassificationCategoryOptions = useCallback(async (term: string) => {
     const normalizedTerm = normalizeAutocompleteText(term);
     if (normalizedTerm.length < 2) return [];
 
     const searchTerms = Array.from(new Set([term, ...autocompleteTokens(term).filter((token) => token.length >= 2)]))
       .slice(0, 4);
     const rows = Array.from(new Set((await Promise.all(searchTerms.map((searchTerm) => fetchReallocationAttributeOptions('classification', searchTerm, 60)))).flat()));
+    const categories = rows
+      .map((classification) => {
+        const parts = parseClassificationHierarchy(classification);
+        return {
+          id: `${parts.line}|${parts.department}|${parts.category || classification}`,
+          columns: [parts.category || classification, parts.line || '-', parts.department || '-'],
+          searchText: normalizeAutocompleteText(`${classification} ${parts.line} ${parts.department} ${parts.category}`),
+        };
+      });
+
     return rankAutocompleteOptions(
-      rows.map((classification) => ({
-        id: classification,
-        columns: [classification],
-        searchText: classification.toLowerCase(),
-      })),
+      uniqueQuickFilterItems(categories),
       normalizedTerm,
       12,
     );
@@ -1322,6 +1425,9 @@ export function ReallocationManager({
       const selectedDestinations = new Set(destinationFilters.map((item) => item.id.padStart(2, '0')));
       const selectedProducts = new Set(productFilters.map((item) => item.source?.ean).filter(Boolean) as string[]);
       const selectedClassifications = classificationFilters.map((item) => item.columns[0]).filter(Boolean);
+      const selectedClassificationLines = classificationLineFilters.map((item) => item.columns[0]).filter(Boolean);
+      const selectedClassificationDepartments = classificationDepartmentFilters.map((item) => item.columns[0]).filter(Boolean);
+      const selectedClassificationCategories = classificationCategoryFilters.map((item) => item.columns[0]).filter(Boolean);
       const selectedManufacturers = manufacturerFilters.map((item) => item.columns[0]).filter(Boolean);
       const selectedNeedTypes = needTypeFilters.map((item) => item.columns[0]).filter(Boolean);
       const selectedLastPurchaseSuppliers = lastPurchaseSupplierFilters.map((item) => item.columns[0]).filter(Boolean);
@@ -1336,6 +1442,9 @@ export function ReallocationManager({
             destinations: Array.from(selectedDestinations),
             products: Array.from(selectedProducts),
             classifications: selectedClassifications,
+            classificationLines: selectedClassificationLines,
+            classificationDepartments: selectedClassificationDepartments,
+            classificationCategories: selectedClassificationCategories,
             manufacturers: selectedManufacturers,
             needTypes: selectedNeedTypes,
             lastPurchaseSuppliers: selectedLastPurchaseSuppliers,
@@ -2275,7 +2384,7 @@ export function ReallocationManager({
         {showTopPanel ? (
         <div className="relative z-[90] grid gap-1.5 border-b border-slate-300 bg-slate-100/80 p-1.5 xl:grid-cols-[minmax(980px,1fr)_420px_150px]">
           <div className="min-w-0">
-            <div className="grid grid-cols-1 items-start gap-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-9">
+            <div className="grid grid-cols-1 items-start gap-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-11">
               <QuickFilterBox
                 title="Un. Negocio Origem"
                 columns={['Codigo', 'Apelido', 'Cidade']}
@@ -2317,13 +2426,58 @@ export function ReallocationManager({
                 allowManual
               />
               <QuickFilterBox
-                title="Classificacao"
-                columns={['Caminho']}
-                placeholder="Informe o nome da classificacao"
-                options={[]}
-                selected={classificationFilters}
-                onChange={setClassificationFilters}
-                onQuickSearch={searchClassificationOptions}
+                title="Linha"
+                columns={['Linha']}
+                placeholder="Informe a linha"
+                options={classificationLineOptions}
+                selected={classificationLineFilters}
+                onChange={(items) => {
+                  setClassificationLineFilters(items);
+                  setClassificationDepartmentFilters((current) => current.filter((department) => (
+                    items.length === 0
+                      || classificationHierarchyRows.some((row) => (
+                        normalizedTextIncludes(row.department, department.columns[0])
+                        && items.some((line) => normalizedTextIncludes(row.line, line.columns[0]))
+                      ))
+                  )));
+                  setClassificationCategoryFilters((current) => current.filter((category) => (
+                    items.length === 0
+                      || classificationHierarchyRows.some((row) => (
+                        normalizedTextIncludes(row.category, category.columns[0])
+                        && items.some((line) => normalizedTextIncludes(row.line, line.columns[0]))
+                      ))
+                  )));
+                }}
+                allowManual
+                quickAddBehavior="optionsPicker"
+              />
+              <QuickFilterBox
+                title="Departamento"
+                columns={['Departamento']}
+                placeholder="Informe o departamento"
+                options={classificationDepartmentOptions}
+                selected={classificationDepartmentFilters}
+                onChange={(items) => {
+                  setClassificationDepartmentFilters(items);
+                  setClassificationCategoryFilters((current) => current.filter((category) => (
+                    items.length === 0
+                      || classificationHierarchyRows.some((row) => (
+                        normalizedTextIncludes(row.category, category.columns[0])
+                        && items.some((department) => normalizedTextIncludes(row.department, department.columns[0]))
+                      ))
+                  )));
+                }}
+                allowManual
+                quickAddBehavior="optionsPicker"
+              />
+              <QuickFilterBox
+                title="Categoria"
+                columns={['Categoria', 'Linha', 'Departamento']}
+                placeholder="Informe a categoria"
+                options={classificationCategoryOptions}
+                selected={classificationCategoryFilters}
+                onChange={setClassificationCategoryFilters}
+                onQuickSearch={searchClassificationCategoryOptions}
                 allowManual
                 alignPopup="right"
               />
@@ -2369,6 +2523,9 @@ export function ReallocationManager({
                   setOriginFilters([]);
                   setDestinationFilters([]);
                   setClassificationFilters([]);
+                  setClassificationLineFilters([]);
+                  setClassificationDepartmentFilters([]);
+                  setClassificationCategoryFilters([]);
                   setManufacturerFilters([]);
                   setOriginCurvePriority([]);
                   setDestinationCurvePriority([]);
@@ -3310,6 +3467,118 @@ function rankAutocompleteOptions(options: QuickFilterItem[], query: string, limi
     .map(({ item }) => item);
 }
 
+function normalizedTextIncludes(value: string, term: string) {
+  const normalizedValue = normalizeAutocompleteText(value);
+  const normalizedTerm = normalizeAutocompleteText(term);
+  if (!normalizedTerm) return true;
+  return normalizedValue === normalizedTerm || normalizedValue.includes(normalizedTerm);
+}
+
+function splitClassificationPath(classificationPath: string) {
+  return String(classificationPath || '')
+    .replace(/\s*[>\\\/|]+\s*/g, ' > ')
+    .split('>')
+    .map((part) => part.trim().toUpperCase().replace(/\s+/g, ' '))
+    .filter((part) => part && part !== 'PRINCIPAL' && part !== '-' && part !== '.');
+}
+
+function parseClassificationHierarchy(classificationPath: string) {
+  const parts = splitClassificationPath(classificationPath);
+
+  if (parts.length >= 3) {
+    return {
+      line: parts[0] || '',
+      department: parts[1] || '',
+      category: parts.slice(2).join(' > '),
+    };
+  }
+
+  if (parts.length === 2) {
+    return {
+      line: parts[0] || '',
+      department: '',
+      category: parts[1] || '',
+    };
+  }
+
+  return {
+    line: '',
+    department: '',
+    category: parts[0] || String(classificationPath || '').trim().toUpperCase(),
+  };
+}
+
+function uniqueQuickFilterItems(items: QuickFilterItem[]) {
+  return Array.from(new Map(items.map((item) => [item.id, item])).values());
+}
+
+function buildClassificationPartOptions(
+  rows: Array<{ path: string; line: string; department: string; category: string }>,
+  part: 'line' | 'department' | 'category',
+) {
+  const items = rows
+    .map((row) => {
+      const value = row[part];
+      if (!value) return null;
+
+      if (part === 'category') {
+        return {
+          id: `${row.line}|${row.department}|${row.category}`,
+          columns: [row.category, row.line || '-', row.department || '-'],
+          searchText: normalizeAutocompleteText(`${row.path} ${row.line} ${row.department} ${row.category}`),
+        } satisfies QuickFilterItem;
+      }
+
+      return {
+        id: value,
+        columns: [value],
+        searchText: normalizeAutocompleteText(value),
+      } satisfies QuickFilterItem;
+    })
+    .filter((item): item is QuickFilterItem => Boolean(item));
+
+  return uniqueQuickFilterItems(items)
+    .sort((left, right) => left.columns[0].localeCompare(right.columns[0], 'pt-BR', { numeric: true }));
+}
+
+function selectedFilterValues(filters: QuickFilterItem[]) {
+  return filters.map((item) => item.columns[0]).filter(Boolean);
+}
+
+function classificationPathMatchesFilters(classificationPath: string, filters: {
+  lines: QuickFilterItem[];
+  departments: QuickFilterItem[];
+  categories: QuickFilterItem[];
+}) {
+  const hierarchy = parseClassificationHierarchy(classificationPath);
+  const lineValues = selectedFilterValues(filters.lines);
+  const departmentValues = selectedFilterValues(filters.departments);
+  const categoryValues = selectedFilterValues(filters.categories);
+
+  if (lineValues.length > 0 && !lineValues.some((line) => normalizedTextIncludes(hierarchy.line, line))) return false;
+  if (departmentValues.length > 0 && !departmentValues.some((department) => normalizedTextIncludes(hierarchy.department, department))) return false;
+  if (categoryValues.length > 0 && !categoryValues.some((category) => (
+    normalizedTextIncludes(hierarchy.category, category)
+    || normalizedTextIncludes(classificationPath, category)
+  ))) return false;
+
+  return true;
+}
+
+function buildClassificationLookupTerms(filters: {
+  legacy: QuickFilterItem[];
+  lines: QuickFilterItem[];
+  departments: QuickFilterItem[];
+  categories: QuickFilterItem[];
+}) {
+  return Array.from(new Set([
+    ...selectedFilterValues(filters.legacy),
+    ...selectedFilterValues(filters.lines),
+    ...selectedFilterValues(filters.departments),
+    ...selectedFilterValues(filters.categories),
+  ].filter(Boolean)));
+}
+
 function QuickFilterBox({
   title,
   columns,
@@ -3322,6 +3591,8 @@ function QuickFilterBox({
   allowManual = false,
   alignPopup = 'left',
   quickAddBehavior = 'quickValue',
+  optionsPickerTitle,
+  optionsPickerSearchPlaceholder,
 }: {
   title: string;
   columns: string[];
@@ -3334,6 +3605,8 @@ function QuickFilterBox({
   allowManual?: boolean;
   alignPopup?: 'left' | 'right';
   quickAddBehavior?: 'quickValue' | 'optionsPicker';
+  optionsPickerTitle?: string;
+  optionsPickerSearchPlaceholder?: string;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [expanded, setExpanded] = useState(false);
@@ -3624,7 +3897,7 @@ function QuickFilterBox({
           {optionsPickerOpen && (
             <div className="absolute inset-0 z-[320] flex min-h-[430px] flex-col overflow-hidden rounded-[6px] border border-blue-500 bg-white shadow-[0_20px_52px_rgba(15,23,42,0.30)]">
               <div className="flex h-8 items-center justify-between border-b border-slate-300 bg-slate-100 px-2">
-                <span className="truncate text-xs font-black text-slate-900">{title} - todas as lojas</span>
+                <span className="truncate text-xs font-black text-slate-900">{optionsPickerTitle || `${title} - selecao`}</span>
                 <button
                   type="button"
                   onClick={() => {
@@ -3644,7 +3917,7 @@ function QuickFilterBox({
                   <input
                     value={optionsPickerSearch}
                     onChange={(event) => setOptionsPickerSearch(event.target.value)}
-                    placeholder="Buscar loja por codigo, apelido, cidade ou CNPJ..."
+                    placeholder={optionsPickerSearchPlaceholder || placeholder}
                     className="h-9 w-full rounded-[4px] border border-slate-300 bg-white pl-8 pr-8 text-xs font-bold outline-none focus:border-blue-500"
                   />
                   {optionsPickerSearch && (
