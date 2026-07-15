@@ -48,6 +48,13 @@ import type { CreateMeetingInput } from '@/lib/api'
 import { DEFAULT_TASK_PRIORITY } from '@/lib/task-priority'
 import { MARGIN_FLOW_CATEGORY, canUseMarginFlowTasks, parseMarginFlowTaskNotes } from '@/lib/margin-flow-task'
 import type { Announcement, AppDbNotification, AppNotification, AuditLog, NotificationPreferences, PricingMarginRule, ProcessedTask, Profile, Subtask, Task, TaskHistory, TaskPriority, UserRole } from '@/lib/types'
+
+function hasPasswordRecoveryParam() {
+  if (typeof window === 'undefined') return false;
+  const search = new URLSearchParams(window.location.search);
+  const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+  return search.get('type') === 'recovery' || hash.get('type') === 'recovery' || search.get('recovery') === '1';
+}
 import { ArrowRight, Plus, Search, X } from 'lucide-react'
 
 const SectionLoader = () => (
@@ -219,6 +226,7 @@ export default function App() {
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   })
   const [user, setUser] = useState<SupabaseUser | null>(null)
+  const [isPasswordRecovery, setIsPasswordRecovery] = useState(() => hasPasswordRecoveryParam())
   const [userRole, setUserRole] = useState<UserRole>('membro')
   const [profiles, setProfiles] = useState<Profile[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
@@ -535,8 +543,18 @@ useEffect(() => {
 
   useEffect(() => {
   let channel: RealtimeChannel | null = null; // Canal reaproveitado na limpeza
+  const hasRecoveryParam = hasPasswordRecoveryParam();
+
+  const { data: authListener } = supabase.auth.onAuthStateChange((event) => {
+    if (event === 'PASSWORD_RECOVERY') {
+      setIsPasswordRecovery(true);
+      setUser(null);
+    }
+  });
 
   supabase.auth.getSession().then(({ data: { session } }) => {
+    if (hasRecoveryParam) return;
+
     if (session?.user) {
       setUser(session.user);
       setAssignedTo(session.user.id);
@@ -593,6 +611,7 @@ useEffect(() => {
 
   // Limpeza do canal realtime para evitar subscriptions duplicadas
   return () => {
+    authListener.subscription.unsubscribe();
     if (channel) {
       supabase.removeChannel(channel);
     }
@@ -1524,7 +1543,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
     }
   }, [processedTasks]);
 
-  if (!user) return <Login />
+  if (!user || isPasswordRecovery) return <Login />
 
   return (
     <div className={`app-responsive-root app-density-compact min-h-screen bg-[#E8EEF7] text-slate-900 font-sans overflow-x-hidden w-full ${visibleSection === 'TRANSPORTE' || visibleSection === 'REUNIAO' || visibleSection === 'BALACUBACO' || visibleSection === 'COMPRAS_IA' ? 'pb-24 md:pb-0' : 'pb-24 md:pb-20'}`}>
@@ -1792,6 +1811,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
           canImportData={permissions.canImportReallocationData}
           canGenerateSuggestions={permissions.canGenerateReallocationSuggestions}
           canExport={permissions.canExportReallocation}
+          userSector={userSector}
           onPermissionBlocked={(action, details) => {
             void recordPermissionBlock('Remanejamento inteligente', action, details);
           }}

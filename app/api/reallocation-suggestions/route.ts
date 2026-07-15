@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase-admin";
 import { requireAuthenticatedProfile } from "@/lib/server-auth";
+import { normalizeReallocationSector } from "@/lib/reallocation-sector";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -81,11 +82,11 @@ function formatSnapshotAge(minutes: number) {
   return `${hourText} e ${remainingMinutes} minuto${remainingMinutes === 1 ? "" : "s"}`;
 }
 
-async function getSnapshotFreshnessError(snapshotId: string) {
+async function getSnapshotFreshnessError(snapshotId: string, sector: string) {
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
     .from("reallocation_stock_snapshots")
-    .select("imported_at")
+    .select("imported_at,sector")
     .eq("id", snapshotId)
     .maybeSingle();
 
@@ -93,6 +94,11 @@ async function getSnapshotFreshnessError(snapshotId: string) {
 
   if (!data) {
     return "Base de estoque nao encontrada. Importe um novo estoque antes de gerar o remanejamento.";
+  }
+
+  const snapshotSector = normalizeReallocationSector(data.sector);
+  if (snapshotSector !== sector) {
+    return `Esta base de estoque pertence ao setor ${snapshotSector}. Importe ou selecione uma base do setor ${sector} antes de gerar o remanejamento.`;
   }
 
   const importedAt = new Date(String(data.imported_at || "")).getTime();
@@ -588,10 +594,19 @@ function classificationMatchesFilters(classification: string, filters: {
 function mergeProductFilters(filters: {
   products?: string[];
   classifications?: string[];
+  classificationLines?: string[];
+  classificationDepartments?: string[];
+  classificationCategories?: string[];
   manufacturers?: string[];
 }, attributeProducts: string[]) {
   const explicitProducts = new Set((filters.products || []).filter(Boolean).map(String));
-  const hasAttributeFilters = Boolean(filters.classifications?.length || filters.manufacturers?.length);
+  const hasAttributeFilters = Boolean(
+    filters.classifications?.length
+      || filters.classificationLines?.length
+      || filters.classificationDepartments?.length
+      || filters.classificationCategories?.length
+      || filters.manufacturers?.length
+  );
 
   if (!hasAttributeFilters) return Array.from(explicitProducts);
 
@@ -680,7 +695,8 @@ export async function POST(request: Request) {
   try {
     const payload = await request.json();
     const snapshotId = payload?.snapshotId ? String(payload.snapshotId) : "";
-    const snapshotFreshnessError = snapshotId ? await getSnapshotFreshnessError(snapshotId) : "";
+    const activeSector = normalizeReallocationSector(auth.profile.sector);
+    const snapshotFreshnessError = snapshotId ? await getSnapshotFreshnessError(snapshotId, activeSector) : "";
 
     if (snapshotFreshnessError) {
       return reallocationJson({

@@ -1,5 +1,6 @@
 import { supabase } from "@/lib/supabase";
 import { getAuthHeaders } from "@/lib/auth-headers";
+import { normalizeReallocationSector } from "@/lib/reallocation-sector";
 import { DEFAULT_TASK_PRIORITY, normalizeTaskPriority } from "@/lib/task-priority";
 import type { AccountStatus, Announcement, AppDbNotification, AuditLog, PricingBranch, PricingMarginRule, PricingProduct, Profile, ReallocationProduct, ReallocationStockItem, ReallocationStockSnapshot, Subtask, SupplierPaymentTerm, Task, TaskHistory, TaskPriority, TradeTaskNote, UserRole } from "@/lib/types";
 
@@ -700,13 +701,16 @@ export async function deleteReallocationProduct(productId: string) {
   }
 }
 
-export async function fetchLatestReallocationStockSnapshot() {
-  const { data, error } = await supabase
+export async function fetchLatestReallocationStockSnapshot(sector?: string) {
+  const normalizedSector = normalizeReallocationSector(sector);
+  const query = supabase
     .from("reallocation_stock_snapshots")
     .select("*")
+    .eq("sector", normalizedSector)
     .order("imported_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .limit(1);
+
+  const { data, error } = await query.maybeSingle();
 
   if (error) throw error;
   return (data || null) as ReallocationStockSnapshot | null;

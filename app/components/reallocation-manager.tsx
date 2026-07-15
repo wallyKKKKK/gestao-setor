@@ -5,6 +5,7 @@ import { Check, Clock, Database, Download, FileSpreadsheet, Filter, Loader2, Plu
 import { countReallocationProducts, fetchLatestReallocationStockSnapshot, fetchPricingBranches, fetchReallocationAttributeOptions, fetchReallocationAttributeSummary, fetchReallocationProducts, fetchReallocationStockItems } from '@/lib/api';
 import { getAuthHeaders } from '@/lib/auth-headers';
 import { getPermissionDeniedMessage } from '@/lib/permissions';
+import { normalizeReallocationSector } from '@/lib/reallocation-sector';
 import type { PricingBranch, ReallocationProduct, ReallocationStockItem, ReallocationStockSnapshot } from '@/lib/types';
 
 function txtLine(origin: string, destination: string, erpCode: string, quantity: number) {
@@ -600,6 +601,7 @@ interface ReallocationManagerProps {
   canImportData?: boolean;
   canGenerateSuggestions?: boolean;
   canExport?: boolean;
+  userSector?: string;
   onPermissionBlocked?: (action: string, details: string) => void;
 }
 
@@ -607,9 +609,11 @@ export function ReallocationManager({
   canImportData = true,
   canGenerateSuggestions = true,
   canExport = true,
+  userSector = 'Geral',
   onPermissionBlocked,
 }: ReallocationManagerProps) {
   const initialPreferences = useMemo(() => loadReallocationPreferences(), []);
+  const activeStockSector = useMemo(() => normalizeReallocationSector(userSector), [userSector]);
   const showReallocationTechDiagnostics = useMemo(() => {
     if (typeof window === 'undefined') return false;
     return window.location.search.includes('debugRemanejamento=1')
@@ -709,7 +713,7 @@ export function ReallocationManager({
   const loadStockSnapshot = useCallback(async (term = '', includeItems = false) => {
     setStockLoading(true);
     try {
-      const snapshot = await fetchLatestReallocationStockSnapshot();
+      const snapshot = await fetchLatestReallocationStockSnapshot(activeStockSector);
       setStockSnapshot(snapshot);
 
       if (!snapshot) {
@@ -727,7 +731,7 @@ export function ReallocationManager({
     } finally {
       setStockLoading(false);
     }
-  }, []);
+  }, [activeStockSector]);
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -1285,7 +1289,7 @@ export function ReallocationManager({
         throw new Error(data?.error || 'Erro ao importar estoque.');
       }
 
-      alert(`${data.imported || 0} linhas de estoque importadas e mescladas na base ativa. ${data.replacedRows || 0} linhas anteriores substituídas. ${data.matchedProducts || 0} vinculadas ao código ERP. ${data.unmatchedProducts || 0} sem vínculo. ${data.skipped || 0} ignoradas.${data.movementColumnsAvailable === false ? ' Rode o SQL atualizado de estoque para habilitar filtros de ultima venda/compra.' : ''}`);
+      alert(`${data.imported || 0} linhas de estoque importadas e mescladas na base ativa do setor ${data.sector || activeStockSector}. ${data.replacedRows || 0} linhas anteriores substituídas. ${data.matchedProducts || 0} vinculadas ao código ERP. ${data.unmatchedProducts || 0} sem vínculo. ${data.skipped || 0} ignoradas.${data.movementColumnsAvailable === false ? ' Rode o SQL atualizado de estoque para habilitar filtros de ultima venda/compra.' : ''}`);
       addReallocationAuditLog({
         action: 'Estoque importado',
         detail: file.name,

@@ -223,6 +223,7 @@ export interface ReallocationProduct {
 export interface ReallocationStockSnapshot {
   id: string;
   source_file: string | null;
+  sector?: string | null;
   imported_by: string | null;
   imported_at: string;
   notes: string | null;

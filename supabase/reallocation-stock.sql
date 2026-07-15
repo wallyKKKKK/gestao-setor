@@ -3,6 +3,7 @@ create extension if not exists pg_trgm;
 create table if not exists public.reallocation_stock_snapshots (
   id uuid primary key default gen_random_uuid(),
   source_file text,
+  sector text not null default 'Geral',
   imported_by uuid references auth.users(id),
   imported_at timestamptz not null default now(),
   notes text
@@ -61,6 +62,16 @@ add column if not exists max_stock numeric not null default 0;
 
 alter table public.reallocation_stock_items
 add column if not exists need_cost numeric not null default 0;
+
+alter table public.reallocation_stock_snapshots
+add column if not exists sector text not null default 'Geral';
+
+update public.reallocation_stock_snapshots
+set sector = 'Geral'
+where sector is null or btrim(sector) = '';
+
+create index if not exists reallocation_stock_snapshots_sector_imported_idx
+on public.reallocation_stock_snapshots (sector, imported_at desc);
 
 create index if not exists reallocation_stock_items_snapshot_idx
 on public.reallocation_stock_items (snapshot_id);
@@ -129,13 +140,40 @@ drop policy if exists "reallocation_stock_snapshots_select" on public.reallocati
 create policy "reallocation_stock_snapshots_select"
 on public.reallocation_stock_snapshots
 for select to authenticated
-using (true);
+using (
+  exists (
+    select 1
+    from public.profiles
+    where profiles.id = auth.uid()
+      and profiles.is_active = true
+      and profiles.account_status = 'approved'
+      and (
+        profiles.role = 'admin'
+        or reallocation_stock_snapshots.sector = profiles.sector
+        or reallocation_stock_snapshots.sector = 'Geral'
+      )
+  )
+);
 
 drop policy if exists "reallocation_stock_items_select" on public.reallocation_stock_items;
 create policy "reallocation_stock_items_select"
 on public.reallocation_stock_items
 for select to authenticated
-using (true);
+using (
+  exists (
+    select 1
+    from public.reallocation_stock_snapshots snapshots
+    join public.profiles profiles on profiles.id = auth.uid()
+    where snapshots.id = reallocation_stock_items.snapshot_id
+      and profiles.is_active = true
+      and profiles.account_status = 'approved'
+      and (
+        profiles.role = 'admin'
+        or snapshots.sector = profiles.sector
+        or snapshots.sector = 'Geral'
+      )
+  )
+);
 
 drop policy if exists "reallocation_stock_snapshots_admin_all" on public.reallocation_stock_snapshots;
 create policy "reallocation_stock_snapshots_admin_all"

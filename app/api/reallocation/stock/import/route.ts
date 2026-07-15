@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import * as XLSX from "xlsx";
 import { getSupabaseAdmin } from "@/lib/supabase-admin";
 import { requireAuthenticatedProfile } from "@/lib/server-auth";
+import { normalizeReallocationSector } from "@/lib/reallocation-sector";
 
 interface StockRow {
   snapshot_id: string;
@@ -442,10 +443,12 @@ export async function POST(request: Request) {
 
     importStage = "preparar base acumulada de estoque";
     supabase = getSupabaseAdmin();
+    const activeSector = normalizeReallocationSector(auth.profile.sector);
 
     const { data: latestSnapshot, error: latestSnapshotError } = await supabase
       .from("reallocation_stock_snapshots")
       .select("id,source_file,notes")
+      .eq("sector", activeSector)
       .order("imported_at", { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -457,7 +460,7 @@ export async function POST(request: Request) {
     if (!snapshot) {
       const { data: createdSnapshot, error: snapshotError } = await supabase
         .from("reallocation_stock_snapshots")
-        .insert([{ source_file: file.name.normalize("NFC"), imported_by: auth.userId, notes: "Base acumulada de estoque e venda media" }])
+        .insert([{ source_file: file.name.normalize("NFC"), sector: activeSector, imported_by: auth.userId, notes: "Base acumulada de estoque e venda media" }])
         .select("id,source_file,notes")
         .single();
 
@@ -569,14 +572,16 @@ export async function POST(request: Request) {
       .from("reallocation_stock_snapshots")
       .update({
         source_file: sourceFile,
+        sector: activeSector,
         imported_by: auth.userId,
         imported_at: new Date().toISOString(),
-        notes: `Base acumulada de estoque. Ultimo arquivo: ${sourceFile}`,
+        notes: `Base acumulada de estoque do setor ${activeSector}. Ultimo arquivo: ${sourceFile}`,
       })
       .eq("id", snapshot.id);
 
     return NextResponse.json({
       snapshotId: snapshot.id,
+      sector: activeSector,
       accumulated: true,
       imported: payload.length,
       replacedRows,
