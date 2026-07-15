@@ -160,12 +160,12 @@ function getStaleStockSnapshotMessage(snapshot: ReallocationStockSnapshot | null
 
   const importedAt = new Date(snapshot.imported_at).getTime();
   if (!Number.isFinite(importedAt)) {
-    return 'A base de estoque atual esta sem data de importacao valida. Importe um novo estoque antes de gerar ou exportar remanejamento.';
+    return 'A base de estoque atual esta sem data de importacao valida. Importe um novo estoque antes de gerar remanejamento.';
   }
 
   if (Date.now() - importedAt <= STOCK_SNAPSHOT_MAX_AGE_MS) return '';
 
-  return `A base de estoque foi importada ha ${formatStockSnapshotAge(stockSnapshotAgeMinutes(snapshot))} e esta antiga. Importe um novo estoque antes de gerar ou exportar remanejamento.`;
+  return `A base de estoque foi importada ha ${formatStockSnapshotAge(stockSnapshotAgeMinutes(snapshot))} e esta antiga. Importe um novo estoque antes de gerar ou recalcular remanejamento.`;
 }
 
 interface TransferSuggestion {
@@ -217,6 +217,13 @@ interface SuggestionDiagnostic {
   suggestions: number;
 }
 
+interface SuggestionGenerationContext {
+  snapshotId: string;
+  snapshotImportedAt: string;
+  snapshotSourceFile: string | null;
+  generatedAt: string;
+}
+
 interface ExportValidationIssue {
   id: string;
   title: string;
@@ -242,6 +249,8 @@ interface ReallocationTransferOrder {
   lineCount: number;
   units: number;
   sourceSnapshot?: string | null;
+  sourceSnapshotImportedAt?: string | null;
+  suggestionGeneratedAt?: string | null;
 }
 
 const REALLOCATION_AUDIT_STORAGE_KEY = 'reallocation-audit-v1';
@@ -645,6 +654,7 @@ export function ReallocationManager({
   const [suggestionMessage, setSuggestionMessage] = useState('');
   const [suggestionDiagnostic, setSuggestionDiagnostic] = useState<SuggestionDiagnostic | null>(null);
   const [appliedSuggestionSignature, setAppliedSuggestionSignature] = useState('');
+  const [suggestionGenerationContext, setSuggestionGenerationContext] = useState<SuggestionGenerationContext | null>(null);
   const [suggestionProfile, setSuggestionProfile] = useState<SuggestionProfile>(initialPreferences.suggestionProfile);
   const [showAdvancedRules, setShowAdvancedRules] = useState(initialPreferences.showAdvancedRules);
   const [originMinimumDays, setOriginMinimumDays] = useState(initialPreferences.originMinimumDays);
@@ -857,6 +867,35 @@ export function ReallocationManager({
   }, [addReallocationAuditLog, onPermissionBlocked]);
 
   const stockSnapshotStaleMessage = getStaleStockSnapshotMessage(stockSnapshot);
+  const suggestionExportBlockMessage = useMemo(() => {
+    if (!stockSnapshot) return 'Importe um estoque antes de exportar o remanejamento.';
+    if (!confirmedSuggestions.length) return '';
+    if (!suggestionGenerationContext) {
+      return 'Essa sugestao nao tem registro de quando foi gerada. Gere novamente com uma base atualizada antes de exportar.';
+    }
+    if (suggestionGenerationContext.snapshotId !== stockSnapshot.id) {
+      return 'A sugestao confirmada foi gerada com outra base de estoque. Gere novamente antes de exportar.';
+    }
+    if (suggestionGenerationContext.snapshotImportedAt !== stockSnapshot.imported_at) {
+      return 'Um novo estoque foi importado depois que essa sugestao foi gerada. Recalcule antes de exportar.';
+    }
+
+    const generatedAt = new Date(suggestionGenerationContext.generatedAt).getTime();
+    const importedAt = new Date(suggestionGenerationContext.snapshotImportedAt).getTime();
+    if (!Number.isFinite(generatedAt) || !Number.isFinite(importedAt)) {
+      return 'Essa sugestao nao tem data valida de geracao. Gere novamente antes de exportar.';
+    }
+    if (generatedAt - importedAt > STOCK_SNAPSHOT_MAX_AGE_MS) {
+      return 'Essa sugestao foi gerada depois que a base ja estava antiga. Importe um estoque novo e gere novamente.';
+    }
+
+    return '';
+  }, [confirmedSuggestions.length, stockSnapshot, suggestionGenerationContext]);
+  const suggestionExportWarningMessage = useMemo(() => {
+    if (!stockSnapshotStaleMessage || suggestionExportBlockMessage || !suggestionGenerationContext || !confirmedSuggestions.length) return '';
+
+    return `A base atual ja passou de ${STOCK_SNAPSHOT_MAX_AGE_MINUTES} minutos, mas esta sugestao foi gerada enquanto a base ainda era valida (${new Date(suggestionGenerationContext.generatedAt).toLocaleString('pt-BR')}). Voce pode exportar sem recalcular.`;
+  }, [confirmedSuggestions.length, stockSnapshotStaleMessage, suggestionExportBlockMessage, suggestionGenerationContext]);
 
   const requireFreshStockSnapshot = useCallback((action: string) => {
     if (!stockSnapshot) {
@@ -873,6 +912,20 @@ export function ReallocationManager({
     alert(staleMessage);
     return false;
   }, [stockSnapshot]);
+
+  const requireExportableSuggestion = useCallback(() => {
+    if (suggestionExportBlockMessage) {
+      setSuggestionMessage(suggestionExportBlockMessage);
+      alert(suggestionExportBlockMessage);
+      return false;
+    }
+
+    if (suggestionExportWarningMessage) {
+      setSuggestionMessage(suggestionExportWarningMessage);
+    }
+
+    return true;
+  }, [suggestionExportBlockMessage, suggestionExportWarningMessage]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -1295,6 +1348,11 @@ export function ReallocationManager({
         detail: file.name,
         count: Number(data.imported || 0),
       });
+      setTransferSuggestions([]);
+      setConfirmedSuggestions([]);
+      setSelectedSuggestionIds([]);
+      setAppliedSuggestionSignature('');
+      setSuggestionGenerationContext(null);
       await loadStockSnapshot('', true);
     } catch (error) {
       const message = getNetworkErrorMessage(error, 'Erro desconhecido');
@@ -1421,6 +1479,7 @@ export function ReallocationManager({
       if (!stockSnapshot) {
         setTransferSuggestions([]);
         setAppliedSuggestionSignature('');
+        setSuggestionGenerationContext(null);
         setSuggestionMessage('Importe um estoque antes de gerar sugestões.');
         return;
       }
@@ -1501,6 +1560,12 @@ export function ReallocationManager({
       setSuggestionView('draft');
       setSelectedSuggestionIds([]);
       setAppliedSuggestionSignature(suggestionSettingsSignature);
+      setSuggestionGenerationContext({
+        snapshotId: stockSnapshot.id,
+        snapshotImportedAt: stockSnapshot.imported_at,
+        snapshotSourceFile: stockSnapshot.source_file || null,
+        generatedAt: new Date().toISOString(),
+      });
       setSuggestionDiagnostic({
         apiVersion: typeof data.apiVersion === 'string' ? data.apiVersion : undefined,
         engine: suggestionEngine,
@@ -1533,6 +1598,7 @@ export function ReallocationManager({
     } catch (error) {
       setTransferSuggestions([]);
       setAppliedSuggestionSignature('');
+      setSuggestionGenerationContext(null);
       setSuggestionMessage(getNetworkErrorMessage(error, 'Não foi possível gerar sugestões.'));
     } finally {
       setGeneratingSuggestions(false);
@@ -1895,7 +1961,7 @@ export function ReallocationManager({
       alert(getBlockedMessage('exportar TXT de remanejamento inteligente', 'perfumePurchasingOrSupreme'));
       return;
     }
-    if (!requireFreshStockSnapshot('exportar o TXT de remanejamento')) return;
+    if (!requireExportableSuggestion()) return;
 
     if (confirmedBlockingExportIssues.length > 0) {
       const first = confirmedBlockingExportIssues[0];
@@ -1930,6 +1996,8 @@ export function ReallocationManager({
       lineCount: exportableSuggestions.length,
       units: exportableSuggestions.reduce((sum, suggestion) => sum + suggestion.quantity, 0),
       sourceSnapshot: stockSnapshot?.source_file || null,
+      sourceSnapshotImportedAt: suggestionGenerationContext?.snapshotImportedAt || stockSnapshot?.imported_at || null,
+      suggestionGeneratedAt: suggestionGenerationContext?.generatedAt || null,
     };
     const exportedIds = new Set(exportableSuggestions.map((suggestion) => suggestion.id));
     setTransferOrders((current) => [order, ...current].slice(0, 40));
@@ -1950,7 +2018,7 @@ export function ReallocationManager({
       alert(getBlockedMessage('exportar TXT de remanejamento inteligente', 'perfumePurchasingOrSupreme'));
       return;
     }
-    if (!requireFreshStockSnapshot('exportar o TXT de remanejamento')) return;
+    if (!requireExportableSuggestion()) return;
 
     if (confirmedBlockingExportIssues.length > 0) {
       const first = confirmedBlockingExportIssues[0];
@@ -2337,8 +2405,9 @@ export function ReallocationManager({
   const exportPermissionTitle = canExport ? undefined : getPermissionDeniedMessage('exportar remanejamento inteligente', 'perfumePurchasingOrSupreme');
   const stockSnapshotBlockedTitle = stockSnapshotStaleMessage || undefined;
   const canUseStockSnapshot = Boolean(stockSnapshot) && !stockSnapshotStaleMessage;
+  const canExportGeneratedSuggestion = Boolean(stockSnapshot) && !suggestionExportBlockMessage;
   const generateButtonTitle = generatePermissionTitle || stockSnapshotBlockedTitle;
-  const exportButtonTitle = exportPermissionTitle || stockSnapshotBlockedTitle;
+  const exportButtonTitle = exportPermissionTitle || suggestionExportBlockMessage || suggestionExportWarningMessage || undefined;
   const showBusyOverlay = stockImporting || generatingSuggestions;
   const busyOverlayTitle = stockImporting ? 'Importando estoque' : 'Atualizando sugestoes';
   const busyOverlayMessage = stockImporting
@@ -2630,7 +2699,7 @@ export function ReallocationManager({
             <button
               type="button"
               onClick={exportSuggestionsTxt}
-              disabled={!canExport || !canUseStockSnapshot || confirmedSuggestions.length === 0 || confirmedBlockingExportIssues.length > 0}
+              disabled={!canExport || !canExportGeneratedSuggestion || confirmedSuggestions.length === 0 || confirmedBlockingExportIssues.length > 0}
               title={exportButtonTitle || (confirmedBlockingExportIssues.length > 0 ? `${confirmedBlockingExportIssues[0].title}: ${confirmedBlockingExportIssues[0].detail}` : 'Exportar TXT das sugestões confirmadas')}
               className="h-9 rounded-md bg-slate-900 px-2 text-[10px] font-black uppercase text-white shadow-sm disabled:opacity-40"
             >
@@ -2700,7 +2769,7 @@ export function ReallocationManager({
           </div>
         )}
 
-        {(hasPendingSuggestionSettings || stockSnapshotStaleMessage || suggestionMessage || suggestionDiagnostic || originSummary.length > 0) && (
+        {(hasPendingSuggestionSettings || stockSnapshotStaleMessage || suggestionExportWarningMessage || suggestionMessage || suggestionDiagnostic || originSummary.length > 0) && (
           <div className="flex flex-wrap items-center gap-1.5 border-b border-slate-200 bg-white px-3 py-1.5 text-[10px] font-black uppercase">
             {hasPendingSuggestionSettings && (
               <span className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-amber-700">
@@ -2710,6 +2779,11 @@ export function ReallocationManager({
             {stockSnapshotStaleMessage && (
               <span className="max-w-full truncate rounded-md border border-red-200 bg-red-50 px-2 py-1 text-red-700">
                 {stockSnapshotStaleMessage}
+              </span>
+            )}
+            {suggestionExportWarningMessage && (
+              <span className="max-w-full truncate rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-amber-700">
+                {suggestionExportWarningMessage}
               </span>
             )}
             {suggestionMessage && (
@@ -3192,6 +3266,11 @@ export function ReallocationManager({
                   ))}
                 </div>
               )}
+              {suggestionExportWarningMessage && (
+                <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700">
+                  {suggestionExportWarningMessage}
+                </div>
+              )}
               <div className="mt-4 flex justify-end gap-2 border-t border-slate-200 pt-3">
                 <button type="button" onClick={() => setShowExportConfirm(false)} className="h-9 rounded-md border border-slate-300 bg-white px-4 text-[10px] font-black uppercase text-slate-600">
                   Cancelar
@@ -3199,8 +3278,8 @@ export function ReallocationManager({
                 <button
                   type="button"
                   onClick={downloadSuggestionsTxt}
-                  disabled={!canExport}
-                  title={exportPermissionTitle}
+                  disabled={!canExport || !canExportGeneratedSuggestion}
+                  title={exportButtonTitle}
                   className="h-9 rounded-md bg-slate-900 px-4 text-[10px] font-black uppercase text-white disabled:opacity-40"
                 >
                   Baixar TXT
