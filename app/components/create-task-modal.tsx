@@ -103,7 +103,7 @@ export function CreateTaskModal({
 
   return (
     <div className="fixed inset-0 z-[300] flex items-center justify-center bg-slate-900/16 p-3 backdrop-blur-sm animate-in fade-in">
-      <div className="relative flex w-full max-w-4xl flex-col overflow-visible rounded-[30px] border border-slate-200 bg-white shadow-[0_24px_70px_rgba(15,23,42,0.22)]">
+      <div className="relative flex max-h-[calc(100dvh-1.5rem)] w-full max-w-4xl flex-col overflow-hidden rounded-[30px] border border-slate-200 bg-white shadow-[0_24px_70px_rgba(15,23,42,0.22)]">
         <div className="hidden absolute top-0 left-0 w-full h-2 bg-blue-600 rounded-t-[40px] overflow-hidden">
           <div className="absolute inset-0 bg-gradient-to-r from-blue-600 to-indigo-600 opacity-90"></div>
           <div
@@ -116,7 +116,7 @@ export function CreateTaskModal({
           <div className="absolute inset-0 shadow-[inset_0_-2px_4px_rgba(0,0,0,0.1)]"></div>
         </div>
 
-        <div className="flex items-center justify-between border-b-2 border-slate-100 px-5 py-4">
+        <div className="shrink-0 flex items-center justify-between border-b-2 border-slate-100 px-5 py-4">
           <div>
             <h2 className="text-xl font-black uppercase italic tracking-tighter text-slate-900 leading-none text-left">Nova Tarefa</h2>
             <p className="text-[9px] font-black text-blue-600 uppercase tracking-widest mt-1 text-left">Setor Operacional: {userSector}</p>
@@ -126,7 +126,7 @@ export function CreateTaskModal({
           </button>
         </div>
 
-        <div className="flex-1 p-5 space-y-4 no-scrollbar">
+        <div className="min-h-0 flex-1 overflow-y-auto p-5 space-y-4 no-scrollbar">
           <div className="grid gap-3 md:grid-cols-2">
             <input className="h-12 w-full rounded-2xl border-2 border-slate-100 bg-slate-50 px-4 text-sm font-black uppercase text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-600 md:col-span-2" placeholder="O QUE VAMOS FAZER?" value={taskTitle} onChange={e => setTaskTitle(e.target.value)} />
             <textarea className="h-20 w-full resize-none rounded-2xl border-2 border-slate-100 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-700 outline-none transition focus:border-blue-600 md:col-span-2" placeholder="Coordenadas e detalhes da tarefa..." value={visibleNotes} onChange={e => updateVisibleNotes(e.target.value)} />
@@ -274,7 +274,7 @@ export function CreateTaskModal({
           </div>
         </div>
 
-        <div className="mt-auto flex gap-3 border-t-2 border-slate-100 px-5 py-4">
+        <div className="mt-auto flex shrink-0 gap-3 border-t-2 border-slate-100 px-5 py-4">
           <button onClick={onClose} className="h-12 flex-1 rounded-2xl bg-slate-100 text-xs font-black uppercase text-slate-500 transition hover:bg-slate-200">Descartar</button>
           <button onClick={onSave} className="flex-[2] h-12 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-black uppercase tracking-widest text-[11px] transition-all flex items-center justify-center gap-2 active:scale-95"><Check size={18} strokeWidth={4} /> Lançar Tarefa Agora</button>
         </div>

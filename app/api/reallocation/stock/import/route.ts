@@ -372,6 +372,40 @@ function stripMovementColumns(rows: StockRow[]) {
   });
 }
 
+function stockRowKey(row: Pick<StockRow, "store_code" | "ean">) {
+  return `${row.store_code}::${row.ean}`;
+}
+
+async function deleteExistingStockRows(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  snapshotId: string,
+  rows: Array<Pick<StockRow, "store_code" | "ean">>,
+) {
+  const uniqueRows = Array.from(
+    new Map(rows.map((row) => [stockRowKey(row), row])).values(),
+  );
+  const deleteChunkSize = 80;
+  let deletedRows = 0;
+
+  for (let index = 0; index < uniqueRows.length; index += deleteChunkSize) {
+    const chunk = uniqueRows.slice(index, index + deleteChunkSize);
+    const orFilter = chunk
+      .map((row) => `and(store_code.eq.${row.store_code},ean.eq.${row.ean})`)
+      .join(",");
+
+    const { count, error } = await supabase
+      .from("reallocation_stock_items")
+      .delete({ count: "exact" })
+      .eq("snapshot_id", snapshotId)
+      .or(orFilter);
+
+    if (error) throw error;
+    deletedRows += count || 0;
+  }
+
+  return deletedRows;
+}
+
 export async function POST(request: Request) {
   let importStage = "processar arquivo";
   let createdSnapshotId: string | null = null;
@@ -406,16 +440,35 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Nenhuma linha valida de estoque encontrada." }, { status: 400 });
     }
 
-    importStage = "criar controle de importacao";
+    importStage = "preparar base acumulada de estoque";
     supabase = getSupabaseAdmin();
-    const { data: snapshot, error: snapshotError } = await supabase
-      .from("reallocation_stock_snapshots")
-      .insert([{ source_file: file.name.normalize("NFC"), imported_by: auth.userId, notes: "Importacao de estoque e venda media" }])
-      .select("id")
-      .single();
 
-    if (snapshotError) throw snapshotError;
-    createdSnapshotId = snapshot.id;
+    const { data: latestSnapshot, error: latestSnapshotError } = await supabase
+      .from("reallocation_stock_snapshots")
+      .select("id,source_file,notes")
+      .order("imported_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (latestSnapshotError) throw latestSnapshotError;
+
+    let snapshot = latestSnapshot;
+
+    if (!snapshot) {
+      const { data: createdSnapshot, error: snapshotError } = await supabase
+        .from("reallocation_stock_snapshots")
+        .insert([{ source_file: file.name.normalize("NFC"), imported_by: auth.userId, notes: "Base acumulada de estoque e venda media" }])
+        .select("id,source_file,notes")
+        .single();
+
+      if (snapshotError) throw snapshotError;
+      snapshot = createdSnapshot;
+      createdSnapshotId = snapshot.id;
+    }
+
+    if (!snapshot?.id) {
+      throw new Error("Nao foi possivel preparar o snapshot de estoque.");
+    }
 
     importStage = "vincular EAN ao codigo ERP";
     const eans = Array.from(new Set(rows.map((row) => row.ean)));
@@ -487,6 +540,9 @@ export async function POST(request: Request) {
       erp_code: erpByEan.get(row.ean) || null,
     }));
 
+    importStage = "mesclar com estoque ja importado";
+    const replacedRows = await deleteExistingStockRows(supabase, snapshot.id, payload);
+
     importStage = "salvar linhas de estoque";
     const insertChunkSize = 1000;
     let movementColumnsAvailable = true;
@@ -508,10 +564,22 @@ export async function POST(request: Request) {
     }
 
     const matchedProducts = payload.filter((row) => row.erp_code).length;
+    const sourceFile = file.name.normalize("NFC");
+    await supabase
+      .from("reallocation_stock_snapshots")
+      .update({
+        source_file: sourceFile,
+        imported_by: auth.userId,
+        imported_at: new Date().toISOString(),
+        notes: `Base acumulada de estoque. Ultimo arquivo: ${sourceFile}`,
+      })
+      .eq("id", snapshot.id);
 
     return NextResponse.json({
       snapshotId: snapshot.id,
+      accumulated: true,
       imported: payload.length,
+      replacedRows,
       matchedProducts,
       unmatchedProducts: payload.length - matchedProducts,
       enrichedProducts,

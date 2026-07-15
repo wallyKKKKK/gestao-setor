@@ -6,6 +6,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const REALLOCATION_API_VERSION = "reallocation-api-2026-06-19-v4";
+const STOCK_SNAPSHOT_MAX_AGE_MINUTES = 30;
+const STOCK_SNAPSHOT_MAX_AGE_MS = STOCK_SNAPSHOT_MAX_AGE_MINUTES * 60 * 1000;
 
 function reallocationJson(payload: Record<string, unknown>, init?: ResponseInit) {
   const headers = new Headers(init?.headers);
@@ -65,6 +67,44 @@ function numberValue(value: unknown) {
 
 function storeCode(value: unknown) {
   return String(value || "").padStart(2, "0");
+}
+
+function formatSnapshotAge(minutes: number) {
+  if (!Number.isFinite(minutes)) return "data desconhecida";
+  if (minutes < 60) return `${minutes} minuto${minutes === 1 ? "" : "s"}`;
+
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  const hourText = `${hours} hora${hours === 1 ? "" : "s"}`;
+  if (remainingMinutes === 0) return hourText;
+
+  return `${hourText} e ${remainingMinutes} minuto${remainingMinutes === 1 ? "" : "s"}`;
+}
+
+async function getSnapshotFreshnessError(snapshotId: string) {
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from("reallocation_stock_snapshots")
+    .select("imported_at")
+    .eq("id", snapshotId)
+    .maybeSingle();
+
+  if (error) throw error;
+
+  if (!data) {
+    return "Base de estoque nao encontrada. Importe um novo estoque antes de gerar o remanejamento.";
+  }
+
+  const importedAt = new Date(String(data.imported_at || "")).getTime();
+  if (!Number.isFinite(importedAt)) {
+    return "A base de estoque atual esta sem data de importacao valida. Importe um novo estoque antes de gerar o remanejamento.";
+  }
+
+  const ageMs = Date.now() - importedAt;
+  if (ageMs <= STOCK_SNAPSHOT_MAX_AGE_MS) return "";
+
+  const ageMinutes = Math.max(0, Math.floor(ageMs / 60000));
+  return `A base de estoque foi importada ha ${formatSnapshotAge(ageMinutes)} e esta antiga. Importe um novo estoque antes de gerar o remanejamento.`;
 }
 
 function stockCurve(value: unknown) {
@@ -542,8 +582,20 @@ export async function POST(request: Request) {
 
   try {
     const payload = await request.json();
-    const stockItems = payload?.snapshotId
-      ? await fetchSnapshotStockItems(String(payload.snapshotId))
+    const snapshotId = payload?.snapshotId ? String(payload.snapshotId) : "";
+    const snapshotFreshnessError = snapshotId ? await getSnapshotFreshnessError(snapshotId) : "";
+
+    if (snapshotFreshnessError) {
+      return reallocationJson({
+        error: snapshotFreshnessError,
+        suggestions: [],
+        staleStock: true,
+        maxAgeMinutes: STOCK_SNAPSHOT_MAX_AGE_MINUTES,
+      }, { status: 409 });
+    }
+
+    const stockItems = snapshotId
+      ? await fetchSnapshotStockItems(snapshotId)
       : payload?.stockItems;
     const filters = payload?.filters || {};
     const attributeProducts = await fetchProductEansByAttributes(filters);

@@ -143,6 +143,7 @@ const APP_SECTIONS: AppSection[] = ['TAREFAS', 'REUNIAO', 'COMPRAS_IA', 'CADASTR
 const TASK_TABS = NAV_CATEGORIES.map((category) => category.id);
 
 const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
+  nativeBrowserNotifications: false,
   morningBriefing: true,
   closingSummary: true,
   meetingReminders: true,
@@ -198,6 +199,7 @@ function readNotificationPreferences(userId: string): NotificationPreferences {
     const parsed = JSON.parse(stored) as Partial<NotificationPreferences>;
 
     return {
+      nativeBrowserNotifications: typeof parsed.nativeBrowserNotifications === 'boolean' ? parsed.nativeBrowserNotifications : DEFAULT_NOTIFICATION_PREFERENCES.nativeBrowserNotifications,
       morningBriefing: typeof parsed.morningBriefing === 'boolean' ? parsed.morningBriefing : DEFAULT_NOTIFICATION_PREFERENCES.morningBriefing,
       closingSummary: typeof parsed.closingSummary === 'boolean' ? parsed.closingSummary : DEFAULT_NOTIFICATION_PREFERENCES.closingSummary,
       meetingReminders: typeof parsed.meetingReminders === 'boolean' ? parsed.meetingReminders : DEFAULT_NOTIFICATION_PREFERENCES.meetingReminders,
@@ -927,6 +929,7 @@ const updateMeeting = useCallback(async (task: ProcessedTask, meeting: CreateMee
     `Motivo: ${meeting.motive}`,
     meeting.location ? `Local: ${meeting.location}` : null,
     meeting.notes ? `Observações: ${meeting.notes}` : null,
+    meeting.tone ? `Cor: ${meeting.tone}` : null,
   ].filter(Boolean).join('\n');
 
   try {
@@ -1317,23 +1320,63 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
   }, [markNotificationRead]);
 
   const requestBrowserNotifications = useCallback(async () => {
-    setBrowserNotificationPermission('granted');
+    if (!('Notification' in window)) {
+      setBrowserNotificationPermission('unsupported');
+      showSystemToast({
+        title: 'Avisos indisponiveis',
+        description: 'Este navegador nao suporta notificacoes fora do sistema.',
+        tone: 'warning',
+      });
+      return;
+    }
+
+    if (Notification.permission === 'denied') {
+      setBrowserNotificationPermission('denied');
+      setNotificationPreferences((current) => ({ ...current, nativeBrowserNotifications: false }));
+      showSystemToast({
+        title: 'Avisos bloqueados',
+        description: 'Ative as notificacoes nas permissoes do navegador para receber fora do sistema.',
+        tone: 'warning',
+      });
+      return;
+    }
+
+    const permission = Notification.permission === 'granted'
+      ? 'granted'
+      : await Notification.requestPermission();
+
+    setBrowserNotificationPermission(permission);
+    setNotificationPreferences((current) => ({ ...current, nativeBrowserNotifications: permission === 'granted' }));
+
     showSystemToast({
-      title: 'Avisos internos ativados',
-      description: 'Vou mostrar as notificações importantes aqui dentro do sistema.',
-      tone: 'success',
+      title: permission === 'granted' ? 'Avisos fora do sistema ativados' : 'Avisos fora do sistema nao ativados',
+      description: permission === 'granted'
+        ? 'Quando voce estiver fora da aba, avisos importantes tambem aparecem pelo navegador.'
+        : 'Sem essa permissao, vou manter apenas as notificacoes internas do sistema.',
+      tone: permission === 'granted' ? 'success' : 'warning',
     });
   }, []);
 
   const updateNotificationPreference = useCallback((key: keyof NotificationPreferences, value: boolean) => {
+    if (key === 'nativeBrowserNotifications' && value) {
+      void requestBrowserNotifications();
+      return;
+    }
+
     setNotificationPreferences((current) => ({
       ...current,
       [key]: value,
     }));
-  }, []);
+  }, [requestBrowserNotifications]);
 
   useEffect(() => {
-    if (!user?.id || browserNotificationPermission !== 'granted') return;
+    if (
+      !user?.id ||
+      browserNotificationPermission !== 'granted' ||
+      !notificationPreferences.nativeBrowserNotifications ||
+      !('Notification' in window) ||
+      (!document.hidden && document.hasFocus())
+    ) return;
 
     const unreadSet = new Set(unreadNotificationIds);
     const nextNotifications = notifications
@@ -1345,26 +1388,24 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
 
     for (const notification of nextNotifications) {
       browserNotifiedIdsRef.current.add(notification.id);
-      showSystemToast({
-        title: notification.title,
-        description: notification.description,
-        tone: notification.tone === 'red'
-          ? 'error'
-          : notification.tone === 'green'
-            ? 'success'
-            : notification.tone === 'amber'
-              ? 'warning'
-              : 'info',
-        durationMs: 7200,
-        onClick: () => selectNotification(notification),
+      const browserNotification = new Notification(notification.title, {
+        body: notification.description,
+        tag: notification.id,
+        silent: false,
       });
+
+      browserNotification.onclick = () => {
+        window.focus();
+        selectNotification(notification);
+        browserNotification.close();
+      };
     }
 
     window.localStorage.setItem(
       `wally-browser-notified:${user.id}`,
       JSON.stringify(Array.from(browserNotifiedIdsRef.current).slice(-200)),
     );
-  }, [browserNotificationPermission, notificationDispatchTick, notifications, selectNotification, unreadNotificationIds, user?.id]);
+  }, [browserNotificationPermission, notificationDispatchTick, notificationPreferences.nativeBrowserNotifications, notifications, selectNotification, unreadNotificationIds, user?.id]);
 
   const canAccessPricing = userRole === 'admin' || ['precificacao', 'price'].includes(normalizedSector);
   const canAccessPaymentTerms = userRole === 'admin' || normalizedSector.startsWith('compras');

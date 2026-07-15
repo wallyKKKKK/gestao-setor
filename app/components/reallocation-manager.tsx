@@ -100,6 +100,8 @@ interface QuickFilterItem {
 type SuggestionProfile = 'safe' | 'balanced' | 'strong';
 const DEFAULT_SUGGESTION_PROFILE: SuggestionProfile = 'balanced';
 const STOCK_CURVES = ['A', 'B', 'C', 'D', 'E'] as const;
+const STOCK_SNAPSHOT_MAX_AGE_MINUTES = 30;
+const STOCK_SNAPSHOT_MAX_AGE_MS = STOCK_SNAPSHOT_MAX_AGE_MINUTES * 60 * 1000;
 
 const SUGGESTION_PROFILES: Record<SuggestionProfile, {
   label: string;
@@ -130,6 +132,40 @@ const SUGGESTION_PROFILES: Record<SuggestionProfile, {
     maxRoutePriority: 10,
   },
 };
+
+function stockSnapshotAgeMinutes(snapshot: ReallocationStockSnapshot | null) {
+  if (!snapshot?.imported_at) return Number.POSITIVE_INFINITY;
+
+  const importedAt = new Date(snapshot.imported_at).getTime();
+  if (!Number.isFinite(importedAt)) return Number.POSITIVE_INFINITY;
+
+  return Math.max(0, Math.floor((Date.now() - importedAt) / 60000));
+}
+
+function formatStockSnapshotAge(minutes: number) {
+  if (!Number.isFinite(minutes)) return 'data desconhecida';
+  if (minutes < 60) return `${minutes} minuto${minutes === 1 ? '' : 's'}`;
+
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  const hourText = `${hours} hora${hours === 1 ? '' : 's'}`;
+  if (remainingMinutes === 0) return hourText;
+
+  return `${hourText} e ${remainingMinutes} minuto${remainingMinutes === 1 ? '' : 's'}`;
+}
+
+function getStaleStockSnapshotMessage(snapshot: ReallocationStockSnapshot | null) {
+  if (!snapshot) return '';
+
+  const importedAt = new Date(snapshot.imported_at).getTime();
+  if (!Number.isFinite(importedAt)) {
+    return 'A base de estoque atual esta sem data de importacao valida. Importe um novo estoque antes de gerar ou exportar remanejamento.';
+  }
+
+  if (Date.now() - importedAt <= STOCK_SNAPSHOT_MAX_AGE_MS) return '';
+
+  return `A base de estoque foi importada ha ${formatStockSnapshotAge(stockSnapshotAgeMinutes(snapshot))} e esta antiga. Importe um novo estoque antes de gerar ou exportar remanejamento.`;
+}
 
 interface TransferSuggestion {
   id: string;
@@ -577,6 +613,7 @@ export function ReallocationManager({
   const [lastPurchaseSupplierFilters, setLastPurchaseSupplierFilters] = useState<QuickFilterItem[]>(initialPreferences.lastPurchaseSupplierFilters);
   const [totalProducts, setTotalProducts] = useState(0);
   const [stockSnapshot, setStockSnapshot] = useState<ReallocationStockSnapshot | null>(null);
+  const [, setStockAgeTick] = useState(0);
   const [stockItems, setStockItems] = useState<ReallocationStockItem[]>([]);
   const [transferSuggestions, setTransferSuggestions] = useState<TransferSuggestion[]>([]);
   const [confirmedSuggestions, setConfirmedSuggestions] = useState<TransferSuggestion[]>([]);
@@ -685,6 +722,16 @@ export function ReallocationManager({
   }, [loadStockSnapshot]);
 
   useEffect(() => {
+    if (!stockSnapshot) return undefined;
+
+    const interval = window.setInterval(() => {
+      setStockAgeTick((current) => current + 1);
+    }, 60000);
+
+    return () => window.clearInterval(interval);
+  }, [stockSnapshot]);
+
+  useEffect(() => {
     window.localStorage.setItem(REALLOCATION_AUDIT_STORAGE_KEY, JSON.stringify(reallocationAuditLog));
   }, [reallocationAuditLog]);
 
@@ -764,6 +811,24 @@ export function ReallocationManager({
     });
     return message;
   }, [addReallocationAuditLog, onPermissionBlocked]);
+
+  const stockSnapshotStaleMessage = getStaleStockSnapshotMessage(stockSnapshot);
+
+  const requireFreshStockSnapshot = useCallback((action: string) => {
+    if (!stockSnapshot) {
+      const message = `Importe um estoque antes de ${action}.`;
+      setSuggestionMessage(message);
+      alert(message);
+      return false;
+    }
+
+    const staleMessage = getStaleStockSnapshotMessage(stockSnapshot);
+    if (!staleMessage) return true;
+
+    setSuggestionMessage(staleMessage);
+    alert(staleMessage);
+    return false;
+  }, [stockSnapshot]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -1123,7 +1188,7 @@ export function ReallocationManager({
         throw new Error(data?.error || 'Erro ao importar estoque.');
       }
 
-      alert(`${data.imported || 0} linhas de estoque importadas. ${data.matchedProducts || 0} vinculadas ao código ERP. ${data.unmatchedProducts || 0} sem vínculo. ${data.skipped || 0} ignoradas.${data.movementColumnsAvailable === false ? ' Rode o SQL atualizado de estoque para habilitar filtros de ultima venda/compra.' : ''}`);
+      alert(`${data.imported || 0} linhas de estoque importadas e mescladas na base ativa. ${data.replacedRows || 0} linhas anteriores substituídas. ${data.matchedProducts || 0} vinculadas ao código ERP. ${data.unmatchedProducts || 0} sem vínculo. ${data.skipped || 0} ignoradas.${data.movementColumnsAvailable === false ? ' Rode o SQL atualizado de estoque para habilitar filtros de ultima venda/compra.' : ''}`);
       addReallocationAuditLog({
         action: 'Estoque importado',
         detail: file.name,
@@ -1231,6 +1296,8 @@ export function ReallocationManager({
       alert(getBlockedMessage('gerar sugestoes de remanejamento inteligente', 'perfumePurchasingOrSupreme'));
       return;
     }
+    if (!requireFreshStockSnapshot('gerar sugestoes de remanejamento')) return;
+
     const manualQuantityByKey = preserveManualChanges
       ? new Map(
         transferSuggestions
@@ -1715,6 +1782,8 @@ export function ReallocationManager({
       alert(getBlockedMessage('exportar TXT de remanejamento inteligente', 'perfumePurchasingOrSupreme'));
       return;
     }
+    if (!requireFreshStockSnapshot('exportar o TXT de remanejamento')) return;
+
     if (confirmedBlockingExportIssues.length > 0) {
       const first = confirmedBlockingExportIssues[0];
       alert(`${first.title}: ${first.detail}`);
@@ -1768,6 +1837,8 @@ export function ReallocationManager({
       alert(getBlockedMessage('exportar TXT de remanejamento inteligente', 'perfumePurchasingOrSupreme'));
       return;
     }
+    if (!requireFreshStockSnapshot('exportar o TXT de remanejamento')) return;
+
     if (confirmedBlockingExportIssues.length > 0) {
       const first = confirmedBlockingExportIssues[0];
       alert(`${first.title}: ${first.detail}`);
@@ -1820,6 +1891,8 @@ export function ReallocationManager({
       alert(getBlockedMessage('exportar conferencia de remanejamento inteligente', 'perfumePurchasingOrSupreme'));
       return;
     }
+    if (!requireFreshStockSnapshot('exportar a conferencia de remanejamento')) return;
+
     const rows = [
       ['produto', 'origem', 'destino', 'codigo_erp', 'ean', 'quantidade', 'sugestao_original', 'estoque_origem', 'dias_origem_antes', 'dias_origem_depois', 'estoque_destino', 'dias_destino_antes', 'dias_destino_depois', 'rota', 'status'],
       ...activeSuggestionRows.map((suggestion) => [
@@ -2149,6 +2222,10 @@ export function ReallocationManager({
   const dataImportPermissionTitle = canImportData ? undefined : getPermissionDeniedMessage('importar dados do remanejamento inteligente', 'perfumePurchasingOrSupreme');
   const generatePermissionTitle = canGenerateSuggestions ? undefined : getPermissionDeniedMessage('gerar sugestoes de remanejamento inteligente', 'perfumePurchasingOrSupreme');
   const exportPermissionTitle = canExport ? undefined : getPermissionDeniedMessage('exportar remanejamento inteligente', 'perfumePurchasingOrSupreme');
+  const stockSnapshotBlockedTitle = stockSnapshotStaleMessage || undefined;
+  const canUseStockSnapshot = Boolean(stockSnapshot) && !stockSnapshotStaleMessage;
+  const generateButtonTitle = generatePermissionTitle || stockSnapshotBlockedTitle;
+  const exportButtonTitle = exportPermissionTitle || stockSnapshotBlockedTitle;
   const showBusyOverlay = stockImporting || generatingSuggestions;
   const busyOverlayTitle = stockImporting ? 'Importando estoque' : 'Atualizando sugestoes';
   const busyOverlayMessage = stockImporting
@@ -2207,6 +2284,7 @@ export function ReallocationManager({
                 selected={originFilters}
                 onChange={setOriginFilters}
                 hideInitialOptions
+                quickAddBehavior="optionsPicker"
               />
               <QuickFilterBox
                 title="Un. Negocio Destino"
@@ -2216,6 +2294,7 @@ export function ReallocationManager({
                 selected={destinationFilters}
                 onChange={setDestinationFilters}
                 hideInitialOptions
+                quickAddBehavior="optionsPicker"
               />
               <QuickFilterBox
                 title="Produto"
@@ -2390,8 +2469,8 @@ export function ReallocationManager({
             <button
               type="button"
               onClick={exportSuggestionsTxt}
-              disabled={!canExport || confirmedSuggestions.length === 0 || confirmedBlockingExportIssues.length > 0}
-              title={!canExport ? exportPermissionTitle : confirmedBlockingExportIssues.length > 0 ? `${confirmedBlockingExportIssues[0].title}: ${confirmedBlockingExportIssues[0].detail}` : 'Exportar TXT das sugestões confirmadas'}
+              disabled={!canExport || !canUseStockSnapshot || confirmedSuggestions.length === 0 || confirmedBlockingExportIssues.length > 0}
+              title={exportButtonTitle || (confirmedBlockingExportIssues.length > 0 ? `${confirmedBlockingExportIssues[0].title}: ${confirmedBlockingExportIssues[0].detail}` : 'Exportar TXT das sugestões confirmadas')}
               className="h-9 rounded-md bg-slate-900 px-2 text-[10px] font-black uppercase text-white shadow-sm disabled:opacity-40"
             >
               <Download size={13} className="mr-1 inline-block" /> TXT
@@ -2399,8 +2478,8 @@ export function ReallocationManager({
             <button
               type="button"
               onClick={exportConferenceCsv}
-              disabled={!canExport || activeSuggestionRows.length === 0}
-              title={exportPermissionTitle}
+              disabled={!canExport || !canUseStockSnapshot || activeSuggestionRows.length === 0}
+              title={exportButtonTitle}
               className="h-9 rounded-md border border-slate-200 bg-white px-2 text-[10px] font-black uppercase text-slate-500 shadow-sm hover:border-violet-300 hover:text-violet-700 disabled:opacity-40"
             >
               <FileSpreadsheet size={13} className="mr-1 inline-block" /> CSV
@@ -2415,8 +2494,8 @@ export function ReallocationManager({
             <button
               type="button"
               onClick={requestGenerateTransferSuggestions}
-              disabled={!canGenerateSuggestions || !stockSnapshot || stockLoading || generatingSuggestions}
-              title={generatePermissionTitle}
+              disabled={!canGenerateSuggestions || !canUseStockSnapshot || stockLoading || generatingSuggestions}
+              title={generateButtonTitle}
               className="col-span-2 h-10 rounded-md bg-violet-600 px-2 text-[10px] font-black uppercase text-white shadow-sm disabled:opacity-40"
             >
               <Shuffle size={13} className="mr-1 inline-block" /> {stockLoading ? 'Carregando' : generatingSuggestions ? 'Gerando' : 'Atualizar'}
@@ -2460,11 +2539,16 @@ export function ReallocationManager({
           </div>
         )}
 
-        {(hasPendingSuggestionSettings || suggestionMessage || suggestionDiagnostic || originSummary.length > 0) && (
+        {(hasPendingSuggestionSettings || stockSnapshotStaleMessage || suggestionMessage || suggestionDiagnostic || originSummary.length > 0) && (
           <div className="flex flex-wrap items-center gap-1.5 border-b border-slate-200 bg-white px-3 py-1.5 text-[10px] font-black uppercase">
             {hasPendingSuggestionSettings && (
               <span className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-amber-700">
                 filtros alterados, clique em atualizar
+              </span>
+            )}
+            {stockSnapshotStaleMessage && (
+              <span className="max-w-full truncate rounded-md border border-red-200 bg-red-50 px-2 py-1 text-red-700">
+                {stockSnapshotStaleMessage}
               </span>
             )}
             {suggestionMessage && (
@@ -2847,8 +2931,8 @@ export function ReallocationManager({
                   setShowAdvancedRules(false);
                   requestGenerateTransferSuggestions();
                 }}
-                disabled={!canGenerateSuggestions || !stockSnapshot || stockLoading || generatingSuggestions}
-                title={generatePermissionTitle}
+                disabled={!canGenerateSuggestions || !canUseStockSnapshot || stockLoading || generatingSuggestions}
+                title={generateButtonTitle}
                 className="h-9 rounded-md bg-violet-600 px-4 text-[10px] font-black uppercase text-white shadow-sm disabled:opacity-40"
               >
                 Aplicar e atualizar
@@ -3237,6 +3321,7 @@ function QuickFilterBox({
   hideInitialOptions = false,
   allowManual = false,
   alignPopup = 'left',
+  quickAddBehavior = 'quickValue',
 }: {
   title: string;
   columns: string[];
@@ -3248,6 +3333,7 @@ function QuickFilterBox({
   hideInitialOptions?: boolean;
   allowManual?: boolean;
   alignPopup?: 'left' | 'right';
+  quickAddBehavior?: 'quickValue' | 'optionsPicker';
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [expanded, setExpanded] = useState(false);
@@ -3255,7 +3341,11 @@ function QuickFilterBox({
   const [remoteOptions, setRemoteOptions] = useState<QuickFilterItem[]>([]);
   const [searching, setSearching] = useState(false);
   const [markedIds, setMarkedIds] = useState<Set<string>>(() => new Set());
+  const [optionsPickerOpen, setOptionsPickerOpen] = useState(false);
+  const [optionsPickerSearch, setOptionsPickerSearch] = useState('');
+  const [optionsPickerIds, setOptionsPickerIds] = useState<Set<string>>(() => new Set());
   const normalizedQuickValue = normalizeAutocompleteText(quickValue);
+  const normalizedOptionsPickerSearch = normalizeAutocompleteText(optionsPickerSearch);
   const availableOptions = onQuickSearch && normalizedQuickValue ? remoteOptions : options;
   const visibleOptions = useMemo(() => {
     if (hideInitialOptions && !normalizedQuickValue) return [];
@@ -3271,6 +3361,14 @@ function QuickFilterBox({
     if (valueColumnCount === 1) return '24px minmax(0, 1fr)';
     return `24px repeat(${valueColumnCount}, minmax(0, 1fr))`;
   }, [columns.length]);
+  const pickerOptions = useMemo(() => (
+    rankAutocompleteOptions(options, normalizedOptionsPickerSearch, Math.max(options.length, 1))
+  ), [normalizedOptionsPickerSearch, options]);
+  const pickerVisibleIds = useMemo(() => new Set(pickerOptions.map((item) => item.id)), [pickerOptions]);
+  const selectedPickerVisibleCount = useMemo(() => (
+    pickerOptions.filter((item) => optionsPickerIds.has(item.id)).length
+  ), [optionsPickerIds, pickerOptions]);
+  const allPickerVisibleSelected = pickerOptions.length > 0 && selectedPickerVisibleCount === pickerOptions.length;
 
   useEffect(() => {
     if (!onQuickSearch) return;
@@ -3311,6 +3409,7 @@ function QuickFilterBox({
     const handlePointerDown = (event: globalThis.MouseEvent | TouchEvent) => {
       if (!containerRef.current || containerRef.current.contains(event.target as Node)) return;
       setExpanded(false);
+      setOptionsPickerOpen(false);
       setQuickValue('');
       setRemoteOptions([]);
     };
@@ -3328,6 +3427,11 @@ function QuickFilterBox({
       if (event.key !== 'Escape') return;
 
       if (expanded) {
+        if (optionsPickerOpen) {
+          setOptionsPickerOpen(false);
+          setOptionsPickerSearch('');
+          return;
+        }
         setExpanded(false);
         setQuickValue('');
         setRemoteOptions([]);
@@ -3341,7 +3445,7 @@ function QuickFilterBox({
 
     window.addEventListener('keydown', handleEscape);
     return () => window.removeEventListener('keydown', handleEscape);
-  }, [expanded, quickValue]);
+  }, [expanded, optionsPickerOpen, quickValue]);
 
   const addItem = (item: QuickFilterItem) => {
     if (selectedIds.has(item.id)) return;
@@ -3387,6 +3491,51 @@ function QuickFilterBox({
       columns: [manualValue],
       searchText: manualValue.toLowerCase(),
     });
+  };
+
+  const openOptionsPicker = () => {
+    setExpanded(true);
+    setOptionsPickerIds(new Set(selectedIds));
+    setOptionsPickerSearch('');
+    setOptionsPickerOpen(true);
+  };
+
+  const toggleOptionsPickerItem = (itemId: string) => {
+    setOptionsPickerIds((current) => {
+      const next = new Set(current);
+      if (next.has(itemId)) {
+        next.delete(itemId);
+      } else {
+        next.add(itemId);
+      }
+      return next;
+    });
+  };
+
+  const toggleVisiblePickerItems = () => {
+    if (pickerVisibleIds.size === 0) return;
+
+    setOptionsPickerIds((current) => {
+      const next = new Set(current);
+      const allVisibleSelected = Array.from(pickerVisibleIds).every((id) => next.has(id));
+      pickerVisibleIds.forEach((id) => {
+        if (allVisibleSelected) {
+          next.delete(id);
+        } else {
+          next.add(id);
+        }
+      });
+      return next;
+    });
+  };
+
+  const applyOptionsPicker = () => {
+    onChange(options.filter((item) => optionsPickerIds.has(item.id)));
+    setMarkedIds(new Set());
+    setOptionsPickerOpen(false);
+    setOptionsPickerSearch('');
+    setQuickValue('');
+    setRemoteOptions([]);
   };
 
   const toggleVisibleMarkedItems = () => {
@@ -3460,6 +3609,8 @@ function QuickFilterBox({
               type="button"
               onClick={() => {
                 setExpanded(false);
+                setOptionsPickerOpen(false);
+                setOptionsPickerSearch('');
                 setQuickValue('');
                 setRemoteOptions([]);
               }}
@@ -3469,6 +3620,148 @@ function QuickFilterBox({
               <X size={12} className="mx-auto" />
             </button>
           </div>
+
+          {optionsPickerOpen && (
+            <div className="absolute inset-0 z-[320] flex min-h-[430px] flex-col overflow-hidden rounded-[6px] border border-blue-500 bg-white shadow-[0_20px_52px_rgba(15,23,42,0.30)]">
+              <div className="flex h-8 items-center justify-between border-b border-slate-300 bg-slate-100 px-2">
+                <span className="truncate text-xs font-black text-slate-900">{title} - todas as lojas</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOptionsPickerOpen(false);
+                    setOptionsPickerSearch('');
+                  }}
+                  className="h-5 w-5 rounded border border-slate-300 bg-white text-slate-500 hover:text-red-600"
+                  aria-label="Fechar lista de lojas"
+                >
+                  <X size={12} className="mx-auto" />
+                </button>
+              </div>
+
+              <div className="border-b border-slate-200 bg-white p-2">
+                <div className="relative">
+                  <Search size={14} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    value={optionsPickerSearch}
+                    onChange={(event) => setOptionsPickerSearch(event.target.value)}
+                    placeholder="Buscar loja por codigo, apelido, cidade ou CNPJ..."
+                    className="h-9 w-full rounded-[4px] border border-slate-300 bg-white pl-8 pr-8 text-xs font-bold outline-none focus:border-blue-500"
+                  />
+                  {optionsPickerSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setOptionsPickerSearch('')}
+                      className="absolute right-2 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded bg-slate-100 text-slate-400 hover:bg-red-50 hover:text-red-600"
+                      aria-label="Limpar busca de lojas"
+                    >
+                      <X size={11} />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex h-8 items-center justify-between border-b border-slate-200 bg-slate-50 px-2">
+                <button
+                  type="button"
+                  onClick={toggleVisiblePickerItems}
+                  className="flex items-center gap-2 rounded border border-slate-200 bg-white px-2 py-1 text-[10px] font-black uppercase text-slate-600 hover:border-blue-300 hover:text-blue-700"
+                >
+                  <span className={`flex h-3.5 w-3.5 items-center justify-center rounded-[2px] border ${
+                    allPickerVisibleSelected ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-300 bg-white text-transparent'
+                  }`}>
+                    <Check size={10} />
+                  </span>
+                  Marcar filtradas
+                </button>
+                <span className="text-[10px] font-black uppercase text-slate-400">
+                  {optionsPickerIds.size} selecionada{optionsPickerIds.size === 1 ? '' : 's'}
+                </span>
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-auto bg-white">
+                <div
+                  className="sticky top-0 z-10 grid items-center border-b border-slate-300 bg-white text-[11px] font-bold text-slate-900 shadow-[0_1px_0_rgba(15,23,42,0.08)]"
+                  style={{ gridTemplateColumns: optionGridTemplate }}
+                >
+                  <span className="h-6 border-r border-slate-200" />
+                  {columns.map((column) => (
+                    <span key={`picker-head-${column}`} className="truncate border-r border-slate-200 px-2 last:border-r-0">{column}</span>
+                  ))}
+                </div>
+
+                <div className="p-1">
+                  {pickerOptions.map((item) => {
+                    const checked = optionsPickerIds.has(item.id);
+                    return (
+                      <button
+                        key={`picker-${item.id}`}
+                        type="button"
+                        onClick={() => toggleOptionsPickerItem(item.id)}
+                        className={`mb-1 grid w-full items-center rounded-[3px] border px-0 text-left ${
+                          checked
+                            ? 'border-blue-600 bg-blue-100 shadow-[inset_0_0_0_1px_rgba(37,99,235,0.35)]'
+                            : 'border-transparent hover:border-blue-200 hover:bg-blue-50'
+                        }`}
+                        style={{ gridTemplateColumns: optionGridTemplate }}
+                      >
+                        <span className="flex h-7 items-center justify-center border-r border-slate-200">
+                          <span className={`flex h-4 w-4 items-center justify-center rounded-[2px] border text-[11px] leading-none ${
+                            checked ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-300 bg-white text-transparent'
+                          }`}>
+                            <Check size={12} />
+                          </span>
+                        </span>
+                        {columns.map((column, index) => (
+                          <span
+                            key={`picker-${item.id}-${column}-${index}`}
+                            className={`h-7 truncate border-r border-slate-200 px-2 py-1.5 text-xs last:border-r-0 ${
+                              index === 0 ? 'font-black text-slate-900' : 'font-bold text-slate-700'
+                            }`}
+                          >
+                            {item.columns[index] || '-'}
+                          </span>
+                        ))}
+                      </button>
+                    );
+                  })}
+                </div>
+                {pickerOptions.length === 0 && (
+                  <div className="flex h-28 items-center justify-center rounded-md bg-slate-50 px-3 text-center text-xs font-bold text-slate-400">
+                    Nenhuma loja encontrada
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center justify-between gap-2 border-t border-slate-200 bg-white p-2">
+                <button
+                  type="button"
+                  onClick={() => setOptionsPickerIds(new Set())}
+                  className="h-8 rounded-md bg-slate-100 px-3 text-[10px] font-black uppercase text-slate-600"
+                >
+                  Limpar
+                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOptionsPickerOpen(false);
+                      setOptionsPickerSearch('');
+                    }}
+                    className="h-8 rounded-md border border-slate-200 bg-white px-3 text-[10px] font-black uppercase text-slate-600"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={applyOptionsPicker}
+                    className="h-8 rounded-md bg-blue-600 px-4 text-[10px] font-black uppercase text-white shadow-sm hover:bg-blue-700"
+                  >
+                    Aplicar
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="max-h-64 min-h-40 overflow-auto border-b border-slate-200 bg-white">
             <div
@@ -3608,7 +3901,7 @@ function QuickFilterBox({
                   </div>
                 )}
               </div>
-              <button type="button" onClick={addQuickValue} className="flex h-8 w-full items-center justify-center rounded-[4px] bg-violet-600 text-white md:w-9">
+              <button type="button" onClick={quickAddBehavior === 'optionsPicker' ? openOptionsPicker : addQuickValue} className="flex h-8 w-full items-center justify-center rounded-[4px] bg-violet-600 text-white md:w-9">
                 <Plus size={14} />
               </button>
             </div>

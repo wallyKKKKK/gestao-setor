@@ -8,7 +8,11 @@ import type { ProcessedTask, Profile, UserRole } from '@/lib/types';
 interface ExitingTask {
   task: ProcessedTask;
   index: number;
+  tab: string;
 }
+
+const TASK_EXIT_ANIMATION_MS = 520;
+const EXIT_ANIMATION_TABS = new Set(['HOJE', 'ATRASADOS']);
 
 interface TaskListViewProps {
   activeTab: string;
@@ -42,6 +46,7 @@ export function TaskListView({
   onScheduleOverride,
 }: TaskListViewProps) {
   const [exitingTasks, setExitingTasks] = useState<Record<string, ExitingTask>>({});
+  const [hiddenCompletedTasks, setHiddenCompletedTasks] = useState<Record<string, { tab: string }>>({});
   const exitTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   useEffect(() => {
@@ -54,10 +59,14 @@ export function TaskListView({
   }, []);
 
   const displayTasks = useMemo(() => {
-    const currentIds = new Set(tasks.map((task) => task.id));
-    const orderedTasks = [...tasks];
+    const visibleTasks = tasks.filter((task) => {
+      const hiddenTask = hiddenCompletedTasks[task.id];
+      return !(hiddenTask?.tab === activeTab && task.isDoneToday);
+    });
+    const currentIds = new Set(visibleTasks.map((task) => task.id));
+    const orderedTasks = [...visibleTasks];
     const pendingExitTasks = Object.values(exitingTasks)
-      .filter((item) => !currentIds.has(item.task.id))
+      .filter((item) => item.tab === activeTab && !currentIds.has(item.task.id))
       .sort((left, right) => left.index - right.index);
 
     pendingExitTasks.forEach((item) => {
@@ -65,13 +74,14 @@ export function TaskListView({
     });
 
     return orderedTasks;
-  }, [exitingTasks, tasks]);
+  }, [activeTab, exitingTasks, hiddenCompletedTasks, tasks]);
 
   const startExitAnimation = (task: ProcessedTask) => {
-    if (activeTab !== 'HOJE' || task.isDoneToday) return;
+    if (task.isDoneToday || !EXIT_ANIMATION_TABS.has(activeTab)) return;
 
     const taskIndex = Math.max(0, tasks.findIndex((item) => item.id === task.id));
-    setExitingTasks((current) => ({ ...current, [task.id]: { task, index: taskIndex } }));
+    const tabAtStart = activeTab;
+    setExitingTasks((current) => ({ ...current, [task.id]: { task, index: taskIndex, tab: tabAtStart } }));
 
     const currentTimer = exitTimersRef.current.get(task.id);
     if (currentTimer) clearTimeout(currentTimer);
@@ -82,8 +92,9 @@ export function TaskListView({
         delete next[task.id];
         return next;
       });
+      setHiddenCompletedTasks((current) => ({ ...current, [task.id]: { tab: tabAtStart } }));
       exitTimersRef.current.delete(task.id);
-    }, 520);
+    }, TASK_EXIT_ANIMATION_MS);
 
     exitTimersRef.current.set(task.id, timer);
   };
@@ -96,7 +107,7 @@ export function TaskListView({
   return (
     <div className="mx-auto max-w-[900px] space-y-5 pt-12">
       {displayTasks.map((task) => {
-        const isExiting = Boolean(exitingTasks[task.id]);
+        const isExiting = exitingTasks[task.id]?.tab === activeTab;
 
         return (
           <div

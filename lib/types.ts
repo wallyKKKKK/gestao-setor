@@ -279,6 +279,7 @@ export interface AppNotification {
 }
 
 export interface NotificationPreferences {
+  nativeBrowserNotifications: boolean;
   morningBriefing: boolean;
   closingSummary: boolean;
   meetingReminders: boolean;

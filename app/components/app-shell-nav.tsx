@@ -81,6 +81,7 @@ const NOTIFICATION_PREFERENCE_OPTIONS: Array<{
   label: string;
   helper: string;
 }> = [
+  { key: 'nativeBrowserNotifications', label: 'Fora do app', helper: 'Alertas do navegador' },
   { key: 'morningBriefing', label: 'Bom dia', helper: 'Resumo das 8h' },
   { key: 'closingSummary', label: 'Fechamento', helper: 'Pendencias das 17h' },
   { key: 'meetingReminders', label: 'Reunioes', helper: 'Agenda e lembretes' },
@@ -278,14 +279,14 @@ export function AppShellNav({
                       >
                         <span className="min-w-0">
                           <span className="block text-[10px] font-black uppercase tracking-[0.16em] text-slate-900">
-                            Avisos internos do sistema
+                            Avisos fora do sistema
                           </span>
                           <span className="mt-0.5 block text-[10px] font-bold text-slate-400">
                             {browserNotificationPermission === 'denied'
-                              ? 'Avisos internos bloqueados'
+                              ? 'Notificacoes bloqueadas no navegador'
                               : browserNotificationPermission === 'unsupported'
-                                ? 'Avisos internos indisponiveis'
-                                : 'Receba alertas com o visual do Wally'}
+                                ? 'Este navegador nao suporta notificacoes'
+                                : 'Receba alertas mesmo fora da aba'}
                           </span>
                         </span>
                         <span className="shrink-0 rounded-full bg-blue-600 px-3 py-1.5 text-[9px] font-black uppercase text-white">

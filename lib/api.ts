@@ -39,6 +39,7 @@ export interface CreateMeetingInput {
   googleEventId?: string | null;
   googleEventLink?: string | null;
   priority?: TaskPriority;
+  tone?: string;
 }
 
 interface TaskHistoryInput {
@@ -843,6 +844,7 @@ export async function createMeeting(input: CreateMeetingInput) {
     `Motivo: ${input.motive}`,
     input.location ? `Local: ${input.location}` : null,
     input.notes ? `Observações: ${input.notes}` : null,
+    input.tone ? `Cor: ${input.tone}` : null,
   ].filter(Boolean).join("\n");
 
   await createTask({

@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, ChevronLeft, ChevronRight, Edit3, ExternalLink, MapPin, Plus, RotateCcw, Trash2, X } from 'lucide-react';
+import { Check, CheckCircle2, ChevronLeft, ChevronRight, Edit3, ExternalLink, MapPin, Plus, RotateCcw, Trash2, X } from 'lucide-react';
 import type { CreateMeetingInput } from '@/lib/api';
 import { getAuthHeaders } from '@/lib/auth-headers';
 import { getPermissionDeniedMessage } from '@/lib/permissions';
@@ -22,6 +22,30 @@ interface MeetingCalendarViewProps {
 
 const weekDays = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
+const meetingEventToneClasses = ['violet', 'blue', 'pink', 'amber', 'emerald', 'cyan', 'orange', 'fuchsia', 'indigo'] as const;
+type MeetingEventTone = typeof meetingEventToneClasses[number];
+const meetingEventFillClassNames: Record<string, string> = {
+  violet: 'bg-violet-500 text-white hover:bg-violet-600',
+  blue: 'bg-blue-600 text-white hover:bg-blue-700',
+  pink: 'bg-rose-500 text-white hover:bg-rose-600',
+  amber: 'bg-amber-300 text-[#172033] hover:bg-amber-400',
+  emerald: 'bg-emerald-400 text-[#06281b] hover:bg-emerald-500',
+  cyan: 'bg-cyan-500 text-white hover:bg-cyan-600',
+  orange: 'bg-orange-400 text-orange-950 hover:bg-orange-500',
+  fuchsia: 'bg-fuchsia-500 text-white hover:bg-fuchsia-600',
+  indigo: 'bg-indigo-500 text-white hover:bg-indigo-600',
+  done: 'bg-emerald-400 text-emerald-950/80 hover:bg-emerald-500',
+  google: 'bg-green-200 text-green-950 hover:bg-green-300',
+};
+
+function isMeetingEventTone(value: string): value is MeetingEventTone {
+  return meetingEventToneClasses.includes(value as MeetingEventTone);
+}
+
+function randomMeetingEventTone() {
+  return meetingEventToneClasses[Math.floor(Math.random() * meetingEventToneClasses.length)];
+}
+
 function toISODate(date: Date) {
   return date.toISOString().slice(0, 10);
 }
@@ -32,6 +56,17 @@ function monthLabel(date: Date) {
 
 function padTimePart(value: number) {
   return String(value).padStart(2, '0');
+}
+
+function getTimeSortValue(time: string) {
+  const match = time.match(/^([0-9]{2}):([0-9]{2})$/);
+  if (!match) return 24 * 60 + 999;
+
+  const hours = Number.parseInt(match[1], 10);
+  const minutes = Number.parseInt(match[2], 10);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return 24 * 60 + 999;
+
+  return hours * 60 + minutes;
 }
 
 function TimeDialPicker({ value, onChange }: { value: string; onChange: (value: string) => void }) {
@@ -305,8 +340,9 @@ export function MeetingCalendarView({
     return event.start?.dateTime?.slice(11, 16) || '--:--';
   };
 
-  const getAssigneeName = (task: ProcessedTask) =>
-    profiles.find((profile) => profile.id === task.assigned_to)?.full_name || 'Sem responsável';
+  const getAssigneeName = useCallback((task: ProcessedTask) => (
+    profiles.find((profile) => profile.id === task.assigned_to)?.full_name || 'Sem responsável'
+  ), [profiles]);
 
   const handleGoogleReconnectRequired = useCallback((message?: string) => {
     setGoogleStatus((current) => ({ ...current, connected: false }));
@@ -319,12 +355,67 @@ export function MeetingCalendarView({
     return match?.[1] || '--:--';
   };
 
+  const getStoredMeetingTone = (task: ProcessedTask) => {
+    const match = task.notes?.match(/Cor:\s*([a-z-]+)/i);
+    const tone = match?.[1]?.toLowerCase() || '';
+    return isMeetingEventTone(tone) ? tone : '';
+  };
+
+  const getMeetingEventTone = (task: ProcessedTask, index: number) => {
+    if (isMeetingCompleted(task)) return 'done';
+    const storedTone = getStoredMeetingTone(task);
+    if (storedTone) return storedTone;
+
+    const seed = Array.from(task.id || task.title).reduce((total, char) => total + char.charCodeAt(0), index);
+    return meetingEventToneClasses[Math.abs(seed) % meetingEventToneClasses.length];
+  };
+
   const isMeetingCompleted = (task: ProcessedTask) => task.isDoneToday;
 
   const getMeetingField = (task: ProcessedTask, label: string) => {
     const match = task.notes?.match(new RegExp(`${label}:\\s*([^\\n]+)`, 'i'));
     return match?.[1] || '';
   };
+
+  const monthGoogleEvents = useMemo(() => (
+    Object.entries(googleEventsByDay).flatMap(([date, events]) => (
+      events.map((event) => ({
+        id: `google:${event.id}`,
+        date,
+        time: getGoogleEventTime(event),
+        title: event.summary || 'Evento Google',
+        source: 'Google',
+        completed: false,
+      }))
+    ))
+  ), [googleEventsByDay]);
+
+  const monthSummaryItems = useMemo(() => (
+    [
+      ...monthTasks.map((task) => ({
+        id: `task:${task.id}`,
+        date: task.due_date || task.nextOcc,
+        time: getMeetingTime(task),
+        title: task.title,
+        source: getAssigneeName(task),
+        completed: isMeetingCompleted(task),
+      })),
+      ...monthGoogleEvents,
+    ]
+      .sort((left, right) => (
+        left.date.localeCompare(right.date)
+        || getTimeSortValue(left.time) - getTimeSortValue(right.time)
+        || left.title.localeCompare(right.title)
+      ))
+      .slice(0, 5)
+  ), [getAssigneeName, monthGoogleEvents, monthTasks]);
+
+  const monthActiveDays = useMemo(() => {
+    const dates = new Set<string>();
+    monthTasks.forEach((task) => dates.add(task.due_date || task.nextOcc));
+    monthGoogleEvents.forEach((event) => dates.add(event.date));
+    return dates.size;
+  }, [monthGoogleEvents, monthTasks]);
 
   const resetMeetingForm = useCallback(() => {
     setMeetingTitle('');
@@ -336,6 +427,12 @@ export function MeetingCalendarView({
     setMeetingAssignedTo(defaultAssignedTo);
     setEditingMeeting(null);
   }, [defaultAssignedTo]);
+
+  const openCreateMeeting = useCallback((date = new Date()) => {
+    resetMeetingForm();
+    setMeetingDate(toISODate(date));
+    setShowCreateModal(true);
+  }, [resetMeetingForm]);
 
   useEffect(() => {
     if (!showCreateModal) return;
@@ -392,6 +489,7 @@ export function MeetingCalendarView({
         notes: meetingNotes,
         assignedTo: meetingAssignedTo,
         sector: userSector,
+        tone: editingMeeting ? getStoredMeetingTone(editingMeeting) || randomMeetingEventTone() : randomMeetingEventTone(),
       };
       let googleEvent: { id?: string; htmlLink?: string } | null = null;
 
@@ -475,7 +573,7 @@ export function MeetingCalendarView({
   };
 
   return (
-    <main className="mx-auto flex h-[calc(100dvh-4rem)] max-w-[1500px] flex-col overflow-hidden px-2 py-2 sm:px-4">
+    <main className="mx-auto flex h-[calc(100dvh-4rem)] max-w-[1760px] flex-col overflow-hidden px-2 py-2 sm:px-4">
       <div className="hidden">
         <div className="min-w-0">
           <p className="truncate text-sm font-black uppercase tracking-tight text-slate-900 sm:text-base">
@@ -488,7 +586,7 @@ export function MeetingCalendarView({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <button onClick={() => setShowCreateModal(true)} className="flex h-10 items-center gap-2 rounded-2xl bg-blue-600 px-4 text-[10px] font-black uppercase tracking-widest text-white shadow-sm">
+          <button onClick={() => openCreateMeeting()} className="flex h-10 items-center gap-2 rounded-2xl bg-blue-600 px-4 text-[10px] font-black uppercase tracking-widest text-white shadow-sm">
             <Plus size={18} /> Agendar reunião
           </button>
           {googleStatus.configured ? (
@@ -534,7 +632,95 @@ export function MeetingCalendarView({
         </div>
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[22px] border border-slate-200 bg-white shadow-[0_18px_48px_rgba(15,23,42,0.10)] sm:rounded-[28px]">
+      <div className="flex min-h-0 flex-1 gap-3 overflow-hidden">
+        <aside className="hidden w-[270px] shrink-0 flex-col overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-[0_18px_48px_rgba(15,23,42,0.10)] xl:flex">
+          <div className="shrink-0">
+            <div className="border-b border-slate-100 bg-slate-950 px-4 py-3 text-white">
+              <p className="text-[9px] font-black uppercase tracking-[0.22em] text-blue-200">Resumo do mês</p>
+              <div className="mt-1 flex items-end justify-between gap-3">
+                <h3 className="text-xl font-black uppercase italic tracking-tighter">
+                  {visibleMonth.toLocaleDateString('pt-BR', { month: 'short' })}
+                </h3>
+                <span className="pb-0.5 text-[10px] font-black uppercase tracking-widest text-slate-400">
+                  {visibleMonth.getFullYear()}
+                </span>
+              </div>
+            </div>
+
+            <div className="space-y-2 p-3">
+              <div className="grid grid-cols-2 gap-2">
+                <div className="rounded-xl border border-blue-100 bg-blue-50 px-3 py-2">
+                  <p className="text-[8px] font-black uppercase tracking-widest text-blue-500">Reuniões</p>
+                  <p className="text-xl font-black text-slate-950">{monthTasks.length}</p>
+                </div>
+                <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2">
+                  <p className="text-[8px] font-black uppercase tracking-widest text-emerald-600">Concluídas</p>
+                  <p className="text-xl font-black text-slate-950">{completedMonthTasks}</p>
+                </div>
+                <div className="rounded-xl border border-amber-100 bg-amber-50 px-3 py-2">
+                  <p className="text-[8px] font-black uppercase tracking-widest text-amber-600">Pendentes</p>
+                  <p className="text-xl font-black text-slate-950">{Math.max(monthTasks.length - completedMonthTasks, 0)}</p>
+                </div>
+                <div className="rounded-xl border border-violet-100 bg-violet-50 px-3 py-2">
+                  <p className="text-[8px] font-black uppercase tracking-widest text-violet-600">Dias ativos</p>
+                  <p className="text-xl font-black text-slate-950">{monthActiveDays}</p>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between gap-2 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
+                <div>
+                  <p className="text-[8px] font-black uppercase tracking-widest text-slate-400">Google</p>
+                  <p className="text-xs font-black uppercase text-slate-800">
+                    {monthGoogleEvents.length} externo{monthGoogleEvents.length === 1 ? '' : 's'}
+                  </p>
+                </div>
+                <span className={`rounded-full px-2 py-1 text-[8px] font-black uppercase tracking-widest ${
+                  googleStatus.connected ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-500'
+                }`}>
+                  {googleStatus.connected ? 'On' : 'Off'}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex min-h-0 flex-1 flex-col border-t border-slate-100">
+            <p className="shrink-0 px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-400">Próximas do mês</p>
+            <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
+              {monthSummaryItems.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-slate-200 p-4 text-center text-[10px] font-black uppercase tracking-widest text-slate-300">
+                  Sem compromissos
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {monthSummaryItems.map((item) => (
+                    <div key={item.id} className="rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[10px] font-black uppercase text-blue-600">
+                          {new Date(`${item.date}T00:00:00`).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}
+                        </span>
+                        <span className={`rounded-full px-2 py-0.5 text-[8px] font-black uppercase ${
+                          item.completed ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'
+                        }`}>
+                          {item.completed ? 'Ok' : item.time}
+                        </span>
+                      </div>
+                      <p className={`mt-2 line-clamp-2 text-xs font-black uppercase leading-snug ${
+                        item.completed ? 'text-slate-500' : 'text-slate-950'
+                      }`}>
+                        {item.title}
+                      </p>
+                      <p className="mt-1 truncate text-[9px] font-black uppercase tracking-widest text-slate-400">
+                        {item.source}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </aside>
+
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[22px] border border-slate-200 bg-white shadow-[0_18px_48px_rgba(15,23,42,0.10)] sm:rounded-[28px]">
         <div className="shrink-0 border-b border-slate-200 bg-slate-50 px-3 py-2">
           <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
             <div className="min-w-0">
@@ -549,7 +735,7 @@ export function MeetingCalendarView({
             </div>
 
             <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-              <button onClick={() => setShowCreateModal(true)} className="flex h-8 items-center gap-1.5 rounded-lg bg-blue-600 px-3 text-[9px] font-black uppercase tracking-widest text-white shadow-sm transition hover:bg-blue-700">
+              <button onClick={() => openCreateMeeting()} className="flex h-8 items-center gap-1.5 rounded-lg bg-blue-600 px-3 text-[9px] font-black uppercase tracking-widest text-white shadow-sm transition hover:bg-blue-700">
                 <Plus size={14} /> Agendar reunião
               </button>
               {googleStatus.configured ? (
@@ -582,7 +768,7 @@ export function MeetingCalendarView({
           </div>
         </div>
 
-        <div className="hidden shrink-0 md:grid grid-cols-7 bg-slate-900 text-white">
+        <div className="hidden shrink-0 grid-cols-7 bg-slate-950 text-white md:grid">
           {weekDays.map((day) => (
             <div key={day} className="px-4 py-2.5 text-center text-[10px] font-black uppercase tracking-widest">
               {day}
@@ -591,7 +777,7 @@ export function MeetingCalendarView({
         </div>
 
         <div
-          className="hidden min-h-0 flex-1 grid-cols-7 gap-[2px] bg-slate-200 md:grid"
+          className="hidden min-h-0 flex-1 grid-cols-7 gap-2 bg-slate-950 p-2 md:grid"
           style={{ gridTemplateRows: `repeat(${calendarWeekCount}, minmax(0, 1fr))` }}
         >
           {days.map((day, index) => {
@@ -600,62 +786,115 @@ export function MeetingCalendarView({
             const dayTasks = day ? tasksByDay[dayKey] || [] : [];
             const dayGoogleEvents = day ? googleEventsByDay[dayKey] || [] : [];
             const isToday = day && toISODate(day) === toISODate(new Date());
-
+            const calendarItems = day
+              ? [
+                ...dayTasks.map((task) => ({
+                  id: `task:${task.id}`,
+                  type: 'task' as const,
+                  task,
+                  time: getMeetingTime(task),
+                  sortValue: getTimeSortValue(getMeetingTime(task)),
+                })),
+                ...dayGoogleEvents.map((event) => ({
+                  id: `google:${event.id}`,
+                  type: 'google' as const,
+                  event,
+                  time: getGoogleEventTime(event),
+                  sortValue: getTimeSortValue(getGoogleEventTime(event)),
+                })),
+              ].sort((left, right) => left.sortValue - right.sortValue || left.id.localeCompare(right.id))
+              : [];
             return (
-              <div key={key} className={`min-h-0 overflow-hidden bg-white p-2 ${!day ? 'bg-slate-50' : ''}`}>
+              <div
+                key={key}
+                onClick={day ? () => openCreateMeeting(day) : undefined}
+                onKeyDown={day ? (event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    openCreateMeeting(day);
+                  }
+                } : undefined}
+                role={day ? 'button' : undefined}
+                tabIndex={day ? 0 : undefined}
+                title={day ? 'Clique para agendar uma reuniao neste dia' : undefined}
+                className={`relative flex min-h-0 flex-col overflow-hidden rounded-2xl border p-2 transition ${
+                  day
+                    ? 'cursor-pointer border-slate-200 bg-white hover:-translate-y-0.5 hover:border-blue-300 hover:shadow-[0_14px_28px_rgba(15,23,42,0.16)] focus:outline-none focus:ring-2 focus:ring-blue-300'
+                    : 'border-slate-200/40 bg-slate-100/80'
+                }`}
+              >
                 {day && (
                   <>
-                    <div className={`mb-1.5 flex h-6 w-6 items-center justify-center rounded-lg text-[11px] font-black ${isToday ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-500'}`}>
-                      {day.getDate()}
-                    </div>
-                    <div className="space-y-1">
-                      {dayTasks.slice(0, 4).map((task) => {
-                        const completed = isMeetingCompleted(task);
+                    {calendarItems.length > 0 && (
+                      <div className="absolute inset-x-0 bottom-0 top-0 overflow-hidden rounded-2xl">
+                        {calendarItems.map((item, itemIndex) => {
+                          const itemCount = calendarItems.length;
+                          const segmentHeight = itemCount === 1 ? 50 : 100 / itemCount;
+                          const segmentTop = itemCount === 1 ? 50 : itemIndex * segmentHeight;
+                          const tone = item.type === 'task'
+                            ? getMeetingEventTone(item.task, itemIndex)
+                            : 'google';
+                          const fillClassName = meetingEventFillClassNames[tone] || meetingEventFillClassNames.blue;
 
-                        return (
-                          <button
-                            key={task.id}
-                            onClick={() => setSelectedMeeting(task)}
-                            className={`group flex w-full min-w-0 items-center gap-1.5 rounded-lg border px-2 py-1 text-left transition-all ${
-                              completed
-                                ? 'border-emerald-100 bg-emerald-50/80 opacity-80 hover:border-emerald-300'
-                                : 'border-blue-100 bg-blue-50 hover:border-blue-300'
-                            }`}
-                          >
-                            <span className={`h-2 w-2 shrink-0 rounded-full ${completed ? 'bg-emerald-500' : 'bg-blue-500'}`} />
-                            <span className={`shrink-0 text-[9px] font-black tabular-nums ${completed ? 'text-emerald-700/80' : 'text-slate-500'}`}>
-                              {getMeetingTime(task)}
-                            </span>
-                            <span className={`min-w-0 flex-1 truncate text-[9px] font-black uppercase ${completed ? 'text-emerald-700 line-through decoration-2' : 'text-blue-700 group-hover:text-blue-800'}`}>
-                              {task.title}
-                            </span>
-                            {completed && <CheckCircle2 size={11} className="shrink-0 text-emerald-600" />}
-                          </button>
-                        );
-                      })}
-                      {dayGoogleEvents.slice(0, 4).map((event) => (
-                        <div key={event.id} className="flex min-w-0 items-center gap-1.5 rounded-lg border border-green-100 bg-green-50 px-2 py-1">
-                          <a href={event.htmlLink} target="_blank" rel="noreferrer" className="flex min-w-0 flex-1 items-center gap-1.5 hover:text-green-700 transition-all">
-                            <span className="h-2 w-2 shrink-0 rounded-full bg-green-500" />
-                            <span className="shrink-0 text-[9px] font-black tabular-nums text-slate-500">{getGoogleEventTime(event)}</span>
-                            <span className="min-w-0 flex-1 truncate text-[9px] font-black uppercase text-green-700">{event.summary || 'Evento Google'}</span>
-                          </a>
-                          <button
-                            onClick={() => deleteGoogleEvent(event)}
-                            className={`shrink-0 transition ${canDeleteMeetings ? 'text-red-400 hover:text-red-600' : 'cursor-not-allowed text-slate-300 opacity-50'}`}
-                            title={canDeleteMeetings ? 'Excluir evento Google' : deleteMeetingDeniedMessage}
-                            aria-label="Excluir evento Google"
-                            aria-disabled={!canDeleteMeetings}
-                          >
-                            <Trash2 size={10} />
-                          </button>
-                        </div>
-                      ))}
-                      {dayTasks.length + dayGoogleEvents.length > 8 && (
-                        <div className="text-[9px] font-black uppercase text-slate-400 px-2">
-                          +{dayTasks.length + dayGoogleEvents.length - 8} itens
-                        </div>
-                      )}
+                          if (item.type === 'google') {
+                            return (
+                              <div
+                                key={item.id}
+                                onClick={(clickEvent) => clickEvent.stopPropagation()}
+                                className={`absolute inset-x-0 flex min-w-0 items-center gap-1.5 px-2 text-left text-[10px] font-black uppercase transition ${fillClassName}`}
+                                style={{ height: `${segmentHeight}%`, top: `${segmentTop}%` }}
+                              >
+                                <a href={item.event.htmlLink} target="_blank" rel="noreferrer" className="flex min-w-0 flex-1 items-center gap-1.5">
+                                  <span className="shrink-0 tabular-nums opacity-85">{item.time}</span>
+                                  <span className="min-w-0 flex-1 truncate">{item.event.summary || 'Evento Google'}</span>
+                                </a>
+                                <button
+                                  onClick={(clickEvent) => {
+                                    clickEvent.stopPropagation();
+                                    deleteGoogleEvent(item.event);
+                                  }}
+                                  className={`shrink-0 transition ${canDeleteMeetings ? 'opacity-80 hover:opacity-100' : 'cursor-not-allowed opacity-40'}`}
+                                  title={canDeleteMeetings ? 'Excluir evento Google' : deleteMeetingDeniedMessage}
+                                  aria-label="Excluir evento Google"
+                                  aria-disabled={!canDeleteMeetings}
+                                >
+                                  <Trash2 size={10} />
+                                </button>
+                              </div>
+                            );
+                          }
+
+                          const completed = isMeetingCompleted(item.task);
+
+                          return (
+                            <button
+                              key={item.id}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setSelectedMeeting(item.task);
+                              }}
+                              className={`absolute inset-x-0 flex min-w-0 items-center gap-1.5 px-2 text-left text-[10px] font-black uppercase transition ${fillClassName}`}
+                              style={{ height: `${segmentHeight}%`, top: `${segmentTop}%` }}
+                            >
+                              <span className="shrink-0 tabular-nums opacity-85">{item.time}</span>
+                              <span className={`min-w-0 flex-1 truncate ${completed ? 'opacity-70' : ''}`}>
+                                {item.task.title}
+                              </span>
+                              {completed && (
+                                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white shadow-sm ring-1 ring-emerald-700/10">
+                                  <Check size={13} strokeWidth={3} />
+                                </span>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    <div className={`absolute left-1 top-1 z-20 flex h-5 w-5 items-center justify-center rounded-lg text-[10px] font-black shadow-sm ring-1 ring-white/70 ${
+                      isToday ? 'bg-blue-600 text-white' : 'bg-white/90 text-slate-600'
+                    }`}>
+                      {day.getDate()}
                     </div>
                   </>
                 )}
@@ -685,7 +924,7 @@ export function MeetingCalendarView({
                 <div className="min-w-0 flex-1">
                   <button onClick={() => setSelectedMeeting(task)} className="text-left">
                     <div className="flex items-start gap-2">
-                      <h3 className={`font-black uppercase leading-tight ${completed ? 'text-emerald-800 line-through decoration-2' : 'text-slate-900'}`}>{task.title}</h3>
+                      <h3 className={`font-black uppercase leading-tight ${completed ? 'text-emerald-800/65' : 'text-slate-900'}`}>{task.title}</h3>
                       {completed && <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-emerald-600" />}
                     </div>
                   </button>
@@ -731,6 +970,7 @@ export function MeetingCalendarView({
             })}
             </>
           )}
+        </div>
         </div>
       </div>
 

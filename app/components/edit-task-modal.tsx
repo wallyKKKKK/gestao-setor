@@ -73,10 +73,10 @@ export function EditTaskModal({
 
   return (
     <div className="fixed inset-0 z-[300] flex items-center justify-center bg-slate-900/16 p-3 backdrop-blur-sm animate-in zoom-in-95 duration-300">
-      <div className="relative flex w-full max-w-4xl flex-col overflow-visible rounded-[30px] border border-slate-200 bg-white shadow-[0_24px_70px_rgba(15,23,42,0.22)]">
+      <div className="relative flex max-h-[calc(100dvh-1.5rem)] w-full max-w-4xl flex-col overflow-hidden rounded-[30px] border border-slate-200 bg-white shadow-[0_24px_70px_rgba(15,23,42,0.22)]">
         <div className="hidden absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-blue-600 to-indigo-600"></div>
 
-        <div className="flex items-center justify-between border-b-2 border-slate-100 px-5 py-4">
+        <div className="shrink-0 flex items-center justify-between border-b-2 border-slate-100 px-5 py-4">
           <div>
             <h2 className="text-xl font-black uppercase italic tracking-tighter text-slate-900 leading-none">Editar tarefa</h2>
             <p className="text-[9px] font-black text-blue-600 uppercase tracking-widest mt-1">Ajuste de Coordenadas Operacionais</p>
@@ -89,7 +89,7 @@ export function EditTaskModal({
           </button>
         </div>
 
-        <div className="flex-1 p-5 space-y-4 no-scrollbar">
+        <div className="min-h-0 flex-1 overflow-y-auto p-5 space-y-4 no-scrollbar">
           <div className="grid gap-3 md:grid-cols-2">
             <input
               className="h-12 w-full rounded-2xl border-2 border-slate-100 bg-slate-50 px-4 text-sm font-black uppercase text-slate-900 outline-none transition focus:border-blue-600 md:col-span-2"
@@ -348,7 +348,7 @@ export function EditTaskModal({
           </div>
         </div>
 
-        <div className="mt-auto flex gap-3 border-t-2 border-slate-100 px-5 py-4">
+        <div className="mt-auto flex shrink-0 gap-3 border-t-2 border-slate-100 px-5 py-4">
           <button
             onClick={onClose}
             className="h-12 flex-1 rounded-2xl bg-slate-100 text-xs font-black uppercase text-slate-500 transition hover:bg-slate-200"
