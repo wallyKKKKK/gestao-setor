@@ -10,6 +10,36 @@ function isEmailLike(value: string) {
   return value.includes("@");
 }
 
+function getSignUpErrorMessage(message: string) {
+  const normalized = message.toLowerCase();
+
+  if (normalized.includes("already registered") || normalized.includes("already been registered") || normalized.includes("user already")) {
+    return "Este e-mail já está cadastrado. Tente entrar pela tela de login ou use outro e-mail.";
+  }
+
+  if (normalized.includes("password")) {
+    return `Senha não aceita pelo sistema. Tente uma senha mais forte. Detalhe: ${message}`;
+  }
+
+  if (normalized.includes("email") && normalized.includes("invalid")) {
+    return "E-mail inválido. Confira se foi digitado corretamente.";
+  }
+
+  if (normalized.includes("signup") || normalized.includes("signups") || normalized.includes("disabled")) {
+    return `Cadastro de novas contas bloqueado no Supabase. Detalhe: ${message}`;
+  }
+
+  if (normalized.includes("rate limit") || normalized.includes("too many")) {
+    return "Muitas tentativas em sequência. Aguarde alguns minutos e tente novamente.";
+  }
+
+  if (normalized.includes("database") || normalized.includes("profile") || normalized.includes("trigger")) {
+    return `A conta não foi criada por erro no banco/perfil automático. Detalhe: ${message}`;
+  }
+
+  return `Não foi possível criar a conta. Detalhe: ${message}`;
+}
+
 export function Login() {
   const [identifier, setIdentifier] = useState("");
   const [fullName, setFullName] = useState("");
@@ -51,7 +81,7 @@ export function Login() {
         });
 
         if (error) {
-          setErrorMessage("Não foi possível criar a conta.");
+          setErrorMessage(getSignUpErrorMessage(error.message || "Erro desconhecido no cadastro."));
           return;
         }
 
