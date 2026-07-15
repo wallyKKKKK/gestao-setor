@@ -27,6 +27,7 @@ export const SECTORS = [
   "Trade",
   "Compras Perfumaria",
   "Compras Medicamentos",
+  "Suplemento esportivo",
   "Precificação",
   "Logística",
 ];
