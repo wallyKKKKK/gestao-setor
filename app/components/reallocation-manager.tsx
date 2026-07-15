@@ -224,6 +224,19 @@ interface SuggestionGenerationContext {
   generatedAt: string;
 }
 
+interface ReallocationSuggestionDraft {
+  version: number;
+  sector: string;
+  snapshotId: string;
+  snapshotImportedAt: string;
+  savedAt: string;
+  transferSuggestions: TransferSuggestion[];
+  confirmedSuggestions: TransferSuggestion[];
+  suggestionView: SuggestionView;
+  appliedSuggestionSignature: string;
+  suggestionGenerationContext: SuggestionGenerationContext | null;
+}
+
 interface ExportValidationIssue {
   id: string;
   title: string;
@@ -256,6 +269,8 @@ interface ReallocationTransferOrder {
 const REALLOCATION_AUDIT_STORAGE_KEY = 'reallocation-audit-v1';
 const REALLOCATION_TRANSFER_ORDERS_STORAGE_KEY = 'reallocation-transfer-orders-v1';
 const REALLOCATION_PREFERENCES_STORAGE_KEY = 'reallocation-preferences-v1';
+const REALLOCATION_SUGGESTION_DRAFT_STORAGE_KEY = 'reallocation-suggestion-draft-v1';
+const reallocationSuggestionDraftMemory = new Map<string, ReallocationSuggestionDraft>();
 const REALLOCATION_API_VERSION = 'reallocation-api-2026-06-19-v4';
 const REALLOCATION_CLIENT_VERSION = 'reallocation-front-2026-06-19-v5';
 
@@ -337,6 +352,90 @@ function readQuickFilterItems(value: unknown) {
 
 function readCurveList(value: unknown) {
   return Array.isArray(value) ? value.filter((curve): curve is string => STOCK_CURVES.includes(curve as typeof STOCK_CURVES[number])) : [];
+}
+
+function isTransferSuggestion(value: unknown): value is TransferSuggestion {
+  if (!value || typeof value !== 'object') return false;
+  const suggestion = value as Partial<TransferSuggestion>;
+  return typeof suggestion.id === 'string'
+    && typeof suggestion.originCode === 'string'
+    && typeof suggestion.destinationCode === 'string'
+    && typeof suggestion.ean === 'string'
+    && typeof suggestion.description === 'string'
+    && typeof suggestion.quantity === 'number'
+    && typeof suggestion.maxQuantity === 'number';
+}
+
+function isSuggestionView(value: unknown): value is SuggestionView {
+  return value === 'draft' || value === 'confirmed' || value === 'orders';
+}
+
+function getSuggestionDraftStorageKey(sector: string, snapshotId: string) {
+  return `${REALLOCATION_SUGGESTION_DRAFT_STORAGE_KEY}:${sector}:${snapshotId}`;
+}
+
+function readSuggestionDraft(storageKey: string) {
+  const memoryDraft = reallocationSuggestionDraftMemory.get(storageKey);
+  if (memoryDraft) return memoryDraft;
+
+  if (typeof window === 'undefined') return null;
+
+  try {
+    const stored = window.localStorage.getItem(storageKey);
+    if (!stored) return null;
+    const parsed = JSON.parse(stored) as Partial<ReallocationSuggestionDraft>;
+    if (!parsed || parsed.version !== 1) return null;
+
+    const transferSuggestions = Array.isArray(parsed.transferSuggestions)
+      ? parsed.transferSuggestions.filter(isTransferSuggestion)
+      : [];
+    const confirmedSuggestions = Array.isArray(parsed.confirmedSuggestions)
+      ? parsed.confirmedSuggestions.filter(isTransferSuggestion)
+      : [];
+
+    if (typeof parsed.sector !== 'string'
+      || typeof parsed.snapshotId !== 'string'
+      || typeof parsed.snapshotImportedAt !== 'string'
+      || typeof parsed.savedAt !== 'string') {
+      return null;
+    }
+
+    return {
+      version: 1,
+      sector: parsed.sector,
+      snapshotId: parsed.snapshotId,
+      snapshotImportedAt: parsed.snapshotImportedAt,
+      savedAt: parsed.savedAt,
+      transferSuggestions,
+      confirmedSuggestions,
+      suggestionView: isSuggestionView(parsed.suggestionView) ? parsed.suggestionView : 'draft',
+      appliedSuggestionSignature: typeof parsed.appliedSuggestionSignature === 'string' ? parsed.appliedSuggestionSignature : '',
+      suggestionGenerationContext: parsed.suggestionGenerationContext || null,
+    } satisfies ReallocationSuggestionDraft;
+  } catch {
+    window.localStorage.removeItem(storageKey);
+    return null;
+  }
+}
+
+function writeSuggestionDraft(storageKey: string, draft: ReallocationSuggestionDraft) {
+  reallocationSuggestionDraftMemory.set(storageKey, draft);
+
+  if (typeof window === 'undefined') return;
+
+  try {
+    window.localStorage.setItem(storageKey, JSON.stringify(draft));
+  } catch {
+    window.localStorage.removeItem(storageKey);
+  }
+}
+
+function removeSuggestionDraft(storageKey: string) {
+  reallocationSuggestionDraftMemory.delete(storageKey);
+
+  if (typeof window === 'undefined') return;
+
+  window.localStorage.removeItem(storageKey);
 }
 
 function clampPreferenceNumber(value: unknown, fallback: number) {
@@ -655,6 +754,7 @@ export function ReallocationManager({
   const [suggestionDiagnostic, setSuggestionDiagnostic] = useState<SuggestionDiagnostic | null>(null);
   const [appliedSuggestionSignature, setAppliedSuggestionSignature] = useState('');
   const [suggestionGenerationContext, setSuggestionGenerationContext] = useState<SuggestionGenerationContext | null>(null);
+  const [suggestionDraftReady, setSuggestionDraftReady] = useState(false);
   const [suggestionProfile, setSuggestionProfile] = useState<SuggestionProfile>(initialPreferences.suggestionProfile);
   const [showAdvancedRules, setShowAdvancedRules] = useState(initialPreferences.showAdvancedRules);
   const [originMinimumDays, setOriginMinimumDays] = useState(initialPreferences.originMinimumDays);
@@ -684,6 +784,9 @@ export function ReallocationManager({
   const stockInputRef = useRef<HTMLInputElement>(null);
   const resizingSuggestionColumnRef = useRef<{ key: SuggestionColumnKey; startX: number; startWidth: number } | null>(null);
   const draggedSuggestionColumnRef = useRef<SuggestionColumnKey | null>(null);
+  const suggestionDraftStorageKey = stockSnapshot?.id
+    ? getSuggestionDraftStorageKey(activeStockSector, stockSnapshot.id)
+    : '';
 
   const loadProducts = useCallback(async (term = searchTerm) => {
     try {
@@ -971,15 +1074,90 @@ export function ReallocationManager({
 
   useEffect(() => {
     queueMicrotask(() => {
-      setTransferSuggestions([]);
-      setConfirmedSuggestions([]);
+      setSuggestionDraftReady(false);
       setSelectedSuggestionIds([]);
-      setSuggestionView('draft');
-      setSuggestionMessage('');
       setSuggestionDiagnostic(null);
-      setAppliedSuggestionSignature('');
+
+      if (!stockSnapshot?.id || !suggestionDraftStorageKey) {
+        setTransferSuggestions([]);
+        setConfirmedSuggestions([]);
+        setSuggestionView('draft');
+        setSuggestionMessage('');
+        setAppliedSuggestionSignature('');
+        setSuggestionGenerationContext(null);
+        setSuggestionDraftReady(true);
+        return;
+      }
+
+      const draft = readSuggestionDraft(suggestionDraftStorageKey);
+      const isSameSnapshot = draft
+        && draft.sector === activeStockSector
+        && draft.snapshotId === stockSnapshot.id
+        && draft.snapshotImportedAt === stockSnapshot.imported_at;
+
+      if (!isSameSnapshot) {
+        removeSuggestionDraft(suggestionDraftStorageKey);
+        setTransferSuggestions([]);
+        setConfirmedSuggestions([]);
+        setSuggestionView('draft');
+        setSuggestionMessage('');
+        setAppliedSuggestionSignature('');
+        setSuggestionGenerationContext(null);
+        setSuggestionDraftReady(true);
+        return;
+      }
+
+      setTransferSuggestions(draft.transferSuggestions);
+      setConfirmedSuggestions(draft.confirmedSuggestions);
+      setSuggestionView(draft.suggestionView === 'orders' ? 'draft' : draft.suggestionView);
+      setAppliedSuggestionSignature(draft.appliedSuggestionSignature);
+      setSuggestionGenerationContext(draft.suggestionGenerationContext);
+      setSuggestionMessage(
+        draft.transferSuggestions.length || draft.confirmedSuggestions.length
+          ? 'Rascunho de sugestoes restaurado. Seus ajustes manuais foram mantidos.'
+          : '',
+      );
+      setSuggestionDraftReady(true);
     });
-  }, [stockSnapshot?.id]);
+  }, [activeStockSector, stockSnapshot?.id, stockSnapshot?.imported_at, suggestionDraftStorageKey]);
+
+  useEffect(() => {
+    if (!suggestionDraftReady || !stockSnapshot?.id || !suggestionDraftStorageKey) return;
+
+    const hasDraftData = transferSuggestions.length > 0
+      || confirmedSuggestions.length > 0
+      || Boolean(suggestionGenerationContext)
+      || Boolean(appliedSuggestionSignature);
+
+    if (!hasDraftData) {
+      removeSuggestionDraft(suggestionDraftStorageKey);
+      return;
+    }
+
+    writeSuggestionDraft(suggestionDraftStorageKey, {
+      version: 1,
+      sector: activeStockSector,
+      snapshotId: stockSnapshot.id,
+      snapshotImportedAt: stockSnapshot.imported_at,
+      savedAt: new Date().toISOString(),
+      transferSuggestions,
+      confirmedSuggestions,
+      suggestionView,
+      appliedSuggestionSignature,
+      suggestionGenerationContext,
+    });
+  }, [
+    activeStockSector,
+    appliedSuggestionSignature,
+    confirmedSuggestions,
+    stockSnapshot?.id,
+    stockSnapshot?.imported_at,
+    suggestionDraftReady,
+    suggestionDraftStorageKey,
+    suggestionGenerationContext,
+    suggestionView,
+    transferSuggestions,
+  ]);
 
   useEffect(() => {
     const handleMouseMove = (event: MouseEvent) => {
@@ -1336,10 +1514,39 @@ export function ReallocationManager({
         headers: await getAuthHeaders(),
         body: formData,
       });
-      const data = await response.json().catch(() => null);
+      const responseText = await response.text();
+      let data: {
+        error?: string;
+        imported?: number;
+        sector?: string;
+        replacedRows?: number;
+        matchedProducts?: number;
+        unmatchedProducts?: number;
+        skipped?: number;
+        movementColumnsAvailable?: boolean;
+      } | null = null;
+
+      if (responseText) {
+        try {
+          data = JSON.parse(responseText);
+        } catch {
+          data = null;
+        }
+      }
 
       if (!response.ok) {
-        throw new Error(data?.error || 'Erro ao importar estoque.');
+        const fallbackMessage = response.status === 413
+          ? 'O arquivo parece grande demais para o limite de upload do servidor. Tente dividir por linha, departamento, categoria ou loja.'
+          : [408, 504, 522, 524].includes(response.status)
+            ? 'A importacao demorou mais que o servidor permitiu. Tente importar uma base menor ou dividida por classificacao/loja.'
+            : response.status >= 500
+              ? `O servidor recusou a importacao (${response.status}). Tente novamente ou use uma base menor.`
+              : 'Erro ao importar estoque.';
+        throw new Error(data?.error || fallbackMessage);
+      }
+
+      if (!data) {
+        throw new Error('A importacao terminou sem uma resposta valida do servidor.');
       }
 
       alert(`${data.imported || 0} linhas de estoque importadas e mescladas na base ativa do setor ${data.sector || activeStockSector}. ${data.replacedRows || 0} linhas anteriores substituídas. ${data.matchedProducts || 0} vinculadas ao código ERP. ${data.unmatchedProducts || 0} sem vínculo. ${data.skipped || 0} ignoradas.${data.movementColumnsAvailable === false ? ' Rode o SQL atualizado de estoque para habilitar filtros de ultima venda/compra.' : ''}`);
@@ -1348,6 +1555,9 @@ export function ReallocationManager({
         detail: file.name,
         count: Number(data.imported || 0),
       });
+      if (suggestionDraftStorageKey) {
+        removeSuggestionDraft(suggestionDraftStorageKey);
+      }
       setTransferSuggestions([]);
       setConfirmedSuggestions([]);
       setSelectedSuggestionIds([]);

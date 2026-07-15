@@ -424,7 +424,19 @@ export async function POST(request: Request) {
     if (!auth.ok) return auth.response;
 
     importStage = "ler formulario";
-    const formData = await request.formData();
+    let formData: FormData;
+    try {
+      formData = await request.formData();
+    } catch (formError) {
+      const detail = formError instanceof Error ? formError.message : "";
+      const sizeHint = /size|body|payload|too large|large|limit|form/i.test(detail)
+        ? " O arquivo pode ter passado do limite de upload do servidor. Tente dividir por linha/departamento/categoria ou exportar um arquivo menor."
+        : "";
+      return NextResponse.json(
+        { error: `Nao consegui receber o arquivo de estoque.${sizeHint}` },
+        { status: 413 },
+      );
+    }
     const file = formData.get("file");
 
     if (!(file instanceof File)) {
