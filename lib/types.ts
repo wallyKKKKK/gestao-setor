@@ -119,6 +119,8 @@ export interface PricingBranch {
   uf: string;
   cnpj: string;
   logistics_group?: string;
+  sends_stock?: boolean;
+  receives_stock?: boolean;
   is_active: boolean;
   created_at?: string;
   updated_at?: string;

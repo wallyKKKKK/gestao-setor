@@ -362,6 +362,8 @@ export async function savePricingBranch(input: PricingBranchInput) {
     uf: input.uf.toUpperCase(),
     cnpj: input.cnpj,
     logistics_group: (input.logistics_group || "").toUpperCase(),
+    sends_stock: input.sends_stock !== false,
+    receives_stock: input.receives_stock !== false,
   };
 
   if (input.id) {

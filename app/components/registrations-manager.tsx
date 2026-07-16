@@ -46,6 +46,8 @@ const blankBranch: PricingBranchInput = {
   uf: '',
   cnpj: '',
   logistics_group: '',
+  sends_stock: true,
+  receives_stock: true,
   is_active: true,
 };
 
@@ -890,7 +892,7 @@ export function RegistrationsManager({ canManageBranches, canManageProducts, can
                 key={branch.id}
                 title={branch.name}
                 subtitle={`${branch.code} ${branch.city ? `- ${branch.city}` : ''}`}
-                badge={branch.logistics_group ? `Grupo ${branch.logistics_group}` : 'Sem grupo'}
+                badge={`${branch.logistics_group ? `Grupo ${branch.logistics_group}` : 'Sem grupo'} | ${branch.sends_stock !== false ? 'Envia' : 'Nao envia'} / ${branch.receives_stock !== false ? 'Recebe' : 'Nao recebe'}`}
                 active={branch.is_active}
                 canEdit={canManageBranches}
                 onEdit={() => setEditingBranch(branch)}
@@ -1004,6 +1006,8 @@ export function RegistrationsManager({ canManageBranches, canManageProducts, can
           <TextInput label="CNPJ" value={editingBranch.cnpj} onChange={(value) => setEditingBranch((current) => current ? { ...current, cnpj: value } : current)} />
           <TextInput label="Razao social" value={editingBranch.legal_name} onChange={(value) => setEditingBranch((current) => current ? { ...current, legal_name: value } : current)} />
           <ToggleInput label="Loja ativa" checked={editingBranch.is_active} onChange={(checked) => setEditingBranch((current) => current ? { ...current, is_active: checked } : current)} />
+          <ToggleInput label="Envia estoque" checked={editingBranch.sends_stock !== false} onChange={(checked) => setEditingBranch((current) => current ? { ...current, sends_stock: checked } : current)} />
+          <ToggleInput label="Recebe estoque" checked={editingBranch.receives_stock !== false} onChange={(checked) => setEditingBranch((current) => current ? { ...current, receives_stock: checked } : current)} />
         </EditorModal>
       )}
 

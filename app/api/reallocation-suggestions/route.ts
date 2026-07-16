@@ -48,6 +48,8 @@ type BranchLogistics = Record<string, {
   city?: string | null;
   group?: string | null;
   uf?: string | null;
+  sendsStock?: boolean | null;
+  receivesStock?: boolean | null;
 }>;
 
 type SuggestionOrigin = {
@@ -68,6 +70,14 @@ function numberValue(value: unknown) {
 
 function storeCode(value: unknown) {
   return String(value || "").padStart(2, "0");
+}
+
+function branchCanSend(code: unknown, branchLogistics: BranchLogistics) {
+  return branchLogistics[storeCode(code)]?.sendsStock !== false;
+}
+
+function branchCanReceive(code: unknown, branchLogistics: BranchLogistics) {
+  return branchLogistics[storeCode(code)]?.receivesStock !== false;
 }
 
 function formatSnapshotAge(minutes: number) {
@@ -115,6 +125,12 @@ async function getSnapshotFreshnessError(snapshotId: string, sector: string) {
 
 function stockCurve(value: unknown) {
   return String(value || "").trim().toUpperCase().slice(0, 1);
+}
+
+function stockCurveRank(value: unknown) {
+  const curve = stockCurve(value);
+  const ranks: Record<string, number> = { A: 1, B: 2, C: 3, D: 4, E: 5 };
+  return ranks[curve] || 0;
 }
 
 const ROMAN_STORE_SUFFIXES = new Set(["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"]);
@@ -210,27 +226,73 @@ function routePriority(originItem: StockItem, destinationItem: StockItem, branch
   const originCity = String(origin.city || "").trim().toUpperCase();
   const destinationCity = String(destination.city || "").trim().toUpperCase();
 
-  if (originGroup && destinationGroup && originGroup === destinationGroup) return 0;
-  if (originCity && destinationCity && originCity === destinationCity) return 2;
+  if (originCity && destinationCity && originCity === destinationCity) return 1;
 
   const originArea = inferredStoreArea(originItem);
   const destinationArea = inferredStoreArea(destinationItem);
-  if (originArea && destinationArea && originArea === destinationArea) return 2;
+  if (originArea && destinationArea && originArea === destinationArea) return 1;
 
-  if (originUf && destinationUf && originUf === destinationUf && originGroup && destinationGroup) return 6;
+  if (originGroup && destinationGroup && originGroup === destinationGroup) return 2;
+
+  if (originUf && destinationUf && originUf === destinationUf && originGroup && destinationGroup) return 4;
 
   const originNumber = Number(originCode);
   const destinationNumber = Number(destinationCode);
-  if (!Number.isFinite(originNumber) || !Number.isFinite(destinationNumber)) return 10;
+  if (!Number.isFinite(originNumber) || !Number.isFinite(destinationNumber)) return 5;
 
   const distance = Math.abs(originNumber - destinationNumber);
-  if (distance <= 2) return 4;
-  if (distance <= 5) return 6;
-  if (distance <= 10) return 8;
-  return 10;
+  if (distance <= 2) return 3;
+  if (distance <= 5) return 4;
+  return 5;
 }
 
-function buildSuggestion(ean: string, origin: SuggestionOrigin, destination: SuggestionDestination, quantity: number, need: number, priority: number, index: number) {
+function bestRoutePriorityForDestination(destination: SuggestionDestination, origins: SuggestionOrigin[], branchLogistics: BranchLogistics) {
+  let bestPriority = 999;
+
+  for (const origin of origins) {
+    if (origin.remaining <= 0) continue;
+    if (storeCode(origin.item.store_code) === storeCode(destination.item.store_code)) continue;
+
+    bestPriority = Math.min(bestPriority, routePriority(origin.item, destination.item, branchLogistics));
+  }
+
+  return bestPriority;
+}
+
+function curveMovePriority(originItem: StockItem, destinationItem: StockItem) {
+  const originRank = stockCurveRank(originItem.curve);
+  const destinationRank = stockCurveRank(destinationItem.curve);
+
+  if (!originRank || !destinationRank) return 999;
+
+  const improvement = originRank - destinationRank;
+  if (improvement <= 0) return 200 + originRank + destinationRank;
+
+  return ((5 - improvement) * 20) + ((5 - originRank) * 3) + destinationRank;
+}
+
+function bestCurveMovePriorityForDestination(destination: SuggestionDestination, origins: SuggestionOrigin[]) {
+  let bestPriority = 999;
+
+  for (const origin of origins) {
+    if (origin.remaining <= 0) continue;
+    if (storeCode(origin.item.store_code) === storeCode(destination.item.store_code)) continue;
+
+    bestPriority = Math.min(bestPriority, curveMovePriority(origin.item, destination.item));
+  }
+
+  return bestPriority;
+}
+
+function allocationTieKey(origin: SuggestionOrigin, destinationItem: StockItem, priority: number) {
+  return [
+    priority,
+    curveMovePriority(origin.item, destinationItem),
+    Math.round(numberValue(origin.item.stock_days) * 100) / 100,
+  ].join("|");
+}
+
+function buildSuggestion(ean: string, origin: SuggestionOrigin, destination: SuggestionDestination, quantity: number, need: number, priority: number, index: number, tieCandidateCount = 0) {
   const originItem = origin.item;
   const destinationItem = destination.item;
 
@@ -264,6 +326,10 @@ function buildSuggestion(ean: string, origin: SuggestionOrigin, destination: Sug
     destinationStockDays: numberValue(destinationItem.stock_days),
     destinationNeed: need,
     routePriority: priority,
+    decisionRequired: tieCandidateCount > 1,
+    decisionResolved: false,
+    decisionReason: tieCandidateCount > 1 ? `Empate de calculo entre ${tieCandidateCount} origens equivalentes. Revise e aceite a decisao antes de exportar.` : "",
+    tieCandidateCount,
   };
 }
 
@@ -342,6 +408,7 @@ function calculate(payload: {
     for (const item of items) {
       const code = storeCode(item.store_code);
       if (selectedOrigins.size > 0 && !selectedOrigins.has(code)) continue;
+      if (!branchCanSend(code, branchLogistics)) continue;
       if (selectedOriginCurves.size > 0 && !selectedOriginCurves.has(stockCurve(item.curve))) continue;
 
       const stock = originAvailableStock(item);
@@ -373,6 +440,7 @@ function calculate(payload: {
     for (const item of items) {
       const code = storeCode(item.store_code);
       if (selectedDestinations.size > 0 && !selectedDestinations.has(code)) continue;
+      if (!branchCanReceive(code, branchLogistics)) continue;
       if (selectedDestinationCurves.size > 0 && !selectedDestinationCurves.has(stockCurve(item.curve))) continue;
 
       const stock = availableStock(item);
@@ -394,7 +462,13 @@ function calculate(payload: {
       }
     }
 
-    destinations.sort((left, right) => numberValue(left.item.stock_days) - numberValue(right.item.stock_days));
+    destinations.sort((left, right) => (
+      bestRoutePriorityForDestination(left, origins, branchLogistics)
+      - bestRoutePriorityForDestination(right, origins, branchLogistics)
+      || bestCurveMovePriorityForDestination(left, origins) - bestCurveMovePriorityForDestination(right, origins)
+      || numberValue(left.item.stock_days) - numberValue(right.item.stock_days)
+      || right.need - left.need
+    ));
     eligibleDestinations += destinations.length;
 
     for (const destination of destinations) {
@@ -415,17 +489,23 @@ function calculate(payload: {
         }
       }
 
-      rankedOrigins.sort((left, right) => left.priority - right.priority || numberValue(right.origin.item.stock_days) - numberValue(left.origin.item.stock_days));
+      rankedOrigins.sort((left, right) => (
+        left.priority - right.priority
+        || curveMovePriority(left.origin.item, destination.item) - curveMovePriority(right.origin.item, destination.item)
+        || numberValue(right.origin.item.stock_days) - numberValue(left.origin.item.stock_days)
+      ));
 
       for (const { origin, priority } of rankedOrigins) {
         if (remainingNeed <= 0 || origin.remaining <= 0) break;
 
+        const tieKey = allocationTieKey(origin, destination.item, priority);
+        const tieCandidateCount = rankedOrigins.filter((candidate) => allocationTieKey(candidate.origin, destination.item, candidate.priority) === tieKey).length;
         const quantity = Math.min(origin.remaining, remainingNeed);
         if (quantity <= 0) continue;
 
         origin.remaining -= quantity;
         remainingNeed -= quantity;
-        suggestions.push(buildSuggestion(ean, origin, destination, quantity, destination.need, priority, suggestions.length));
+        suggestions.push(buildSuggestion(ean, origin, destination, quantity, destination.need, priority, suggestions.length, tieCandidateCount));
       }
     }
   }
@@ -481,15 +561,41 @@ async function fetchServerBranchLogistics() {
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
     .from("pricing_branches")
-    .select("code,city,logistics_group,uf");
+    .select("code,city,logistics_group,uf,sends_stock,receives_stock");
 
-  if (error) return {};
+  if (error) {
+    const fallback = await supabase
+      .from("pricing_branches")
+      .select("code,city,logistics_group,uf");
+
+    if (fallback.error) return {};
+
+    return Object.fromEntries(((fallback.data || []) as Array<{
+      code?: string | null;
+      city?: string | null;
+      logistics_group?: string | null;
+      uf?: string | null;
+    }>)
+      .filter((branch) => branch.code)
+      .map((branch) => [
+        storeCode(branch.code),
+        {
+          city: branch.city || "",
+          group: branch.logistics_group || "",
+          uf: branch.uf || "",
+          sendsStock: true,
+          receivesStock: true,
+        },
+      ]));
+  }
 
   return Object.fromEntries(((data || []) as Array<{
     code?: string | null;
     city?: string | null;
     logistics_group?: string | null;
     uf?: string | null;
+    sends_stock?: boolean | null;
+    receives_stock?: boolean | null;
   }>)
     .filter((branch) => branch.code)
     .map((branch) => [
@@ -498,6 +604,8 @@ async function fetchServerBranchLogistics() {
         city: branch.city || "",
         group: branch.logistics_group || "",
         uf: branch.uf || "",
+        sendsStock: branch.sends_stock !== false,
+        receivesStock: branch.receives_stock !== false,
       },
     ]));
 }

@@ -116,21 +116,21 @@ const SUGGESTION_PROFILES: Record<SuggestionProfile, {
     description: 'Poucas transferencias, preserva mais estoque na origem.',
     originMinimumDays: 30,
     destinationTargetDays: 30,
-    maxRoutePriority: 2,
+    maxRoutePriority: 1,
   },
   balanced: {
     label: 'Equilibrado',
     description: 'Bom padrao para rotina: reduz excesso sem forcar tanto a logistica.',
     originMinimumDays: 20,
     destinationTargetDays: 30,
-    maxRoutePriority: 6,
+    maxRoutePriority: 3,
   },
   strong: {
     label: 'Agressivo',
     description: 'Gera mais sugestões e aceita rotas mais abertas.',
     originMinimumDays: 15,
     destinationTargetDays: 35,
-    maxRoutePriority: 10,
+    maxRoutePriority: 5,
   },
 };
 
@@ -198,6 +198,10 @@ interface TransferSuggestion {
   destinationStockDays: number;
   destinationNeed: number;
   routePriority: number;
+  decisionRequired?: boolean;
+  decisionResolved?: boolean;
+  decisionReason?: string;
+  tieCandidateCount?: number;
 }
 
 interface SuggestionDiagnostic {
@@ -530,7 +534,7 @@ function loadReallocationPreferences() {
       showAdvancedRules: Boolean(parsed.showAdvancedRules),
       originMinimumDays: clampPreferenceNumber(parsed.originMinimumDays, defaults.originMinimumDays),
       destinationTargetDays: clampPreferenceNumber(parsed.destinationTargetDays, defaults.destinationTargetDays),
-      maxRoutePriority: clampPreferenceNumber(parsed.maxRoutePriority, defaults.maxRoutePriority),
+      maxRoutePriority: Math.max(1, Math.min(5, clampPreferenceNumber(parsed.maxRoutePriority, defaults.maxRoutePriority))),
       lastSaleMaxDays: clampPreferenceNumber(parsed.lastSaleMaxDays, defaults.lastSaleMaxDays),
       lastPurchaseMaxDays: clampPreferenceNumber(parsed.lastPurchaseMaxDays, defaults.lastPurchaseMaxDays),
       minRuptureSales: clampPreferenceNumber(parsed.minRuptureSales, defaults.minRuptureSales),
@@ -655,7 +659,8 @@ function getSuggestionExportIssues(
   const missingErp = suggestions.filter((suggestion) => !suggestion.erpCode && suggestion.quantity > 0);
   const invalidQuantity = suggestions.filter((suggestion) => suggestion.quantity <= 0 || !Number.isFinite(Number(suggestion.quantity)));
   const manualChanges = suggestions.filter((suggestion) => suggestion.quantity !== suggestion.maxQuantity);
-  const routeLimit = suggestions.filter((suggestion) => suggestion.routePriority >= maxRoutePriority && suggestion.quantity > 0);
+  const unresolvedDecisions = suggestions.filter((suggestion) => suggestion.decisionRequired && !suggestion.decisionResolved && suggestion.quantity > 0);
+  const routeLimit = suggestions.filter((suggestion) => maxRoutePriority > 1 && suggestion.routePriority >= maxRoutePriority && suggestion.quantity > 0);
 
   overAllocated.slice(0, 3).forEach((allocation, index) => {
     issues.push({
@@ -671,6 +676,15 @@ function getSuggestionExportIssues(
       id: 'missing-erp',
       title: 'Produtos sem ERP',
       detail: `${missingErp.length} linha${missingErp.length === 1 ? '' : 's'} com quantidade não entram no TXT.`,
+      severity: 'block',
+    });
+  }
+
+  if (unresolvedDecisions.length > 0) {
+    issues.push({
+      id: 'decision-tie',
+      title: 'Empate para decidir',
+      detail: `${unresolvedDecisions.length} linha${unresolvedDecisions.length === 1 ? '' : 's'} com empate de calculo precisa${unresolvedDecisions.length === 1 ? '' : 'm'} ser aceita${unresolvedDecisions.length === 1 ? '' : 's'} ou ajustada${unresolvedDecisions.length === 1 ? '' : 's'} manualmente antes de exportar.`,
       severity: 'block',
     });
   }
@@ -1376,7 +1390,8 @@ export function ReallocationManager({
       if (!suggestion.erpCode && suggestion.quantity > 0) ids.add(suggestion.id);
       if (suggestion.quantity <= 0 || !Number.isFinite(Number(suggestion.quantity))) ids.add(suggestion.id);
       if (suggestion.quantity !== suggestion.maxQuantity) ids.add(suggestion.id);
-      if (suggestion.routePriority >= maxRoutePriority && suggestion.quantity > 0) ids.add(suggestion.id);
+      if (suggestion.decisionRequired && !suggestion.decisionResolved && suggestion.quantity > 0) ids.add(suggestion.id);
+      if (maxRoutePriority > 1 && suggestion.routePriority >= maxRoutePriority && suggestion.quantity > 0) ids.add(suggestion.id);
       if (overAllocatedKeys.has(overKey)) ids.add(suggestion.id);
     });
 
@@ -1475,6 +1490,8 @@ export function ReallocationManager({
       city: branch.city,
       group: (branch.logistics_group || '').trim().toUpperCase(),
       uf: (branch.uf || '').trim().toUpperCase(),
+      sendsStock: branch.sends_stock !== false,
+      receivesStock: branch.receives_stock !== false,
     },
   ])), [branches]);
   const orderedSuggestionColumns = useMemo(() => {
@@ -1828,8 +1845,14 @@ export function ReallocationManager({
     updateActiveSuggestions((current) => current.map((suggestion) => {
       if (suggestion.id !== suggestionId) return suggestion;
       const nextQuantity = clampSuggestionQuantity(current, suggestion, quantity);
-      return { ...suggestion, quantity: nextQuantity };
+      return { ...suggestion, quantity: nextQuantity, decisionResolved: suggestion.decisionRequired ? true : suggestion.decisionResolved };
     }));
+  };
+
+  const acceptSuggestionDecision = (suggestionId: string) => {
+    updateActiveSuggestions((current) => current.map((suggestion) => (
+      suggestion.id === suggestionId ? { ...suggestion, decisionResolved: true } : suggestion
+    )));
   };
 
   const focusSuggestionCell = (suggestionIndex: number) => {
@@ -1858,7 +1881,7 @@ export function ReallocationManager({
         if (!target) continue;
         const nextQuantity = clampSuggestionQuantity(nextSuggestions, target, requestedById.get(targetId) || 0);
         nextSuggestions = nextSuggestions.map((suggestion) => (
-          suggestion.id === targetId ? { ...suggestion, quantity: nextQuantity } : suggestion
+          suggestion.id === targetId ? { ...suggestion, quantity: nextQuantity, decisionResolved: suggestion.decisionRequired ? true : suggestion.decisionResolved } : suggestion
         ));
       }
 
@@ -2144,6 +2167,10 @@ export function ReallocationManager({
       return 'bg-[#fecaca] group-hover:bg-[#fca5a5]';
     }
 
+    if (suggestion.decisionRequired && !suggestion.decisionResolved) {
+      return 'bg-[#fed7aa] group-hover:bg-[#fdba74]';
+    }
+
     if (isSuggestionManuallyChanged(suggestion)) {
       return 'bg-[#ddd6fe] group-hover:bg-[#c4b5fd]';
     }
@@ -2165,6 +2192,7 @@ export function ReallocationManager({
   const visibleMultiDestinationCount = sortedTransferSuggestions.filter((suggestion) => isSuggestionMultiDestination(suggestion)).length;
   const visibleMultiOriginCount = sortedTransferSuggestions.filter((suggestion) => isSuggestionMultiOrigin(suggestion)).length;
   const visibleSharedRouteCount = sortedTransferSuggestions.filter((suggestion) => isSuggestionMultiDestination(suggestion) && isSuggestionMultiOrigin(suggestion)).length;
+  const visiblePendingDecisionCount = sortedTransferSuggestions.filter((suggestion) => suggestion.decisionRequired && !suggestion.decisionResolved).length;
 
   const downloadSuggestionsTxt = () => {
     if (!canExport) {
@@ -2304,7 +2332,8 @@ export function ReallocationManager({
         [
           !suggestion.erpCode && suggestion.quantity > 0 ? 'SEM_ERP' : '',
           suggestion.quantity !== suggestion.maxQuantity ? 'MANUAL' : '',
-          suggestion.routePriority >= maxRoutePriority && suggestion.quantity > 0 ? 'ROTA_LIMITE' : '',
+          maxRoutePriority > 1 && suggestion.routePriority >= maxRoutePriority && suggestion.quantity > 0 ? 'ROTA_LIMITE' : '',
+          suggestion.decisionRequired && !suggestion.decisionResolved ? 'EMPATE_DECISAO' : '',
           problemSuggestionIds.has(suggestion.id) ? 'REVISAR' : 'OK',
         ].filter(Boolean).join('|'),
       ]),
@@ -2566,7 +2595,11 @@ export function ReallocationManager({
         return <td key={column.key} className={`${cellClass} font-black`}>{suggestion.erpCode}</td>;
       case 'routePriority':
         return (
-          <td key={column.key} className={`${cellClass} ${suggestion.routePriority >= maxRoutePriority && suggestion.quantity > 0 ? 'font-black' : ''}`}>
+          <td
+            key={column.key}
+            className={`${cellClass} ${maxRoutePriority > 1 && suggestion.routePriority >= maxRoutePriority && suggestion.quantity > 0 ? 'font-black' : ''}`}
+            title={suggestion.decisionRequired && !suggestion.decisionResolved ? suggestion.decisionReason : undefined}
+          >
             {suggestion.routePriority}
           </td>
         );
@@ -2574,6 +2607,16 @@ export function ReallocationManager({
         return (
           <td key={column.key} className={`border-b border-r border-slate-100 px-2 py-1 text-center ${cellToneClass}`}>
             <div className="flex items-center justify-center gap-1">
+              {suggestion.decisionRequired && !suggestion.decisionResolved && (
+                <button
+                  type="button"
+                  onClick={() => acceptSuggestionDecision(suggestion.id)}
+                  className="inline-flex h-6 w-6 items-center justify-center rounded-lg bg-orange-50 text-orange-700 transition hover:bg-orange-600 hover:text-white"
+                  title={suggestion.decisionReason || 'Aceitar decisao sugerida para este empate'}
+                >
+                  <Check size={13} />
+                </button>
+              )}
               {isSuggestionManuallyChanged(suggestion) && (
                 <button
                   type="button"
@@ -3135,6 +3178,10 @@ export function ReallocationManager({
                 <span className="h-3 w-3 rounded-[3px] border border-violet-500 bg-violet-300" />
                 Manual {activeManualSuggestionChangeCount > 0 ? `(${activeManualSuggestionChangeCount})` : ''}
               </span>
+              <span className="inline-flex items-center gap-1.5 rounded-md border border-orange-200 bg-orange-50 px-2 py-1 text-[10px] font-black uppercase text-orange-950">
+                <span className="h-3 w-3 rounded-[3px] border border-orange-500 bg-orange-300" />
+                Empate {visiblePendingDecisionCount > 0 ? `(${visiblePendingDecisionCount})` : ''}
+              </span>
             </div>
           </div>
           <div className="ml-auto flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto">
@@ -3321,8 +3368,8 @@ export function ReallocationManager({
                   label="Limite rota"
                   value={maxRoutePriority}
                   onChange={setMaxRoutePriority}
-                  min={0}
-                  max={10}
+                  min={1}
+                  max={5}
                 />
               </div>
               <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
@@ -3358,7 +3405,7 @@ export function ReallocationManager({
                 />
               </div>
               <p className="mt-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">
-                Use 0 para desligar. Compra/venda filtram apenas itens sem movimento por pelo menos a quantidade de dias informada.
+                Rota vai de 1 a 5: 1 mesma cidade, 2 mesmo grupo e 5 custo alto. Compra/venda filtram apenas itens sem movimento por pelo menos a quantidade de dias informada.
               </p>
             </div>
 

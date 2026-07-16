@@ -7,6 +7,8 @@ create table if not exists public.pricing_branches (
   uf text not null default '',
   cnpj text not null default '',
   logistics_group text not null default '',
+  sends_stock boolean not null default true,
+  receives_stock boolean not null default true,
   is_active boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -23,6 +25,12 @@ add column if not exists cnpj text not null default '';
 
 alter table public.pricing_branches
 add column if not exists logistics_group text not null default '';
+
+alter table public.pricing_branches
+add column if not exists sends_stock boolean not null default true;
+
+alter table public.pricing_branches
+add column if not exists receives_stock boolean not null default true;
 
 create index if not exists pricing_branches_name_idx
 on public.pricing_branches (name);

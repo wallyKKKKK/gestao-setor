@@ -110,6 +110,8 @@ const blankBranch: PricingBranchInput = {
   uf: '',
   cnpj: '',
   logistics_group: '',
+  sends_stock: true,
+  receives_stock: true,
   is_active: true,
 };
 
@@ -1667,6 +1669,10 @@ export function PricingManager() {
                     <p className="text-[10px] font-black uppercase text-slate-400">{branch.code} {branch.uf ? `â€¢ ${branch.uf}` : ''}</p>
                     {branch.cnpj && <p className="text-[10px] font-bold text-slate-400 mt-1">{branch.cnpj}</p>}
                     {branch.logistics_group && <p className="text-[10px] font-black text-blue-600 mt-1">Grupo: {branch.logistics_group}</p>}
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      <span className={`rounded-full px-2 py-1 text-[8px] font-black uppercase ${branch.sends_stock !== false ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-400'}`}>Envia</span>
+                      <span className={`rounded-full px-2 py-1 text-[8px] font-black uppercase ${branch.receives_stock !== false ? 'bg-blue-50 text-blue-700' : 'bg-slate-100 text-slate-400'}`}>Recebe</span>
+                    </div>
                     <p className={`text-[9px] font-black uppercase mt-2 ${branch.is_active ? 'text-green-600' : 'text-red-600'}`}>{branch.is_active ? 'Ativa' : 'Inativa'}</p>
                   </div>
                   <div className="flex gap-1">
@@ -1988,6 +1994,24 @@ export function PricingManager() {
                   className="w-5 h-5"
                 />
                 <span className="text-[10px] font-black uppercase text-slate-500">Filial ativa</span>
+              </label>
+              <label className="flex items-center gap-3 rounded-2xl bg-slate-50 border-2 border-slate-100 p-4">
+                <input
+                  type="checkbox"
+                  checked={editingBranch.sends_stock !== false}
+                  onChange={(event) => setEditingBranch((current) => current ? { ...current, sends_stock: event.target.checked } : current)}
+                  className="w-5 h-5"
+                />
+                <span className="text-[10px] font-black uppercase text-slate-500">Envia estoque</span>
+              </label>
+              <label className="flex items-center gap-3 rounded-2xl bg-slate-50 border-2 border-slate-100 p-4">
+                <input
+                  type="checkbox"
+                  checked={editingBranch.receives_stock !== false}
+                  onChange={(event) => setEditingBranch((current) => current ? { ...current, receives_stock: event.target.checked } : current)}
+                  className="w-5 h-5"
+                />
+                <span className="text-[10px] font-black uppercase text-slate-500">Recebe estoque</span>
               </label>
             </div>
             <div className="flex justify-end gap-3 border-t-2 border-slate-100 px-5 py-4">

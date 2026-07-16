@@ -19,8 +19,20 @@ def store_code(value):
     return str(value or "").zfill(2)
 
 
+def branch_can_send(code, branch_logistics):
+    return (branch_logistics.get(store_code(code)) or {}).get("sendsStock") is not False
+
+
+def branch_can_receive(code, branch_logistics):
+    return (branch_logistics.get(store_code(code)) or {}).get("receivesStock") is not False
+
+
 def stock_curve(value):
     return str(value or "").strip().upper()[:1]
+
+
+def stock_curve_rank(value):
+    return {"A": 1, "B": 2, "C": 3, "D": 4, "E": 5}.get(stock_curve(value), 0)
 
 
 def normalize_route_text(value):
@@ -113,34 +125,81 @@ def route_priority(origin_item, destination_item, branch_logistics):
     origin_city = str(origin.get("city") or "").strip().upper()
     destination_city = str(destination.get("city") or "").strip().upper()
 
-    if origin_group and destination_group and origin_group == destination_group:
-        return 0
     if origin_city and destination_city and origin_city == destination_city:
-        return 2
+        return 1
 
     origin_area = inferred_store_area(origin_item)
     destination_area = inferred_store_area(destination_item)
     if origin_area and destination_area and origin_area == destination_area:
+        return 1
+
+    if origin_group and destination_group and origin_group == destination_group:
         return 2
 
     if origin_uf and destination_uf and origin_uf == destination_uf and origin_group and destination_group:
-        return 6
+        return 4
 
     try:
         distance = abs(int(origin_code) - int(destination_code))
     except ValueError:
-        return 10
+        return 5
 
     if distance <= 2:
-        return 4
+        return 3
     if distance <= 5:
-        return 6
-    if distance <= 10:
-        return 8
-    return 10
+        return 4
+    return 5
 
 
-def build_suggestion(ean, origin, destination, quantity, need, priority, index):
+def best_route_priority_for_destination(destination, origins, branch_logistics):
+    best_priority = 999
+
+    for origin in origins:
+        if origin["remaining"] <= 0:
+            continue
+        if store_code(origin["item"].get("store_code")) == store_code(destination["item"].get("store_code")):
+            continue
+        best_priority = min(best_priority, route_priority(origin["item"], destination["item"], branch_logistics))
+
+    return best_priority
+
+
+def curve_move_priority(origin_item, destination_item):
+    origin_rank = stock_curve_rank(origin_item.get("curve"))
+    destination_rank = stock_curve_rank(destination_item.get("curve"))
+
+    if not origin_rank or not destination_rank:
+        return 999
+
+    improvement = origin_rank - destination_rank
+    if improvement <= 0:
+        return 200 + origin_rank + destination_rank
+
+    return ((5 - improvement) * 20) + ((5 - origin_rank) * 3) + destination_rank
+
+
+def best_curve_move_priority_for_destination(destination, origins):
+    best_priority = 999
+
+    for origin in origins:
+        if origin["remaining"] <= 0:
+            continue
+        if store_code(origin["item"].get("store_code")) == store_code(destination["item"].get("store_code")):
+            continue
+        best_priority = min(best_priority, curve_move_priority(origin["item"], destination["item"]))
+
+    return best_priority
+
+
+def allocation_tie_key(origin, destination_item, priority):
+    return "|".join([
+        str(priority),
+        str(curve_move_priority(origin["item"], destination_item)),
+        str(round(number(origin["item"].get("stock_days")), 2)),
+    ])
+
+
+def build_suggestion(ean, origin, destination, quantity, need, priority, index, tie_candidate_count=0):
     origin_item = origin["item"]
     destination_item = destination["item"]
     return {
@@ -173,6 +232,10 @@ def build_suggestion(ean, origin, destination, quantity, need, priority, index):
         "destinationStockDays": number(destination_item.get("stock_days")),
         "destinationNeed": need,
         "routePriority": priority,
+        "decisionRequired": tie_candidate_count > 1,
+        "decisionResolved": False,
+        "decisionReason": f"Empate de calculo entre {tie_candidate_count} origens equivalentes. Revise e aceite a decisao antes de exportar." if tie_candidate_count > 1 else "",
+        "tieCandidateCount": tie_candidate_count,
     }
 
 
@@ -214,6 +277,8 @@ def calculate(payload):
             code = store_code(item.get("store_code"))
             if selected_origins and code not in selected_origins:
                 continue
+            if not branch_can_send(code, branch_logistics):
+                continue
             if selected_origin_curves and stock_curve(item.get("curve")) not in selected_origin_curves:
                 continue
             stock = origin_available_stock(item)
@@ -242,6 +307,8 @@ def calculate(payload):
             code = store_code(item.get("store_code"))
             if selected_destinations and code not in selected_destinations:
                 continue
+            if not branch_can_receive(code, branch_logistics):
+                continue
             if selected_destination_curves and stock_curve(item.get("curve")) not in selected_destination_curves:
                 continue
             stock = available_stock(item)
@@ -259,7 +326,7 @@ def calculate(payload):
                 }
                 destinations.append({"item": enriched_item, "need": need})
 
-        destinations.sort(key=lambda destination: number(destination["item"].get("stock_days")))
+        destinations.sort(key=lambda destination: (best_route_priority_for_destination(destination, origins, branch_logistics), best_curve_move_priority_for_destination(destination, origins), number(destination["item"].get("stock_days")), -number(destination.get("need"))))
         eligible_destinations += len(destinations)
 
         for destination in destinations:
@@ -279,17 +346,19 @@ def calculate(payload):
                 else:
                     blocked_route += 1
 
-            ranked_origins.sort(key=lambda item: (item[1], -number(item[0]["item"].get("stock_days"))))
+            ranked_origins.sort(key=lambda item: (item[1], curve_move_priority(item[0]["item"], destination["item"]), -number(item[0]["item"].get("stock_days"))))
 
             for origin, priority in ranked_origins:
                 if remaining_need <= 0 or origin["remaining"] <= 0:
                     break
+                tie_key = allocation_tie_key(origin, destination["item"], priority)
+                tie_candidate_count = sum(1 for candidate_origin, candidate_priority in ranked_origins if allocation_tie_key(candidate_origin, destination["item"], candidate_priority) == tie_key)
                 quantity = min(origin["remaining"], remaining_need)
                 if quantity <= 0:
                     continue
                 origin["remaining"] -= quantity
                 remaining_need -= quantity
-                suggestions.append(build_suggestion(ean, origin, destination, quantity, destination["need"], priority, len(suggestions)))
+                suggestions.append(build_suggestion(ean, origin, destination, quantity, destination["need"], priority, len(suggestions), tie_candidate_count))
 
     return {
         "engine": "python",
