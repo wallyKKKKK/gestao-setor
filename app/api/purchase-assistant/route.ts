@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { runPurchaseAssistant, type PurchaseAssistantRequest } from "@/lib/purchase-assistant";
+import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { requireAuthenticatedProfile } from "@/lib/server-auth";
 
 export const runtime = "nodejs";
@@ -15,6 +16,9 @@ export async function POST(request: Request) {
   try {
     const auth = await requireAuthenticatedProfile(request);
     if (!auth.ok) return auth.response;
+
+    const retrySeconds = checkRateLimit(`purchase-assistant:${auth.userId}`, 30, 60_000);
+    if (retrySeconds !== null) return rateLimitResponse(retrySeconds);
 
     const normalizedSector = normalizeSector(auth.profile.sector || "");
     const canUseAssistant = auth.profile.role === "admin" || normalizedSector.startsWith("compras");

@@ -191,15 +191,57 @@ def best_curve_move_priority_for_destination(destination, origins):
     return best_priority
 
 
-def allocation_tie_key(origin, destination_item, priority):
+def destination_tie_key(origin, destination, priority, open_need):
     return "|".join([
         str(priority),
-        str(curve_move_priority(origin["item"], destination_item)),
-        str(round(number(origin["item"].get("stock_days")), 2)),
+        str(curve_move_priority(origin["item"], destination["item"])),
+        str(round(number(destination["item"].get("stock_days")), 2)),
+        str(max(0, math.floor(open_need))),
     ])
 
 
-def build_suggestion(ean, origin, destination, quantity, need, priority, index, tie_candidate_count=0):
+def format_tie_quantity(value):
+    return str(max(0, math.floor(number(value))))
+
+
+def destination_allocation_key(destination):
+    return store_code(destination["item"].get("store_code"))
+
+
+def destination_open_need(destination, allocated_by_destination):
+    return max(0, number(destination.get("need")) - allocated_by_destination.get(destination_allocation_key(destination), 0))
+
+
+def destination_tie_info(ean, origin, destination, priority, destinations, allocated_by_destination, branch_logistics, max_route_priority):
+    current_open_need = destination_open_need(destination, allocated_by_destination)
+    tie_key = destination_tie_key(origin, destination, priority, current_open_need)
+    tied_destinations = []
+
+    for candidate in destinations:
+        open_need = destination_open_need(candidate, allocated_by_destination)
+        candidate_priority = route_priority(origin["item"], candidate["item"], branch_logistics)
+        if open_need <= 0:
+            continue
+        if store_code(candidate["item"].get("store_code")) == store_code(origin["item"].get("store_code")):
+            continue
+        if candidate_priority > max_route_priority:
+            continue
+        if destination_tie_key(origin, candidate, candidate_priority, open_need) == tie_key:
+            tied_destinations.append({"destination": candidate, "priority": candidate_priority, "open_need": open_need})
+
+    total_need = sum(candidate["open_need"] for candidate in tied_destinations)
+    origin_stock = max(0, math.floor(number(origin.get("remaining"))))
+
+    return {
+        "group_key": f"{ean}:{store_code(origin['item'].get('store_code'))}:{tie_key}",
+        "tied_destinations": tied_destinations,
+        "total_need": total_need,
+        "origin_stock": origin_stock,
+        "decision_required": len(tied_destinations) > 1 and total_need > origin_stock,
+    }
+
+
+def build_suggestion(ean, origin, destination, quantity, need, priority, index, tie_candidate_count=0, tie_total_need=0, tie_origin_stock=0, decision_group_key=""):
     origin_item = origin["item"]
     destination_item = destination["item"]
     return {
@@ -234,7 +276,8 @@ def build_suggestion(ean, origin, destination, quantity, need, priority, index, 
         "routePriority": priority,
         "decisionRequired": tie_candidate_count > 1,
         "decisionResolved": False,
-        "decisionReason": f"Empate de calculo entre {tie_candidate_count} origens equivalentes. Revise e aceite a decisao antes de exportar." if tie_candidate_count > 1 else "",
+        "decisionReason": f"Empate de calculo: {tie_candidate_count} destinos disputam {format_tie_quantity(tie_total_need)} un. da origem {origin_item.get('store_name') or store_code(origin_item.get('store_code'))}, que tem {format_tie_quantity(tie_origin_stock)} un. disponivel. Ajuste as quantidades ou aceite a sugestao antes de confirmar." if tie_candidate_count > 1 else "",
+        "decisionGroupKey": decision_group_key,
         "tieCandidateCount": tie_candidate_count,
     }
 
@@ -329,8 +372,11 @@ def calculate(payload):
         destinations.sort(key=lambda destination: (best_route_priority_for_destination(destination, origins, branch_logistics), best_curve_move_priority_for_destination(destination, origins), number(destination["item"].get("stock_days")), -number(destination.get("need"))))
         eligible_destinations += len(destinations)
 
+        allocated_by_destination = {}
+        handled_destination_tie_groups = set()
+
         for destination in destinations:
-            remaining_need = destination["need"]
+            remaining_need = destination_open_need(destination, allocated_by_destination)
             ranked_origins = []
             for origin in origins:
                 if origin["remaining"] <= 0:
@@ -349,16 +395,47 @@ def calculate(payload):
             ranked_origins.sort(key=lambda item: (item[1], curve_move_priority(item[0]["item"], destination["item"]), -number(item[0]["item"].get("stock_days"))))
 
             for origin, priority in ranked_origins:
+                remaining_need = destination_open_need(destination, allocated_by_destination)
                 if remaining_need <= 0 or origin["remaining"] <= 0:
                     break
-                tie_key = allocation_tie_key(origin, destination["item"], priority)
-                tie_candidate_count = sum(1 for candidate_origin, candidate_priority in ranked_origins if allocation_tie_key(candidate_origin, destination["item"], candidate_priority) == tie_key)
+
+                tie_info = destination_tie_info(ean, origin, destination, priority, destinations, allocated_by_destination, branch_logistics, max_route_priority)
+                if tie_info["decision_required"]:
+                    if tie_info["group_key"] in handled_destination_tie_groups:
+                        continue
+
+                    handled_destination_tie_groups.add(tie_info["group_key"])
+                    remaining_origin_stock = tie_info["origin_stock"]
+                    for candidate in tie_info["tied_destinations"]:
+                        quantity = min(remaining_origin_stock, candidate["open_need"])
+                        candidate_key = destination_allocation_key(candidate["destination"])
+                        suggestions.append(build_suggestion(
+                            ean,
+                            origin,
+                            candidate["destination"],
+                            quantity,
+                            candidate["destination"]["need"],
+                            candidate["priority"],
+                            len(suggestions),
+                            len(tie_info["tied_destinations"]),
+                            tie_info["total_need"],
+                            tie_info["origin_stock"],
+                            tie_info["group_key"],
+                        ))
+                        if quantity > 0:
+                            remaining_origin_stock -= quantity
+                            allocated_by_destination[candidate_key] = allocated_by_destination.get(candidate_key, 0) + quantity
+                    origin["remaining"] = remaining_origin_stock
+                    continue
+
                 quantity = min(origin["remaining"], remaining_need)
                 if quantity <= 0:
                     continue
                 origin["remaining"] -= quantity
                 remaining_need -= quantity
-                suggestions.append(build_suggestion(ean, origin, destination, quantity, destination["need"], priority, len(suggestions), tie_candidate_count))
+                destination_key = destination_allocation_key(destination)
+                allocated_by_destination[destination_key] = allocated_by_destination.get(destination_key, 0) + quantity
+                suggestions.append(build_suggestion(ean, origin, destination, quantity, destination["need"], priority, len(suggestions)))
 
     return {
         "engine": "python",

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import * as XLSX from "xlsx";
 import { normalizePermissionSector } from "@/lib/permissions";
+import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { requireAuthenticatedProfile } from "@/lib/server-auth";
 import { getSupabaseAdmin } from "@/lib/supabase-admin";
 
@@ -180,6 +181,10 @@ export async function POST(request: Request) {
   try {
     const auth = await requireAuthenticatedProfile(request);
     if (!auth.ok) return auth.response;
+
+    const retrySeconds = checkRateLimit(`purchase-assistant-import:${auth.userId}`, 12, 10 * 60_000);
+    if (retrySeconds !== null) return rateLimitResponse(retrySeconds);
+
     if (!canManageImports(auth.profile.role, auth.profile.sector || "")) {
       return NextResponse.json({ error: "Acesso liberado apenas para Admin ou setor Compras." }, { status: 403 });
     }

@@ -284,15 +284,32 @@ function bestCurveMovePriorityForDestination(destination: SuggestionDestination,
   return bestPriority;
 }
 
-function allocationTieKey(origin: SuggestionOrigin, destinationItem: StockItem, priority: number) {
+function destinationTieKey(origin: SuggestionOrigin, destination: SuggestionDestination, priority: number, openNeed: number) {
   return [
     priority,
-    curveMovePriority(origin.item, destinationItem),
-    Math.round(numberValue(origin.item.stock_days) * 100) / 100,
+    curveMovePriority(origin.item, destination.item),
+    Math.round(numberValue(destination.item.stock_days) * 100) / 100,
+    Math.max(0, Math.floor(openNeed)),
   ].join("|");
 }
 
-function buildSuggestion(ean: string, origin: SuggestionOrigin, destination: SuggestionDestination, quantity: number, need: number, priority: number, index: number, tieCandidateCount = 0) {
+function formatTieQuantity(value: number) {
+  return Math.max(0, Math.floor(Number(value) || 0)).toLocaleString("pt-BR");
+}
+
+function buildSuggestion(
+  ean: string,
+  origin: SuggestionOrigin,
+  destination: SuggestionDestination,
+  quantity: number,
+  need: number,
+  priority: number,
+  index: number,
+  tieCandidateCount = 0,
+  tieTotalNeed = 0,
+  tieOriginStock = 0,
+  decisionGroupKey = "",
+) {
   const originItem = origin.item;
   const destinationItem = destination.item;
 
@@ -328,11 +345,55 @@ function buildSuggestion(ean: string, origin: SuggestionOrigin, destination: Sug
     routePriority: priority,
     decisionRequired: tieCandidateCount > 1,
     decisionResolved: false,
-    decisionReason: tieCandidateCount > 1 ? `Empate de calculo entre ${tieCandidateCount} origens equivalentes. Revise e aceite a decisao antes de exportar.` : "",
+    decisionReason: tieCandidateCount > 1 ? `Empate de calculo: ${tieCandidateCount} destinos disputam ${formatTieQuantity(tieTotalNeed)} un. da origem ${originItem.store_name || storeCode(originItem.store_code)}, que tem ${formatTieQuantity(tieOriginStock)} un. disponivel. Ajuste as quantidades ou aceite a sugestao antes de confirmar.` : "",
+    decisionGroupKey,
     tieCandidateCount,
   };
 }
 
+function destinationAllocationKey(destination: SuggestionDestination) {
+  return storeCode(destination.item.store_code);
+}
+
+function destinationOpenNeed(destination: SuggestionDestination, allocatedByDestination: Map<string, number>) {
+  return Math.max(0, destination.need - (allocatedByDestination.get(destinationAllocationKey(destination)) || 0));
+}
+
+function destinationTieInfo(
+  ean: string,
+  origin: SuggestionOrigin,
+  destination: SuggestionDestination,
+  priority: number,
+  destinations: SuggestionDestination[],
+  allocatedByDestination: Map<string, number>,
+  branchLogistics: BranchLogistics,
+  maxRoutePriority: number,
+) {
+  const currentOpenNeed = destinationOpenNeed(destination, allocatedByDestination);
+  const tieKey = destinationTieKey(origin, destination, priority, currentOpenNeed);
+  const tiedDestinations = destinations
+    .map((candidate) => {
+      const openNeed = destinationOpenNeed(candidate, allocatedByDestination);
+      const candidatePriority = routePriority(origin.item, candidate.item, branchLogistics);
+      return { destination: candidate, priority: candidatePriority, openNeed };
+    })
+    .filter((candidate) => {
+      if (candidate.openNeed <= 0) return false;
+      if (storeCode(candidate.destination.item.store_code) === storeCode(origin.item.store_code)) return false;
+      if (candidate.priority > maxRoutePriority) return false;
+      return destinationTieKey(origin, candidate.destination, candidate.priority, candidate.openNeed) === tieKey;
+    });
+  const totalNeed = tiedDestinations.reduce((sum, candidate) => sum + candidate.openNeed, 0);
+  const originStock = Math.max(0, Math.floor(origin.remaining));
+
+  return {
+    groupKey: `${ean}:${storeCode(origin.item.store_code)}:${tieKey}`,
+    tiedDestinations,
+    totalNeed,
+    originStock,
+    decisionRequired: tiedDestinations.length > 1 && totalNeed > originStock,
+  };
+}
 function calculate(payload: {
   snapshotId?: string;
   stockItems?: StockItem[];
@@ -471,8 +532,11 @@ function calculate(payload: {
     ));
     eligibleDestinations += destinations.length;
 
+    const allocatedByDestination = new Map<string, number>();
+    const handledDestinationTieGroups = new Set<string>();
+
     for (const destination of destinations) {
-      let remainingNeed = destination.need;
+      let remainingNeed = destinationOpenNeed(destination, allocatedByDestination);
       const rankedOrigins: Array<{ origin: SuggestionOrigin; priority: number }> = [];
 
       for (const origin of origins) {
@@ -496,16 +560,51 @@ function calculate(payload: {
       ));
 
       for (const { origin, priority } of rankedOrigins) {
+        remainingNeed = destinationOpenNeed(destination, allocatedByDestination);
         if (remainingNeed <= 0 || origin.remaining <= 0) break;
 
-        const tieKey = allocationTieKey(origin, destination.item, priority);
-        const tieCandidateCount = rankedOrigins.filter((candidate) => allocationTieKey(candidate.origin, destination.item, candidate.priority) === tieKey).length;
+        const tieInfo = destinationTieInfo(ean, origin, destination, priority, destinations, allocatedByDestination, branchLogistics, maxRoutePriority);
+        if (tieInfo.decisionRequired) {
+          if (handledDestinationTieGroups.has(tieInfo.groupKey)) continue;
+
+          handledDestinationTieGroups.add(tieInfo.groupKey);
+          let remainingOriginStock = tieInfo.originStock;
+
+          for (const candidate of tieInfo.tiedDestinations) {
+            const quantity = Math.min(remainingOriginStock, candidate.openNeed);
+            const candidateKey = destinationAllocationKey(candidate.destination);
+
+            suggestions.push(buildSuggestion(
+              ean,
+              origin,
+              candidate.destination,
+              quantity,
+              candidate.destination.need,
+              candidate.priority,
+              suggestions.length,
+              tieInfo.tiedDestinations.length,
+              tieInfo.totalNeed,
+              tieInfo.originStock,
+              tieInfo.groupKey,
+            ));
+
+            if (quantity > 0) {
+              remainingOriginStock -= quantity;
+              allocatedByDestination.set(candidateKey, (allocatedByDestination.get(candidateKey) || 0) + quantity);
+            }
+          }
+
+          origin.remaining = remainingOriginStock;
+          continue;
+        }
+
         const quantity = Math.min(origin.remaining, remainingNeed);
         if (quantity <= 0) continue;
 
         origin.remaining -= quantity;
         remainingNeed -= quantity;
-        suggestions.push(buildSuggestion(ean, origin, destination, quantity, destination.need, priority, suggestions.length, tieCandidateCount));
+        allocatedByDestination.set(destinationAllocationKey(destination), (allocatedByDestination.get(destinationAllocationKey(destination)) || 0) + quantity);
+        suggestions.push(buildSuggestion(ean, origin, destination, quantity, destination.need, priority, suggestions.length));
       }
     }
   }

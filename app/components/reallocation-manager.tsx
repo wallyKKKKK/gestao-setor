@@ -201,6 +201,7 @@ interface TransferSuggestion {
   decisionRequired?: boolean;
   decisionResolved?: boolean;
   decisionReason?: string;
+  decisionGroupKey?: string;
   tieCandidateCount?: number;
 }
 
@@ -1842,17 +1843,36 @@ export function ReallocationManager({
   };
 
   const updateSuggestionQuantity = (suggestionId: string, quantity: number) => {
-    updateActiveSuggestions((current) => current.map((suggestion) => {
-      if (suggestion.id !== suggestionId) return suggestion;
-      const nextQuantity = clampSuggestionQuantity(current, suggestion, quantity);
-      return { ...suggestion, quantity: nextQuantity, decisionResolved: suggestion.decisionRequired ? true : suggestion.decisionResolved };
-    }));
+    updateActiveSuggestions((current) => {
+      const target = current.find((suggestion) => suggestion.id === suggestionId);
+      const decisionGroupKey = target?.decisionGroupKey;
+
+      return current.map((suggestion) => {
+        if (suggestion.id === suggestionId) {
+          const nextQuantity = clampSuggestionQuantity(current, suggestion, quantity);
+          return { ...suggestion, quantity: nextQuantity, decisionResolved: suggestion.decisionRequired ? true : suggestion.decisionResolved };
+        }
+
+        if (decisionGroupKey && suggestion.decisionGroupKey === decisionGroupKey) {
+          return { ...suggestion, decisionResolved: true };
+        }
+
+        return suggestion;
+      });
+    });
   };
 
   const acceptSuggestionDecision = (suggestionId: string) => {
-    updateActiveSuggestions((current) => current.map((suggestion) => (
-      suggestion.id === suggestionId ? { ...suggestion, decisionResolved: true } : suggestion
-    )));
+    updateActiveSuggestions((current) => {
+      const target = current.find((suggestion) => suggestion.id === suggestionId);
+      const decisionGroupKey = target?.decisionGroupKey;
+
+      return current.map((suggestion) => (
+        suggestion.id === suggestionId || (decisionGroupKey && suggestion.decisionGroupKey === decisionGroupKey)
+          ? { ...suggestion, decisionResolved: true }
+          : suggestion
+      ));
+    });
   };
 
   const focusSuggestionCell = (suggestionIndex: number) => {
@@ -2056,6 +2076,12 @@ export function ReallocationManager({
     const selectedRows = transferSuggestions.filter((suggestion) => selectedSuggestionIdSet.has(suggestion.id));
     if (selectedRows.length === 0) {
       alert('Selecione ao menos uma sugestão para confirmar.');
+      return;
+    }
+
+    const unresolvedRows = selectedRows.filter((suggestion) => suggestion.decisionRequired && !suggestion.decisionResolved);
+    if (unresolvedRows.length > 0) {
+      alert(`Resolva ${unresolvedRows.length} empate${unresolvedRows.length === 1 ? '' : 's'} de calculo antes de confirmar. Eles continuam em sugestoes para ajuste.`);
       return;
     }
 

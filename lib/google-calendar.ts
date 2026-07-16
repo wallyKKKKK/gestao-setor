@@ -128,7 +128,9 @@ export function verifyGoogleState(state: string) {
   if (!encodedPayload || !signature) throw new Error("Invalid OAuth state.");
 
   const expected = createHmac("sha256", stateSecret).update(encodedPayload).digest("base64url");
-  const isValid = timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+  const signatureBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expected);
+  const isValid = signatureBuffer.length === expectedBuffer.length && timingSafeEqual(signatureBuffer, expectedBuffer);
   if (!isValid) throw new Error("Invalid OAuth state signature.");
 
   const payload = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8")) as {

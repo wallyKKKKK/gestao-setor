@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import * as XLSX from "xlsx";
 import { getSupabaseAdmin } from "@/lib/supabase-admin";
+import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { requireAuthenticatedProfile } from "@/lib/server-auth";
 import { normalizeReallocationSector } from "@/lib/reallocation-sector";
 
@@ -422,6 +423,10 @@ export async function POST(request: Request) {
     importStage = "validar permissao";
     const auth = await requireAuthenticatedProfile(request);
     if (!auth.ok) return auth.response;
+
+    const retrySeconds = checkRateLimit(`reallocation-stock-import:${auth.userId}`, 12, 10 * 60_000);
+    if (retrySeconds !== null) return rateLimitResponse(retrySeconds);
+
 
     importStage = "ler formulario";
     let formData: FormData;
