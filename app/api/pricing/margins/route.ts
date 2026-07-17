@@ -1,13 +1,12 @@
 import { NextResponse } from "next/server";
-import { normalizePermissionSector } from "@/lib/permissions";
+import { isPricingSector } from "@/lib/permissions";
 import { requireAuthenticatedProfile } from "@/lib/server-auth";
 import { getSupabaseAdmin } from "@/lib/supabase-admin";
 
 export const runtime = "nodejs";
 
 function canManageMargins(role: string, sector: string) {
-  const normalizedSector = normalizePermissionSector(sector || "");
-  return role === "admin" || normalizedSector === "price" || normalizedSector.startsWith("precificacao");
+  return role === "admin" || isPricingSector(sector || "");
 }
 
 function normalizeText(value: unknown) {

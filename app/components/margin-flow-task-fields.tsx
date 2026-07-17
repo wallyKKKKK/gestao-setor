@@ -7,11 +7,13 @@ import {
   marginRuleToTaskData,
   parseMarginFlowTaskNotes,
 } from "@/lib/margin-flow-task";
+import type { MarginFlowTaskData } from "@/lib/margin-flow-task";
 import type { PricingMarginRule } from "@/lib/types";
 
 interface MarginFlowTaskFieldsProps {
   notes: string;
   onNotesChange: (value: string) => void;
+  onSelectionChange?: (data: MarginFlowTaskData, notes: string) => void;
   marginRules: PricingMarginRule[];
 }
 
@@ -23,7 +25,7 @@ function normalizeOption(value: string | null | undefined) {
   return String(value || "").trim().toUpperCase().replace(/\s+/g, " ");
 }
 
-export function MarginFlowTaskFields({ notes, onNotesChange, marginRules }: MarginFlowTaskFieldsProps) {
+export function MarginFlowTaskFields({ notes, onNotesChange, onSelectionChange, marginRules }: MarginFlowTaskFieldsProps) {
   const { data, cleanNotes } = parseMarginFlowTaskNotes(notes);
   const activeRules = marginRules.filter((rule) => rule.is_active !== false);
   const selectedLine = data?.line || "";
@@ -50,14 +52,17 @@ export function MarginFlowTaskFields({ notes, onNotesChange, marginRules }: Marg
       && (!nextDepartment || normalizeOption(rule.department) === nextDepartment)
       && normalizeOption(rule.category) === nextCategory
     ));
-    onNotesChange(buildMarginFlowTaskNotes(cleanNotes, nextRule ? marginRuleToTaskData(nextRule) : {
+    const nextData = nextRule ? marginRuleToTaskData(nextRule) : {
       line: nextLine,
       department: nextDepartment,
       category: nextCategory,
       classificationPath: ["PRINCIPAL", nextLine, nextDepartment, nextCategory].filter(Boolean).join(" > "),
       marginPercent: 0,
       markupPercent: 0,
-    }));
+    };
+    const nextNotes = buildMarginFlowTaskNotes(cleanNotes, nextData);
+    onNotesChange(nextNotes);
+    onSelectionChange?.(nextData, nextNotes);
   };
 
   if (activeRules.length === 0) {

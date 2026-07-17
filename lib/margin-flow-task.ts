@@ -1,3 +1,4 @@
+import { isPricingSector } from "@/lib/permissions";
 import type { PricingMarginRule } from "@/lib/types";
 
 export const MARGIN_FLOW_CATEGORY = "Fluxo de margens";
@@ -19,13 +20,7 @@ function normalizeValue(value: unknown) {
 }
 
 export function canUseMarginFlowTasks(userSector: string | null | undefined) {
-  const normalized = String(userSector || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim()
-    .toLowerCase();
-
-  return normalized === "price" || normalized.startsWith("precificacao");
+  return isPricingSector(String(userSector || ""));
 }
 
 export function parseMarginFlowTaskNotes(notes: string | null | undefined) {
@@ -88,6 +83,14 @@ export function marginRuleToTaskData(rule: PricingMarginRule): MarginFlowTaskDat
     marginPercent: Number(rule.desired_margin_percent || 0),
     markupPercent: Number(rule.desired_markup_percent || 0),
   };
+}
+
+export function marginFlowTaskTitle(data: MarginFlowTaskData | null | undefined) {
+  if (!data) return "";
+  return [data.line, data.department, data.category]
+    .map((part) => normalizeValue(part))
+    .filter(Boolean)
+    .join(" - ");
 }
 
 export function formatMarginPercent(value: number) {

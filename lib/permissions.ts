@@ -35,13 +35,34 @@ export function getPermissionDeniedMessage(action: string, requirement: Permissi
   return `Acao bloqueada: ${action}. Permissao necessaria: ${PERMISSION_REQUIREMENT_TEXT[requirement]}`;
 }
 
-export function normalizePermissionSector(value: string) {
+function repairMojibake(value: string) {
   return value
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase();
+    .replace(/\u00c3\u2021/g, "\u00c7")
+    .replace(/\u00c3\u00a7/g, "\u00e7")
+    .replace(/\u00c3\u00a3/g, "\u00e3")
+    .replace(/\u00c3\u00a1/g, "\u00e1")
+    .replace(/\u00c3\u00a9/g, "\u00e9")
+    .replace(/\u00c3\u00aa/g, "\u00ea")
+    .replace(/\u00c3\u00ad/g, "\u00ed")
+    .replace(/\u00c3\u00b3/g, "\u00f3")
+    .replace(/\u00c3\u00b4/g, "\u00f4")
+    .replace(/\u00c3\u00ba/g, "\u00fa");
 }
 
+export function normalizePermissionSector(value: string) {
+  return repairMojibake(String(value || ''))
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+export function isPricingSector(value: string) {
+  const normalizedSector = normalizePermissionSector(value);
+  const compactSector = normalizedSector.replace(/\s+/g, '');
+  return compactSector === 'price' || compactSector.startsWith('precifica');
+}
 export function isPerfumePurchasingSector(value: string) {
   const normalizedSector = normalizePermissionSector(value);
   return normalizedSector.includes('compras') && normalizedSector.includes('perfumaria');

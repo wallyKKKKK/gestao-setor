@@ -58,6 +58,19 @@ function pathParts(classificationPath) {
   return { line, department, category };
 }
 
+function classificationPathFromRow(row, classificationIndex) {
+  const explicitPath = normalizeText(row[classificationIndex]);
+  if (explicitPath.includes(">")) return explicitPath;
+
+  const splitPath = row
+    .slice(classificationIndex, classificationIndex + 4)
+    .map((cell) => normalizeText(cell))
+    .filter(Boolean);
+
+  if (splitPath.length >= 3 && splitPath[0] === "PRINCIPAL") return splitPath.join(" > ");
+  return explicitPath;
+}
+
 function parseWorkbook(fileName, buffer) {
   const workbook = XLSX.read(buffer, { type: "buffer" });
   const rows = [];
@@ -75,7 +88,7 @@ function parseWorkbook(fileName, buffer) {
     const marginIndex = headers.findIndex((header) => header.includes("MARGEM"));
 
     for (const row of table.slice(headerIndex + 1)) {
-      const classificationPath = normalizeText(row[classificationIndex]);
+      const classificationPath = classificationPathFromRow(row, classificationIndex);
       if (!classificationPath) {
         skipped += 1;
         continue;

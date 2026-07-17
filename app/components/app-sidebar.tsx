@@ -1,7 +1,7 @@
 'use client';
 
 import { CalendarDays, ClipboardList, Clock3, Database, ListTodo, ShoppingCart, Shuffle, Tags, Truck } from 'lucide-react';
-import { isPerfumePurchasingSector } from '@/lib/permissions';
+import { isPerfumePurchasingSector, isPricingSector } from '@/lib/permissions';
 import type { UserRole } from '@/lib/types';
 
 export type AppSection = 'TAREFAS' | 'REUNIAO' | 'COMPRAS_IA' | 'CADASTROS' | 'PRECIFICACAO' | 'PRAZOS' | 'TRANSPORTE' | 'BALACUBACO' | 'AUDITORIA';
@@ -41,7 +41,7 @@ export function AppSidebar({
   onSectionChange,
 }: AppSidebarProps) {
   const normalizedSector = normalizeSector(userSector);
-  const canAccessPricing = userRole === 'admin' || ['precificacao', 'price'].includes(normalizedSector);
+  const canAccessPricing = userRole === 'admin' || isPricingSector(userSector);
   const canAccessPaymentTerms = userRole === 'admin' || normalizedSector.startsWith('compras');
   const isPerfumePurchasing = isPerfumePurchasingSector(userSector);
   const canAccessTransport = isSupremeAdmin || isPerfumePurchasing;

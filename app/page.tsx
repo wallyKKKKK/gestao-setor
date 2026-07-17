@@ -40,13 +40,13 @@ import {
 } from '@/lib/api'
 import { getAuthHeaders } from '@/lib/auth-headers'
 import { supabase } from '@/lib/supabase'
-import { getAppPermissions, getPermissionDeniedMessage, isPerfumePurchasingSector } from '@/lib/permissions'
+import { getAppPermissions, getPermissionDeniedMessage, isPerfumePurchasingSector, isPricingSector } from '@/lib/permissions'
 import type { RealtimeChannel, User as SupabaseUser } from '@supabase/supabase-js'
 import { addDaysToDateStr, getTodayStr, parseMonthlyWeekdayRepeat } from '@/lib/task-recurrence'
 import { filterTasks, getSectorStats, getTaskStats, processTasks } from '@/lib/task-selectors'
 import type { CreateMeetingInput } from '@/lib/api'
 import { DEFAULT_TASK_PRIORITY } from '@/lib/task-priority'
-import { MARGIN_FLOW_CATEGORY, canUseMarginFlowTasks, parseMarginFlowTaskNotes } from '@/lib/margin-flow-task'
+import { MARGIN_FLOW_CATEGORY, canUseMarginFlowTasks, marginFlowTaskTitle, parseMarginFlowTaskNotes } from '@/lib/margin-flow-task'
 import type { Announcement, AppDbNotification, AppNotification, AuditLog, NotificationPreferences, PricingMarginRule, ProcessedTask, Profile, Subtask, Task, TaskHistory, TaskPriority, UserRole } from '@/lib/types'
 
 function hasPasswordRecoveryParam() {
@@ -712,14 +712,15 @@ const toggleDayInEdit = (day: string) => {
   }, [addAudit, userSector]);
 
   async function addTask() {
-  const cleanTitle = taskTitle.trim();
   const cleanNotes = notes.trim();
+  const marginFlowData = category === MARGIN_FLOW_CATEGORY ? parseMarginFlowTaskNotes(cleanNotes).data : null;
+  const cleanTitle = category === MARGIN_FLOW_CATEGORY ? marginFlowTaskTitle(marginFlowData) : taskTitle.trim();
   const cleanSubtasks = tempSubtasks
     .map((subtask) => ({ ...subtask, title: subtask.title.trim() }))
     .filter((subtask) => subtask.title.length > 0);
 
   if (!cleanTitle) {
-    alert('Informe o titulo da tarefa.');
+    alert(category === MARGIN_FLOW_CATEGORY ? 'Selecione linha, departamento e categoria do fluxo de margens.' : 'Informe o titulo da tarefa.');
     return;
   }
 
@@ -733,7 +734,7 @@ const toggleDayInEdit = (day: string) => {
     return;
   }
 
-  if (category === MARGIN_FLOW_CATEGORY && !parseMarginFlowTaskNotes(cleanNotes).data?.category) {
+  if (category === MARGIN_FLOW_CATEGORY && !marginFlowData?.category) {
     alert('Selecione linha, departamento e categoria do fluxo de margens.');
     return;
   }
@@ -997,8 +998,9 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
   async function updateTask() {
   if (!editingTask) return;
 
-  const cleanTitle = editingTask.title.trim();
   const cleanNotes = (editingTask.notes || '').trim();
+  const marginFlowData = editingTask.category === MARGIN_FLOW_CATEGORY ? parseMarginFlowTaskNotes(cleanNotes).data : null;
+  const cleanTitle = editingTask.category === MARGIN_FLOW_CATEGORY ? marginFlowTaskTitle(marginFlowData) : editingTask.title.trim();
   const cleanSubtasks = (editingTask.subtasks || [])
     .map((subtask) => ({ ...subtask, title: subtask.title.trim() }))
     .filter((subtask) => subtask.title.length > 0);
@@ -1007,7 +1009,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
   const dueDate = isOneOff ? editingTask.due_date || getTodayStr() : null;
 
   if (!cleanTitle) {
-    alert('Informe o titulo da tarefa.');
+    alert(editingTask.category === MARGIN_FLOW_CATEGORY ? 'Selecione linha, departamento e categoria do fluxo de margens.' : 'Informe o titulo da tarefa.');
     return;
   }
 
@@ -1021,7 +1023,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
     return;
   }
 
-  if (editingTask.category === MARGIN_FLOW_CATEGORY && !parseMarginFlowTaskNotes(cleanNotes).data?.category) {
+  if (editingTask.category === MARGIN_FLOW_CATEGORY && !marginFlowData?.category) {
     alert('Selecione linha, departamento e categoria do fluxo de margens.');
     return;
   }
@@ -1426,7 +1428,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
     );
   }, [browserNotificationPermission, notificationDispatchTick, notificationPreferences.nativeBrowserNotifications, notifications, selectNotification, unreadNotificationIds, user?.id]);
 
-  const canAccessPricing = userRole === 'admin' || ['precificacao', 'price'].includes(normalizedSector);
+  const canAccessPricing = userRole === 'admin' || isPricingSector(userSector);
   const canAccessPaymentTerms = userRole === 'admin' || normalizedSector.startsWith('compras');
   const isPerfumePurchasing = isPerfumePurchasingSector(userSector);
   const canAccessTransport = isSupremeAdmin || isPerfumePurchasing;

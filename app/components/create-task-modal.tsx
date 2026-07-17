@@ -4,7 +4,7 @@ import type { RefObject } from "react";
 import { Activity, Calendar, Check, ChevronDown, Flag, ListChecks, Plus, User, X } from "lucide-react";
 import { TASK_CATEGORIES, WEEK_DAYS } from "@/app/constants";
 import { MarginFlowTaskFields } from "@/app/components/margin-flow-task-fields";
-import { buildMarginFlowTaskNotes, MARGIN_FLOW_CATEGORY, canUseMarginFlowTasks, parseMarginFlowTaskNotes } from "@/lib/margin-flow-task";
+import { buildMarginFlowTaskNotes, MARGIN_FLOW_CATEGORY, canUseMarginFlowTasks, marginFlowTaskTitle, parseMarginFlowTaskNotes } from "@/lib/margin-flow-task";
 import { TASK_PRIORITY_OPTIONS } from "@/lib/task-priority";
 import { buildMonthlyWeekdayRepeat, MONTHLY_WEEKDAY_ORDINALS, parseMonthlyWeekdayRepeat } from "@/lib/task-recurrence";
 import type { PricingMarginRule, Profile, Subtask, TaskPriority, UserRole } from "@/lib/types";
@@ -134,6 +134,10 @@ export function CreateTaskModal({
               <MarginFlowTaskFields
                 notes={notes}
                 onNotesChange={setNotes}
+                onSelectionChange={(data) => {
+                  const nextTitle = marginFlowTaskTitle(data);
+                  if (nextTitle) setTaskTitle(nextTitle);
+                }}
                 marginRules={marginRules}
               />
             )}
