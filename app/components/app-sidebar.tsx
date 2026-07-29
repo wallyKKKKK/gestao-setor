@@ -1,10 +1,10 @@
 'use client';
 
-import { CalendarDays, ClipboardList, Clock3, Database, ListTodo, ShoppingCart, Shuffle, Tags, Truck } from 'lucide-react';
+import { BadgePercent, CalendarDays, ClipboardList, Clock3, Database, ListTodo, ShoppingCart, Shuffle, Tags, Truck } from 'lucide-react';
 import { isPerfumePurchasingSector, isPricingSector } from '@/lib/permissions';
 import type { UserRole } from '@/lib/types';
 
-export type AppSection = 'TAREFAS' | 'REUNIAO' | 'COMPRAS_IA' | 'CADASTROS' | 'PRECIFICACAO' | 'PRAZOS' | 'TRANSPORTE' | 'BALACUBACO' | 'AUDITORIA';
+export type AppSection = 'TAREFAS' | 'REUNIAO' | 'COMPRAS_IA' | 'CADASTROS' | 'PRECIFICACAO' | 'PRE_VENCIDOS' | 'PRAZOS' | 'TRANSPORTE' | 'BALACUBACO' | 'AUDITORIA';
 
 interface AppSidebarProps {
   activeSection: AppSection;
@@ -20,6 +20,7 @@ const items = [
   { id: 'REUNIAO' as const, label: 'Reunião', icon: CalendarDays },
   { id: 'CADASTROS' as const, label: 'Cadastros', icon: Database, registryOnly: true },
   { id: 'PRECIFICACAO' as const, label: 'Price', icon: Tags, priceOnly: true },
+  { id: 'PRE_VENCIDOS' as const, label: 'Pré venc.', icon: BadgePercent, priceOnly: true },
   { id: 'PRAZOS' as const, label: 'Prazos', icon: Clock3, purchaseOnly: true },
   { id: 'TRANSPORTE' as const, label: 'Transporte', icon: Truck, transportOnly: true },
   { id: 'BALACUBACO' as const, label: 'Remanej.', icon: Shuffle },

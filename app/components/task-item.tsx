@@ -2,15 +2,15 @@
 
 import { memo, useRef, useState } from "react";
 import type { PointerEvent, WheelEvent } from "react";
-import { Check, ChevronDown, Edit3, Flag, MessageSquare, RotateCcw, Trash2 } from "lucide-react";
+import { Check, ChevronDown, Edit3, Flag, MessageSquare, PauseCircle, Play, RotateCcw, Trash2 } from "lucide-react";
 import { addAuditLog, addTaskHistory, updateTaskCompletion, updateTaskSubtasks } from "@/lib/api";
 import { MARGIN_FLOW_CATEGORY, formatMarginPercent, parseMarginFlowTaskNotes } from "@/lib/margin-flow-task";
 import { getPermissionDeniedMessage } from "@/lib/permissions";
 import { taskPriorityBadgeClassName, taskPriorityLabel } from "@/lib/task-priority";
 import { formatToBR, getScheduleDisplayLabel, getTodayStr } from "@/lib/task-recurrence";
-import type { Profile, Subtask, TaskItemProps } from "@/lib/types";
+import type { Profile, Subtask, TaskItemProps, TaskWorkflowStatus } from "@/lib/types";
 
-export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit, userRole, currentUser, onView, onToggle, onDelete, canDelete, onScheduleOverride }: TaskItemProps) => {
+export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit, userRole, currentUser, onView, onToggle, onDelete, canDelete, onScheduleOverride, onWorkflowChange }: TaskItemProps) => {
   const [expanded, setExpanded] = useState(false);
   const [feedbackOffset, setFeedbackOffset] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
@@ -55,6 +55,42 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
   const manageTaskDeniedMessage = getPermissionDeniedMessage("alterar esta tarefa", "managerOrAdmin")
     + " O responsavel pela tarefa tambem pode concluir ou editar checklist.";
   const deleteTaskDeniedMessage = getPermissionDeniedMessage("excluir tarefas", "managerOrAdmin");
+  const workflowStatus: TaskWorkflowStatus = task.isDoneToday ? "concluida" : task.workflow_status || "pendente";
+  const isInProgress = workflowStatus === "em_andamento";
+  const workflowStartedProfile = task.workflow_started_by ? profiles.find((p: Profile) => p.id === task.workflow_started_by) : null;
+  const workflowName = task.workflow_started_by_name || workflowStartedProfile?.full_name || "";
+  const workflowFirstName = workflowName.split(" ")[0] || assignedFirstName;
+  const workflowBadgeClassName = workflowStatus === "em_andamento"
+    ? "border-blue-600 bg-blue-600 text-white shadow-[0_8px_18px_rgba(37,99,235,0.20)]"
+    : workflowStatus === "bloqueada"
+      ? "border-amber-200 bg-amber-50 text-amber-700"
+      : workflowStatus === "concluida"
+        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+        : "border-slate-200 bg-white text-slate-600";
+  const workflowLabel = workflowStatus === "em_andamento"
+    ? `Em andamento por ${workflowFirstName}`
+    : workflowStatus === "bloqueada"
+      ? "Bloqueada"
+      : workflowStatus === "concluida"
+        ? "Concluida"
+        : "Pendente";
+
+  const changeWorkflow = (status: TaskWorkflowStatus) => {
+    if (!canManage) {
+      void recordBlockedTaskAttempt("Alterar status da tarefa");
+      alert(manageTaskDeniedMessage);
+      return;
+    }
+
+    let blockedReason: string | null = null;
+    if (status === "bloqueada") {
+      const reason = window.prompt("Qual o motivo do bloqueio?", task.workflow_blocked_reason || "");
+      if (reason === null) return;
+      blockedReason = reason.trim() || null;
+    }
+
+    onWorkflowChange(task, status, blockedReason);
+  };
 
   const recordBlockedTaskAttempt = async (action: string) => {
     if (!currentUser) return;
@@ -254,6 +290,7 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
         ${isDragging ? "transition-none cursor-grabbing" : "transition-all duration-200"}
         ${dragAction === "advance" ? "ring-4 ring-blue-300" : dragAction === "postpone" ? "ring-4 ring-slate-300" : ""}
         ${task.isDoneToday ? "bg-green-400 border-green-200 opacity-80" :
+          isInProgress ? "bg-blue-50 border-blue-500 shadow-[4px_4px_0px_0px_rgba(37,99,235,0.55),0_0_0_4px_rgba(37,99,235,0.08)] animate-[pulse_3.2s_ease-in-out_infinite]" :
           isLate ? "bg-red-400 border-red-200 shadow-[4px_4px_0px_0px_rgba(220,38,38,1)]" :
           isAdvanced ? "bg-blue-50 border-blue-500 shadow-[4px_4px_0px_0px_rgba(37,99,235,1)]" :
           isPostponed ? "bg-slate-50 border-[#232D4A] shadow-[4px_4px_0px_0px_rgba(35,45,74,1)]" :
@@ -286,7 +323,7 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
         </button>
       )}
       <div className="relative z-10 flex flex-wrap sm:flex-nowrap items-center gap-3 sm:gap-6 p-3 sm:p-4 md:px-8">
-        <div className="flex-shrink-0">
+        <div className="flex shrink-0 flex-col items-center justify-center gap-2 self-stretch sm:w-[82px]">
           <button
             type="button"
             aria-disabled={!canManage}
@@ -304,6 +341,7 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
           >
             <Check size={22} className="sm:w-[26px] sm:h-[26px]" strokeWidth={4} />
           </button>
+
         </div>
 
         <div className="flex-1 min-w-[180px] flex flex-col justify-center">
@@ -325,7 +363,7 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
             >
               {task.title}
             </h3>
-            <p className={`text-[10px] font-bold text-slate-400 italic line-clamp-1 mt-1 max-w-[400px] min-h-[14px]
+            <p className={`text-[10px] font-bold text-slate-400 italic line-clamp-1 mt-1 max-w-[720px] min-h-[14px]
               ${task.isDoneToday ? "text-green-700/30" : ""}
               ${displayNotes ? "" : "invisible"}`}
             >
@@ -346,6 +384,12 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
             <span className={`inline-flex h-6 items-center gap-1 rounded-full border px-3 text-[8px] font-black uppercase tracking-wide shadow-sm ${taskPriorityBadgeClassName(task.priority)}`}>
               <Flag size={11} strokeWidth={3} />
               {taskPriorityLabel(task.priority)}
+            </span>
+            <span
+              title={task.workflow_blocked_reason || workflowLabel}
+              className={`inline-flex h-6 max-w-[210px] items-center rounded-full border px-3 text-[8px] font-black uppercase tracking-wide shadow-sm ${workflowBadgeClassName}`}
+            >
+              <span className="truncate">{workflowLabel}</span>
             </span>
             {marginFlowData && (
               <>
@@ -403,61 +447,78 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
           )}
         </div>
 
-        <div className="flex items-center gap-1 border-l-2 pl-3 sm:pl-4 border-slate-100 opacity-100 sm:opacity-0 group-hover:opacity-100 transition-opacity">
-          {hasScheduleOverride && (
+        <div className="flex flex-col items-center gap-2 border-l-2 border-slate-100 pl-3 opacity-100 transition-opacity sm:pl-4 sm:opacity-0 group-hover:opacity-100">
+          <div className="flex items-center gap-1">
+            {hasScheduleOverride && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (!canManage) {
+                    void recordBlockedTaskAttempt("Restaurar agenda original");
+                    alert(manageTaskDeniedMessage);
+                    return;
+                  }
+                  onScheduleOverride(task, "clear");
+                }}
+                className={`p-2 transition-all ${canManage ? "text-slate-300 hover:text-slate-900" : "cursor-not-allowed text-slate-200 opacity-50"}`}
+                title={canManage ? "Restaurar agenda original" : manageTaskDeniedMessage}
+                aria-label="Restaurar agenda original"
+                aria-disabled={!canManage}
+              >
+                <RotateCcw size={18}/>
+              </button>
+            )}
             <button
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
                 if (!canManage) {
-                  void recordBlockedTaskAttempt("Restaurar agenda original");
+                  void recordBlockedTaskAttempt("Editar tarefa");
                   alert(manageTaskDeniedMessage);
                   return;
                 }
-                onScheduleOverride(task, "clear");
+                onEdit(task);
               }}
-              className={`p-2 transition-all ${canManage ? "text-slate-300 hover:text-slate-900" : "cursor-not-allowed text-slate-200 opacity-50"}`}
-              title={canManage ? "Restaurar agenda original" : manageTaskDeniedMessage}
-              aria-label="Restaurar agenda original"
+              className={`p-2 transition-all ${canManage ? "text-slate-300 hover:text-blue-600" : "cursor-not-allowed text-slate-200 opacity-50"}`}
+              title={canManage ? "Editar tarefa" : manageTaskDeniedMessage}
               aria-disabled={!canManage}
             >
-              <RotateCcw size={18}/>
+              <Edit3 size={20}/>
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!canDelete) {
+                  void recordBlockedTaskAttempt("Excluir tarefa");
+                  alert(deleteTaskDeniedMessage);
+                  return;
+                }
+                onDelete(task.id);
+              }}
+              className={`p-2 transition-all ${canDelete ? "text-slate-200 hover:text-red-600" : "cursor-not-allowed text-slate-200 opacity-50"}`}
+              title={canDelete ? "Excluir tarefa" : deleteTaskDeniedMessage}
+              aria-disabled={!canDelete}
+            >
+              <Trash2 size={20}/>
+            </button>
+          </div>
+          {canManage && !task.isDoneToday && (
+            <button
+              type="button"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation();
+                changeWorkflow(workflowStatus === "em_andamento" ? "pendente" : "em_andamento");
+              }}
+              className="inline-flex items-center justify-center gap-1 text-[9px] font-black uppercase tracking-widest text-slate-300 transition hover:text-blue-600"
+              title={workflowStatus === "em_andamento" ? "Pausar andamento" : "Marcar em andamento"}
+            >
+              {workflowStatus === "em_andamento" ? <PauseCircle size={12} strokeWidth={3} /> : <Play size={12} strokeWidth={3} />}
+              {workflowStatus === "em_andamento" ? "Pausar" : "Iniciar"}
             </button>
           )}
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              if (!canManage) {
-                void recordBlockedTaskAttempt("Editar tarefa");
-                alert(manageTaskDeniedMessage);
-                return;
-              }
-              onEdit(task);
-            }}
-            className={`p-2 transition-all ${canManage ? "text-slate-300 hover:text-blue-600" : "cursor-not-allowed text-slate-200 opacity-50"}`}
-            title={canManage ? "Editar tarefa" : manageTaskDeniedMessage}
-            aria-disabled={!canManage}
-          >
-            <Edit3 size={20}/>
-          </button>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              if (!canDelete) {
-                void recordBlockedTaskAttempt("Excluir tarefa");
-                alert(deleteTaskDeniedMessage);
-                return;
-              }
-              onDelete(task.id);
-            }}
-            className={`p-2 transition-all ${canDelete ? "text-slate-200 hover:text-red-600" : "cursor-not-allowed text-slate-200 opacity-50"}`}
-            title={canDelete ? "Excluir tarefa" : deleteTaskDeniedMessage}
-            aria-disabled={!canDelete}
-          >
-            <Trash2 size={20}/>
-          </button>
         </div>
       </div>
 

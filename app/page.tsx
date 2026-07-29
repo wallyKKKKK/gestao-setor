@@ -14,6 +14,7 @@ import { PurchaseAssistant } from '@/app/components/purchase-assistant'
 import { SettingsModal } from '@/app/components/settings-modal'
 import { TaskDrawer } from '@/app/components/task-drawer'
 import { TaskListView } from '@/app/components/task-list-view'
+import { WeeklyTaskScheduleView } from '@/app/components/weekly-task-schedule-view'
 import { showSystemToast } from '@/app/components/system-toast'
 import { NAV_CATEGORIES } from '@/app/constants'
 import { useAnnouncementActions } from '@/app/hooks/use-announcement-actions'
@@ -37,6 +38,7 @@ import {
   updateTask as updateTaskApi,
   updateTaskCompletion,
   updateTaskScheduleOverride,
+  updateTaskWorkflow,
 } from '@/lib/api'
 import { getAuthHeaders } from '@/lib/auth-headers'
 import { supabase } from '@/lib/supabase'
@@ -47,7 +49,7 @@ import { filterTasks, getSectorStats, getTaskStats, processTasks } from '@/lib/t
 import type { CreateMeetingInput } from '@/lib/api'
 import { DEFAULT_TASK_PRIORITY } from '@/lib/task-priority'
 import { MARGIN_FLOW_CATEGORY, canUseMarginFlowTasks, marginFlowTaskTitle, parseMarginFlowTaskNotes } from '@/lib/margin-flow-task'
-import type { Announcement, AppDbNotification, AppNotification, AuditLog, NotificationPreferences, PricingMarginRule, ProcessedTask, Profile, Subtask, Task, TaskHistory, TaskPriority, UserRole } from '@/lib/types'
+import type { Announcement, AppDbNotification, AppNotification, AuditLog, NotificationPreferences, PricingMarginRule, ProcessedTask, Profile, Subtask, Task, TaskHistory, TaskPriority, TaskWorkflowStatus, UserRole } from '@/lib/types'
 
 function hasPasswordRecoveryParam() {
   if (typeof window === 'undefined') return false;
@@ -71,6 +73,7 @@ const AuditTimeline = dynamic(() => import('@/app/components/audit-timeline').th
 const MeetingCalendarView = dynamic(() => import('@/app/components/meeting-calendar-view').then((mod) => mod.MeetingCalendarView), { loading: SectionLoader })
 const PaymentTermsManager = dynamic(() => import('@/app/components/payment-terms-manager').then((mod) => mod.PaymentTermsManager), { loading: SectionLoader })
 const PricingManager = dynamic(() => import('@/app/components/pricing-manager').then((mod) => mod.PricingManager), { loading: SectionLoader })
+const ExpiringProductsManager = dynamic(() => import('@/app/components/expiring-products-manager').then((mod) => mod.ExpiringProductsManager), { loading: SectionLoader })
 const ReallocationManager = dynamic(() => import('@/app/components/reallocation-manager').then((mod) => mod.ReallocationManager), { loading: SectionLoader })
 const RegistrationsManager = dynamic(() => import('@/app/components/registrations-manager').then((mod) => mod.RegistrationsManager), { loading: SectionLoader })
 const TransportDebtManager = dynamic(() => import('@/app/components/transport-debt-manager').then((mod) => mod.TransportDebtManager), { loading: SectionLoader })
@@ -138,6 +141,7 @@ const SECTION_LABELS: Record<AppSection, string> = {
   REUNIAO: 'Reunião',
   CADASTROS: 'Cadastros',
   PRECIFICACAO: 'Precificação',
+  PRE_VENCIDOS: 'Pré-vencidos',
   PRAZOS: 'Prazos',
   TRANSPORTE: 'Transporte',
   BALACUBACO: 'Remanejamento Inteligente',
@@ -146,7 +150,7 @@ const SECTION_LABELS: Record<AppSection, string> = {
 
 const APP_PREFERENCES_KEY_PREFIX = 'wally-app-preferences';
 const NOTIFICATION_PREFERENCES_KEY_PREFIX = 'wally-notification-preferences';
-const APP_SECTIONS: AppSection[] = ['TAREFAS', 'REUNIAO', 'COMPRAS_IA', 'CADASTROS', 'PRECIFICACAO', 'PRAZOS', 'TRANSPORTE', 'BALACUBACO', 'AUDITORIA'];
+const APP_SECTIONS: AppSection[] = ['TAREFAS', 'REUNIAO', 'COMPRAS_IA', 'CADASTROS', 'PRECIFICACAO', 'PRE_VENCIDOS', 'PRAZOS', 'TRANSPORTE', 'BALACUBACO', 'AUDITORIA'];
 const TASK_TABS = NAV_CATEGORIES.map((category) => category.id);
 
 const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
@@ -931,6 +935,48 @@ const scheduleTaskOverride = useCallback(async (task: ProcessedTask, action: 'ad
   }
 }, [addAudit, fetchTasks, user]);
 
+const changeTaskWorkflow = useCallback(async (task: ProcessedTask, workflowStatus: TaskWorkflowStatus, blockedReason: string | null = null) => {
+  if (!user) return;
+
+  const profile = profiles.find((item) => item.id === user.id);
+  const actorName = profile?.full_name || user.email || 'Usuario';
+  const startedAt = new Date().toISOString();
+  const isPending = workflowStatus === 'pendente';
+
+  setTasks((prevTasks) => prevTasks.map((item) => (
+    item.id === task.id
+      ? {
+        ...item,
+        workflow_status: workflowStatus,
+        workflow_started_by: isPending ? null : user.id,
+        workflow_started_by_name: isPending ? null : actorName,
+        workflow_started_at: isPending ? null : startedAt,
+        workflow_blocked_reason: workflowStatus === 'bloqueada' ? blockedReason : null,
+      }
+      : item
+  )));
+
+  try {
+    await updateTaskWorkflow({
+      taskId: task.id,
+      workflowStatus,
+      userId: user.id,
+      userName: actorName,
+      blockedReason,
+    });
+    const auditDetails = workflowStatus === 'em_andamento'
+      ? `Em andamento por ${actorName}`
+      : workflowStatus === 'bloqueada'
+        ? `Bloqueada${blockedReason ? ': ' + blockedReason : ''}`
+        : 'Status retornou para pendente';
+    await addAudit('task_workflow_updated', 'task', task.id, task.title, task.sector, auditDetails);
+  } catch (error) {
+    const message = getErrorMessage(error, 'Erro desconhecido');
+    alert('Erro ao alterar status da tarefa: ' + message);
+    fetchTasks();
+  }
+}, [addAudit, fetchTasks, profiles, user]);
+
 const addMeeting = useCallback(async (meeting: CreateMeetingInput) => {
   try {
     await createMeeting(meeting);
@@ -982,7 +1028,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
   const newDate = isCurrentlyDone ? null : meetingDate;
 
   setTasks(prevTasks => prevTasks.map(t => (
-    t.id === task.id ? { ...t, last_done_date: newDate, status: newDate ? 'concluido' : 'pendente' } : t
+    t.id === task.id ? { ...t, last_done_date: newDate, status: newDate ? 'concluido' : 'pendente', workflow_status: newDate ? 'concluida' : 'pendente', workflow_started_by: null, workflow_started_by_name: null, workflow_started_at: null, workflow_blocked_reason: null } : t
   )));
 
   try {
@@ -1440,6 +1486,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
     (activeSection === 'CADASTROS' && !canAccessRegistries) ||
     (activeSection === 'COMPRAS_IA' && !canAccessPaymentTerms) ||
     (activeSection === 'PRECIFICACAO' && !canAccessPricing) ||
+    (activeSection === 'PRE_VENCIDOS' && !canAccessPricing) ||
     (activeSection === 'PRAZOS' && !canAccessPaymentTerms) ||
     (activeSection === 'TRANSPORTE' && !canAccessTransport) ||
     (activeSection === 'BALACUBACO' && !canAccessReallocation)
@@ -1548,7 +1595,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
   if (!user || isPasswordRecovery) return <Login />
 
   return (
-    <div className={`app-responsive-root app-density-compact min-h-screen bg-[#E8EEF7] text-slate-900 font-sans overflow-x-hidden w-full ${visibleSection === 'TRANSPORTE' || visibleSection === 'REUNIAO' || visibleSection === 'BALACUBACO' || visibleSection === 'COMPRAS_IA' ? 'pb-24 md:pb-0' : 'pb-24 md:pb-20'}`}>
+    <div className={`app-responsive-root app-density-compact min-h-screen bg-[#E8EEF7] text-slate-900 font-sans overflow-x-hidden w-full ${visibleSection === 'TRANSPORTE' || visibleSection === 'REUNIAO' || visibleSection === 'BALACUBACO' || visibleSection === 'COMPRAS_IA' || visibleSection === 'PRE_VENCIDOS' ? 'pb-24 md:pb-0' : 'pb-24 md:pb-20'}`}>
       <AppSidebar
         activeSection={visibleSection}
         userRole={userRole}
@@ -1755,21 +1802,31 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
     onSave={addTask}
   />
 )}
-      <TaskListView
-        activeTab={activeTab}
-        tasks={filteredTasks}
-        profiles={profiles}
-        tradeNoteTaskIds={tradeNoteTaskIds}
-        userRole={userRole}
-        currentUser={user}
-        onToggle={toggleComplete}
-        onView={setViewingTask}
-        onEdit={openEditTaskModal}
-        onUpdate={fetchTasks}
-        onDelete={deleteTask}
-        canDeleteTasks={permissions.canDeleteTasks}
-        onScheduleOverride={scheduleTaskOverride}
-      />
+      {activeTab === 'SEMANA' ? (
+        <WeeklyTaskScheduleView
+          tasks={filteredTasks}
+          profiles={profiles}
+          selectedUserIds={filterUsers}
+          onView={setViewingTask}
+        />
+      ) : (
+        <TaskListView
+          activeTab={activeTab}
+          tasks={filteredTasks}
+          profiles={profiles}
+          tradeNoteTaskIds={tradeNoteTaskIds}
+          userRole={userRole}
+          currentUser={user}
+          onToggle={toggleComplete}
+          onView={setViewingTask}
+          onEdit={openEditTaskModal}
+          onUpdate={fetchTasks}
+          onDelete={deleteTask}
+          canDeleteTasks={permissions.canDeleteTasks}
+          onScheduleOverride={scheduleTaskOverride}
+          onWorkflowChange={changeTaskWorkflow}
+        />
+      )}
     </>
   )}
 </main>
@@ -1796,6 +1853,8 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
         />
       ) : visibleSection === 'PRECIFICACAO' ? (
         <PricingManager />
+      ) : visibleSection === 'PRE_VENCIDOS' ? (
+        <ExpiringProductsManager />
       ) : visibleSection === 'PRAZOS' ? (
         <PaymentTermsManager />
       ) : visibleSection === 'TRANSPORTE' ? (

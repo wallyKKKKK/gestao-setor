@@ -1,6 +1,7 @@
 import {
   AlertCircle,
   Calendar,
+  CalendarDays,
   History,
   LayoutDashboard,
   ListChecks,
@@ -32,10 +33,11 @@ export const SECTORS = [
   "Logística",
 ];
 
-export const GLOBAL_MEMBER_TABS = ["Todas", "HOJE", "Trade", "ATRASADOS"];
+export const GLOBAL_MEMBER_TABS = ["Todas", "HOJE", "SEMANA", "Trade", "ATRASADOS"];
 
 export const NAV_CATEGORIES = [
   { id: "HOJE", label: "Hoje", icon: Calendar },
+  { id: "SEMANA", label: "Semana", icon: CalendarDays },
   { id: "ATRASADOS", label: "Atrasados", icon: AlertCircle },
   { id: "Minhas", label: "Minhas", icon: User },
   { id: "Todas", label: "Todas", icon: ListChecks },

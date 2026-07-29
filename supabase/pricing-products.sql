@@ -17,6 +17,7 @@ create table if not exists public.pricing_products (
   month_end_price numeric(12, 2) not null default 0,
   competitor_prices jsonb not null default '{}'::jsonb,
   store_prices jsonb not null default '{}'::jsonb,
+  promotion_group text not null default '',
   is_active boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -28,6 +29,9 @@ create table if not exists public.pricing_products (
 alter table public.pricing_products
 add column if not exists is_active boolean not null default true;
 
+alter table public.pricing_products
+add column if not exists promotion_group text not null default '';
+
 create index if not exists pricing_products_description_idx
 on public.pricing_products (description);
 
@@ -36,6 +40,9 @@ on public.pricing_products (brand);
 
 create index if not exists pricing_products_is_active_idx
 on public.pricing_products (is_active);
+
+create index if not exists pricing_products_promotion_group_idx
+on public.pricing_products (promotion_group);
 
 create index if not exists pricing_products_description_trgm_idx
 on public.pricing_products using gin (description gin_trgm_ops);

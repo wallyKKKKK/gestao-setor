@@ -1,7 +1,7 @@
 import { GLOBAL_MEMBER_TABS } from "@/app/constants";
 import { compareTaskPriority, normalizeTaskPriority } from "@/lib/task-priority";
 import { formatToBR, getLastOccurrence, getNextOccurrence, getTodayStr } from "@/lib/task-recurrence";
-import type { ProcessedTask, Task, UserRole } from "@/lib/types";
+import type { ProcessedTask, Task, TaskWorkflowStatus, UserRole } from "@/lib/types";
 
 interface FilterTasksInput {
   tasks: ProcessedTask[];
@@ -34,9 +34,23 @@ function isActionableTask(task: ProcessedTask, today: string) {
   return task.lastOcc !== "1970-01-01" && task.lastOcc <= today;
 }
 
+const WORKFLOW_ORDER: Record<TaskWorkflowStatus, number> = {
+  em_andamento: 0,
+  pendente: 1,
+  bloqueada: 2,
+  concluida: 3,
+};
+
+function getWorkflowStatus(task: ProcessedTask): TaskWorkflowStatus {
+  return task.isDoneToday ? "concluida" : task.workflow_status || "pendente";
+}
+
 function compareFlowTasks(left: ProcessedTask, right: ProcessedTask) {
   const doneOrder = Number(left.isDoneToday) - Number(right.isDoneToday);
   if (doneOrder !== 0) return doneOrder;
+
+  const workflowOrder = WORKFLOW_ORDER[getWorkflowStatus(left)] - WORKFLOW_ORDER[getWorkflowStatus(right)];
+  if (workflowOrder !== 0) return workflowOrder;
 
   const priorityOrder = compareTaskPriority(left, right);
   if (priorityOrder !== 0) return priorityOrder;
@@ -57,14 +71,26 @@ export function processTasks(tasks: Task[]): ProcessedTask[] {
     const lastOcc = hasActiveScheduleOverride ? task.schedule_override_date || baseLastOcc : baseLastOcc;
     const nextOcc = hasActiveScheduleOverride && task.schedule_override_date ? formatToBR(task.schedule_override_date) : baseNextOcc;
     const isDoneToday = task.last_done_date === today || Boolean(task.last_done_date && task.last_done_date >= lastOcc);
-    const shouldResetSubtasks = Boolean(task.last_done_date && task.last_done_date < lastOcc && !isDoneToday);
+    const workflowStatus: TaskWorkflowStatus = isDoneToday
+      ? "concluida"
+      : task.workflow_status === "concluida"
+        ? "pendente"
+        : task.workflow_status || "pendente";
+    const savedSubtasks = task.subtasks || [];
+    const hasPreviousCompletedChecklist = savedSubtasks.length > 0 && savedSubtasks.every((subtask) => subtask.done);
+    const shouldResetSubtasks = Boolean(task.last_done_date && task.last_done_date < lastOcc && !isDoneToday && hasPreviousCompletedChecklist);
     const subtasks = shouldResetSubtasks
-      ? task.subtasks.map((subtask) => ({ ...subtask, done: false }))
-      : task.subtasks;
+      ? savedSubtasks.map((subtask) => ({ ...subtask, done: false }))
+      : savedSubtasks;
 
     return {
       ...task,
       priority: normalizeTaskPriority(task.priority),
+      workflow_status: workflowStatus,
+      workflow_started_by: task.workflow_started_by || null,
+      workflow_started_by_name: task.workflow_started_by_name || null,
+      workflow_started_at: task.workflow_started_at || null,
+      workflow_blocked_reason: task.workflow_blocked_reason || null,
       subtasks,
       lastOcc,
       nextOcc,
@@ -109,6 +135,7 @@ export function filterTasks({
 
     if (activeTab === "ATRASADOS") return !task.isDoneToday && task.lastOcc < today;
     if (activeTab === "HOJE") return task.lastOcc === today && !task.isDoneToday;
+    if (activeTab === "SEMANA") return true;
     if (activeTab === "Minhas") return task.assigned_to === userId;
     if (activeTab === "Todas") return true;
 

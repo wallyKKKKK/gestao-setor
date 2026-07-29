@@ -2,7 +2,7 @@ import { supabase } from "@/lib/supabase";
 import { getAuthHeaders } from "@/lib/auth-headers";
 import { normalizeReallocationSector } from "@/lib/reallocation-sector";
 import { DEFAULT_TASK_PRIORITY, normalizeTaskPriority } from "@/lib/task-priority";
-import type { AccountStatus, Announcement, AppDbNotification, AuditLog, PricingBranch, PricingMarginRule, PricingProduct, Profile, ReallocationProduct, ReallocationStockItem, ReallocationStockSnapshot, Subtask, SupplierPaymentTerm, Task, TaskHistory, TaskPriority, TradeTaskNote, UserRole } from "@/lib/types";
+import type { AccountStatus, Announcement, AppDbNotification, AuditLog, ExpiringDiscountRule, ExpiringDiscountType, ExpiringInventoryItem, ExpiringRuleScopeType, PricingBranch, PricingMarginRule, PricingProduct, Profile, ReallocationProduct, ReallocationStockItem, ReallocationStockSnapshot, Subtask, SupplierPaymentTerm, Task, TaskHistory, TaskPriority, TaskWorkflowStatus, TradeTaskNote, UserRole } from "@/lib/types";
 
 interface CreateAnnouncementInput {
   title: string;
@@ -69,8 +69,15 @@ interface UpdateTaskInput {
   priority?: TaskPriority;
 }
 
-interface AuditLogInput {
-  actorId: string;
+interface UpdateTaskWorkflowInput {
+  taskId: string;
+  workflowStatus: TaskWorkflowStatus;
+  userId?: string | null;
+  userName?: string | null;
+  blockedReason?: string | null;
+}
+
+interface AuditLogInput {  actorId: string;
   actorName: string;
   action: string;
   entityType: string;
@@ -431,6 +438,7 @@ export async function savePricingProduct(input: PricingProductInput) {
     month_end_price: input.month_end_price,
     competitor_prices: input.competitor_prices,
     store_prices: input.store_prices,
+    promotion_group: (input.promotion_group || '').toUpperCase(),
     is_active: input.is_active !== false,
   };
 
@@ -443,8 +451,9 @@ export async function savePricingProduct(input: PricingProductInput) {
       .single();
 
     if (error?.code === "PGRST204") {
-      const { is_active, ...fallbackPayload } = payload;
+      const { is_active, promotion_group, ...fallbackPayload } = payload;
       void is_active;
+      void promotion_group;
       const fallback = await supabase
         .from("pricing_products")
         .update(fallbackPayload)
@@ -466,8 +475,9 @@ export async function savePricingProduct(input: PricingProductInput) {
     .single();
 
   if (error?.code === "PGRST204") {
-    const { is_active, ...fallbackPayload } = payload;
+    const { is_active, promotion_group, ...fallbackPayload } = payload;
     void is_active;
+    void promotion_group;
     const fallback = await supabase
       .from("pricing_products")
       .upsert([fallbackPayload], { onConflict: "ean" })
@@ -484,6 +494,67 @@ export async function savePricingProduct(input: PricingProductInput) {
 export async function deletePricingProduct(productId: string) {
   const { error } = await supabase.from("pricing_products").delete().eq("id", productId);
   if (error) throw error;
+}
+
+
+export interface ExpiringDiscountRuleInput {
+  id?: string;
+  name: string;
+  scope_type: ExpiringRuleScopeType;
+  scope_value: string;
+  discount_type: ExpiringDiscountType;
+  discount_value: number;
+  min_days_to_expire: number;
+  max_days_to_expire: number;
+  priority: number;
+  is_active: boolean;
+}
+
+export async function fetchExpiringInventoryItems() {
+  const response = await fetch("/api/expiring-products", { headers: await getAuthHeaders() });
+  const data = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(data?.error || "Erro ao carregar pre-vencidos.");
+  return {
+    items: (data?.items || []) as ExpiringInventoryItem[],
+    missingTable: Boolean(data?.missingTable),
+  };
+}
+
+export async function fetchExpiringDiscountRules() {
+  const response = await fetch("/api/expiring-products/rules", { headers: await getAuthHeaders() });
+  const data = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(data?.error || "Erro ao carregar regras de pre-vencidos.");
+  return {
+    rules: (data?.rules || []) as ExpiringDiscountRule[],
+    missingTable: Boolean(data?.missingTable),
+  };
+}
+
+export async function saveExpiringDiscountRule(input: ExpiringDiscountRuleInput) {
+  const response = await fetch("/api/expiring-products/rules", {
+    method: "POST",
+    headers: {
+      ...(await getAuthHeaders()),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(data?.error || "Erro ao salvar regra de pre-vencidos.");
+  return data.rule as ExpiringDiscountRule;
+}
+
+export async function deleteExpiringDiscountRule(ruleId: string) {
+  const response = await fetch("/api/expiring-products/rules", {
+    method: "DELETE",
+    headers: {
+      ...(await getAuthHeaders()),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ id: ruleId }),
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(data?.error || "Erro ao excluir regra de pre-vencidos.");
 }
 
 export async function fetchSupplierPaymentTerms() {
@@ -854,13 +925,23 @@ export async function createTask(input: CreateTaskInput) {
     google_event_link: input.googleEventLink || null,
     is_one_off: input.isOneOff || false,
     priority: normalizeTaskPriority(input.priority || DEFAULT_TASK_PRIORITY),
+    workflow_status: "pendente" as TaskWorkflowStatus,
+    workflow_started_by: null,
+    workflow_started_by_name: null,
+    workflow_started_at: null,
+    workflow_blocked_reason: null,
   };
 
   let { error } = await supabase.from("tasks").insert([payload]);
 
   if (error?.code === "PGRST204") {
-    const { priority, ...fallbackPayload } = payload;
+    const { priority, workflow_status, workflow_started_by, workflow_started_by_name, workflow_started_at, workflow_blocked_reason, ...fallbackPayload } = payload;
     void priority;
+    void workflow_status;
+    void workflow_started_by;
+    void workflow_started_by_name;
+    void workflow_started_at;
+    void workflow_blocked_reason;
     const fallback = await supabase.from("tasks").insert([fallbackPayload]);
     error = fallback.error;
   }
@@ -927,18 +1008,37 @@ export async function addAuditLog(input: AuditLogInput) {
 }
 
 export async function updateTaskCompletion(taskId: string, lastDoneDate: string | null, subtasks: Subtask[], archiveCompleted = false) {
-  let { error } = await supabase.from("tasks").update({
+  const payload = {
     last_done_date: lastDoneDate,
     status: lastDoneDate ? "concluido" : "pendente",
     subtasks,
     schedule_override_date: null,
     schedule_override_type: null,
     archived_at: archiveCompleted && lastDoneDate ? new Date().toISOString() : null,
-  }).eq("id", taskId);
+    workflow_status: (lastDoneDate ? "concluida" : "pendente") as TaskWorkflowStatus,
+    workflow_started_by: null,
+    workflow_started_by_name: null,
+    workflow_started_at: null,
+    workflow_blocked_reason: null,
+  };
+
+  let { error } = await supabase.from("tasks").update(payload).eq("id", taskId);
+
+  if (error?.code === "PGRST204") {
+    const { workflow_status, workflow_started_by, workflow_started_by_name, workflow_started_at, workflow_blocked_reason, ...fallbackPayload } = payload;
+    void workflow_status;
+    void workflow_started_by;
+    void workflow_started_by_name;
+    void workflow_started_at;
+    void workflow_blocked_reason;
+
+    const fallback = await supabase.from("tasks").update(fallbackPayload).eq("id", taskId);
+    error = fallback.error;
+  }
 
   if (error?.code === "PGRST204") {
     if (archiveCompleted) {
-      throw new Error("Campos de tarefa pontual ainda não existem no Supabase. Rode o SQL supabase/task-one-off-archive.sql.");
+      throw new Error("Campos de tarefa pontual ainda nao existem no Supabase. Rode o SQL supabase/task-one-off-archive.sql.");
     }
 
     const fallback = await supabase.from("tasks").update({
@@ -957,6 +1057,27 @@ export async function updateTaskSubtasks(taskId: string, subtasks: Subtask[]) {
   if (error) throw error;
 }
 
+export async function updateTaskWorkflow(input: UpdateTaskWorkflowInput) {
+  const now = new Date().toISOString();
+  const isPending = input.workflowStatus === "pendente";
+  const payload = {
+    workflow_status: input.workflowStatus,
+    workflow_started_by: isPending ? null : input.userId || null,
+    workflow_started_by_name: isPending ? null : input.userName || null,
+    workflow_started_at: isPending ? null : now,
+    workflow_blocked_reason: input.workflowStatus === "bloqueada" ? input.blockedReason || null : null,
+  };
+
+  const { error } = await supabase.from("tasks").update(payload).eq("id", input.taskId);
+
+  if (error) {
+    if (error.code === "PGRST204") {
+      throw new Error("Campos de status da tarefa ainda nao existem no Supabase. Rode o SQL supabase/task-workflow-status.sql.");
+    }
+
+    throw new Error(error.message || "Erro ao alterar status da tarefa.");
+  }
+}
 export async function updateTaskScheduleOverride(
   taskId: string,
   scheduleOverrideDate: string | null,

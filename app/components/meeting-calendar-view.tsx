@@ -22,24 +22,31 @@ interface MeetingCalendarViewProps {
 
 const weekDays = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
-const meetingEventToneClasses = ['violet', 'blue', 'pink', 'amber', 'emerald', 'cyan', 'orange', 'fuchsia', 'indigo'] as const;
+const meetingEventToneClasses = ['yellow', 'amber', 'orange', 'red', 'pink', 'fuchsia', 'purple', 'violet', 'indigo', 'blue', 'cyan'] as const;
 type MeetingEventTone = typeof meetingEventToneClasses[number];
 const meetingEventFillClassNames: Record<string, string> = {
-  violet: 'bg-violet-500 text-white hover:bg-violet-600',
-  blue: 'bg-blue-600 text-white hover:bg-blue-700',
-  pink: 'bg-rose-500 text-white hover:bg-rose-600',
-  amber: 'bg-amber-300 text-[#172033] hover:bg-amber-400',
-  emerald: 'bg-emerald-400 text-[#06281b] hover:bg-emerald-500',
-  cyan: 'bg-cyan-500 text-white hover:bg-cyan-600',
+  yellow: 'bg-yellow-300 text-yellow-950 hover:bg-yellow-400',
+  amber: 'bg-amber-300 text-amber-950 hover:bg-amber-400',
   orange: 'bg-orange-400 text-orange-950 hover:bg-orange-500',
+  red: 'bg-red-500 text-white hover:bg-red-600',
+  pink: 'bg-rose-500 text-white hover:bg-rose-600',
   fuchsia: 'bg-fuchsia-500 text-white hover:bg-fuchsia-600',
+  purple: 'bg-purple-500 text-white hover:bg-purple-600',
+  violet: 'bg-violet-500 text-white hover:bg-violet-600',
   indigo: 'bg-indigo-500 text-white hover:bg-indigo-600',
+  blue: 'bg-blue-600 text-white hover:bg-blue-700',
+  cyan: 'bg-cyan-500 text-white hover:bg-cyan-600',
   done: 'bg-emerald-400 text-emerald-950/80 hover:bg-emerald-500',
-  google: 'bg-green-200 text-green-950 hover:bg-green-300',
+  google: 'bg-sky-200 text-sky-950 hover:bg-sky-300',
 };
 
 function isMeetingEventTone(value: string): value is MeetingEventTone {
   return meetingEventToneClasses.includes(value as MeetingEventTone);
+}
+
+function getStableMeetingEventTone(value: string, index = 0) {
+  const seed = Array.from(value).reduce((total, char) => total + char.charCodeAt(0), index);
+  return meetingEventToneClasses[Math.abs(seed) % meetingEventToneClasses.length];
 }
 
 function randomMeetingEventTone() {
@@ -358,6 +365,7 @@ export function MeetingCalendarView({
   const getStoredMeetingTone = (task: ProcessedTask) => {
     const match = task.notes?.match(/Cor:\s*([a-z-]+)/i);
     const tone = match?.[1]?.toLowerCase() || '';
+    if (tone === 'emerald' || tone === 'green') return 'cyan';
     return isMeetingEventTone(tone) ? tone : '';
   };
 
@@ -366,8 +374,7 @@ export function MeetingCalendarView({
     const storedTone = getStoredMeetingTone(task);
     if (storedTone) return storedTone;
 
-    const seed = Array.from(task.id || task.title).reduce((total, char) => total + char.charCodeAt(0), index);
-    return meetingEventToneClasses[Math.abs(seed) % meetingEventToneClasses.length];
+    return getStableMeetingEventTone(task.id || task.title, index);
   };
 
   const isMeetingCompleted = (task: ProcessedTask) => task.isDoneToday;
@@ -573,9 +580,9 @@ export function MeetingCalendarView({
   };
 
   return (
-    <main className="mx-auto flex h-[calc(100dvh-4rem)] max-w-[1760px] flex-col overflow-hidden px-2 py-2 sm:px-4">
+    <main className="mx-auto flex h-[calc(100dvh-5rem)] max-w-[1760px] flex-col overflow-hidden px-2 py-2 pb-20 sm:h-[calc(100dvh-4rem)] sm:px-4 sm:pb-2">
       <div className="hidden">
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-black uppercase tracking-tight text-slate-900 sm:text-base">
             {monthLabel(visibleMonth)}
           </p>
@@ -723,7 +730,7 @@ export function MeetingCalendarView({
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[22px] border border-slate-200 bg-white shadow-[0_18px_48px_rgba(15,23,42,0.10)] sm:rounded-[28px]">
         <div className="shrink-0 border-b border-slate-200 bg-slate-50 px-3 py-2">
           <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <h2 className="truncate text-base font-black uppercase italic tracking-tighter text-slate-900 sm:text-xl">
                 {monthLabel(visibleMonth)}
               </h2>
@@ -833,7 +840,7 @@ export function MeetingCalendarView({
                           const segmentTop = itemCount === 1 ? 50 : itemIndex * segmentHeight;
                           const tone = item.type === 'task'
                             ? getMeetingEventTone(item.task, itemIndex)
-                            : 'google';
+                            : getStableMeetingEventTone(item.event.id || item.event.summary || item.id, itemIndex);
                           const fillClassName = meetingEventFillClassNames[tone] || meetingEventFillClassNames.blue;
 
                           if (item.type === 'google') {
@@ -903,9 +910,9 @@ export function MeetingCalendarView({
           })}
         </div>
 
-        <div className="md:hidden divide-y-2 divide-slate-100">
+        <div className="min-h-0 flex-1 divide-y-2 divide-slate-100 overflow-y-auto md:hidden">
           {monthTasks.length === 0 && googleEvents.length === 0 ? (
-            <div className="p-8 text-center text-xs font-black uppercase tracking-widest text-slate-300">
+            <div className="flex min-h-[260px] items-center justify-center p-8 text-center text-xs font-black uppercase tracking-widest text-slate-300">
               Nenhuma reunião neste mês
             </div>
           ) : (
@@ -914,21 +921,21 @@ export function MeetingCalendarView({
               const completed = isMeetingCompleted(task);
 
               return (
-              <div key={task.id} className={`w-full p-5 flex gap-4 transition-all ${completed ? 'bg-emerald-50/70 hover:bg-emerald-50' : 'hover:bg-blue-50'}`}>
-                <div className={`w-14 h-14 rounded-2xl text-white flex flex-col items-center justify-center shrink-0 ${completed ? 'bg-emerald-600' : 'bg-blue-600'}`}>
+              <div key={task.id} className={`flex w-full gap-3 p-4 transition-all ${completed ? 'bg-emerald-50/70 hover:bg-emerald-50' : 'hover:bg-blue-50'}`}>
+                <div className={`flex h-14 w-14 shrink-0 flex-col items-center justify-center rounded-2xl text-white ${completed ? 'bg-emerald-600' : 'bg-blue-600'}`}>
                   <span className="text-lg font-black">{new Date(`${task.due_date || task.nextOcc}T00:00:00`).getDate()}</span>
                   <span className="text-[8px] font-black uppercase">
                     {new Date(`${task.due_date || task.nextOcc}T00:00:00`).toLocaleDateString('pt-BR', { month: 'short' })}
                   </span>
                 </div>
                 <div className="min-w-0 flex-1">
-                  <button onClick={() => setSelectedMeeting(task)} className="text-left">
+                  <button onClick={() => setSelectedMeeting(task)} className="block w-full text-left">
                     <div className="flex items-start gap-2">
-                      <h3 className={`font-black uppercase leading-tight ${completed ? 'text-emerald-800/65' : 'text-slate-900'}`}>{task.title}</h3>
+                      <h3 className={`line-clamp-2 text-sm font-black uppercase leading-tight ${completed ? 'text-emerald-800/65' : 'text-slate-900'}`}>{task.title}</h3>
                       {completed && <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-emerald-600" />}
                     </div>
                   </button>
-                  <p className={`text-[10px] font-bold uppercase mt-1 ${completed ? 'text-emerald-600/70' : 'text-slate-400'}`}>
+                  <p className={`mt-1 truncate text-[10px] font-bold uppercase ${completed ? 'text-emerald-600/70' : 'text-slate-400'}`}>
                     {getMeetingTime(task)} • {getAssigneeName(task)} • {task.sector}
                   </p>
                   {task.notes && <p className={`text-xs font-bold mt-2 line-clamp-2 ${completed ? 'text-emerald-700/70' : 'text-slate-500'}`}>{task.notes}</p>}
@@ -940,17 +947,17 @@ export function MeetingCalendarView({
               const eventDate = event.start?.date || event.start?.dateTime?.slice(0, 10) || toISODate(new Date());
 
               return (
-                <div key={event.id} className="w-full p-5 text-left flex gap-4 hover:bg-green-50 transition-all">
-                  <div className="w-14 h-14 rounded-2xl bg-green-600 text-white flex flex-col items-center justify-center shrink-0">
+                <div key={event.id} className="flex w-full gap-3 p-4 text-left transition-all hover:bg-green-50">
+                  <div className="flex h-14 w-14 shrink-0 flex-col items-center justify-center rounded-2xl bg-green-600 text-white">
                     <span className="text-lg font-black">{new Date(`${eventDate}T00:00:00`).getDate()}</span>
                     <span className="text-[8px] font-black uppercase">
                       {new Date(`${eventDate}T00:00:00`).toLocaleDateString('pt-BR', { month: 'short' })}
                     </span>
                   </div>
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                     <div className="text-[8px] font-black uppercase text-green-600 mb-1">Google Calendar</div>
                     <a href={event.htmlLink} target="_blank" rel="noreferrer" className="inline-flex items-start gap-2">
-                      <h3 className="font-black uppercase text-slate-900 leading-tight">{event.summary || 'Evento Google'}</h3>
+                      <h3 className="line-clamp-2 text-sm font-black uppercase leading-tight text-slate-900">{event.summary || 'Evento Google'}</h3>
                       <ExternalLink size={14} className="text-green-600 shrink-0 mt-0.5" />
                     </a>
                     <p className="text-[10px] font-bold uppercase text-slate-400 mt-1">
@@ -984,7 +991,7 @@ export function MeetingCalendarView({
             onMouseDown={(event) => event.stopPropagation()}
           >
             <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-6 py-5">
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1">
                 <div className="mb-3 flex items-center gap-2">
                   <span className={`h-3 w-3 rounded-full ${isMeetingCompleted(selectedMeetingDetails) ? 'bg-emerald-500' : 'bg-blue-500'}`} />
                   <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">

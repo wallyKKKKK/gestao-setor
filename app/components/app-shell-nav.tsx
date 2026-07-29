@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
+  BadgePercent,
   Bell,
   CalendarDays,
   ClipboardList,
@@ -64,6 +65,7 @@ const SECTION_NAV_META: Record<AppSection, { icon: LucideIcon; iconClassName: st
   COMPRAS_IA: { icon: ShoppingCart, iconClassName: 'bg-emerald-600 text-white' },
   CADASTROS: { icon: Database, iconClassName: 'bg-slate-700 text-white' },
   PRECIFICACAO: { icon: Tags, iconClassName: 'bg-indigo-600 text-white' },
+  PRE_VENCIDOS: { icon: BadgePercent, iconClassName: 'bg-amber-500 text-white' },
   PRAZOS: { icon: Clock3, iconClassName: 'bg-emerald-600 text-white' },
   TRANSPORTE: { icon: Truck, iconClassName: 'bg-blue-600 text-white' },
   BALACUBACO: { icon: Shuffle, iconClassName: 'bg-violet-600 text-white' },

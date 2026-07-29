@@ -6,6 +6,7 @@ export interface Subtask {
 }
 
 export type TaskPriority = "alta" | "normal" | "baixa";
+export type TaskWorkflowStatus = "pendente" | "em_andamento" | "bloqueada" | "concluida";
 
 export interface Task {
   id: string;
@@ -28,6 +29,11 @@ export interface Task {
   schedule_override_date: string | null;
   schedule_override_type: "advanced" | "postponed" | null;
   priority: TaskPriority;
+  workflow_status: TaskWorkflowStatus;
+  workflow_started_by: string | null;
+  workflow_started_by_name: string | null;
+  workflow_started_at: string | null;
+  workflow_blocked_reason: string | null;
   lastOcc?: string;
   nextOcc?: string;
   isDoneToday?: boolean;
@@ -105,6 +111,7 @@ export interface PricingProduct {
   month_end_price: number;
   competitor_prices: Record<string, number>;
   store_prices: Record<string, number>;
+  promotion_group: string;
   is_active: boolean;
   created_at?: string;
   updated_at?: string;
@@ -126,6 +133,60 @@ export interface PricingBranch {
   updated_at?: string;
 }
 
+
+export type ExpiringRuleScopeType = "product" | "manufacturer" | "line" | "department" | "category" | "classification";
+export type ExpiringDiscountType = "percent" | "fixed_price";
+
+export interface ExpiringInventoryItem {
+  id: string;
+  row_key: string;
+  branch_code: string;
+  branch_name: string;
+  item_status: string;
+  description: string;
+  ean: string;
+  lot: string;
+  initial_quantity: number;
+  moved_quantity: number;
+  balance_quantity: number;
+  current_stock: number;
+  days_to_expire: number;
+  manufacture_date: string | null;
+  expiration_date: string | null;
+  manufacturer: string;
+  classification_path: string;
+  line: string;
+  department: string;
+  category: string;
+  abc_quantity: string;
+  abc_value: string;
+  imported_user: string;
+  included_at: string | null;
+  monthly_average: number;
+  purchase_demand_30d: number;
+  source_file: string | null;
+  imported_by: string | null;
+  imported_at: string;
+  is_active: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface ExpiringDiscountRule {
+  id: string;
+  name: string;
+  scope_type: ExpiringRuleScopeType;
+  scope_value: string;
+  discount_type: ExpiringDiscountType;
+  discount_value: number;
+  min_days_to_expire: number;
+  max_days_to_expire: number;
+  priority: number;
+  is_active: boolean;
+  created_by: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
 export interface SupplierPaymentTerm {
   id: string;
   supplier_name: string;
@@ -316,4 +377,5 @@ export interface TaskItemProps {
   onDelete: (taskId: string) => void;
   canDelete: boolean;
   onScheduleOverride: (task: ProcessedTask, action: "advance" | "postpone" | "clear") => void;
+  onWorkflowChange: (task: ProcessedTask, status: TaskWorkflowStatus, blockedReason?: string | null) => void;
 }

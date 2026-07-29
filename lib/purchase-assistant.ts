@@ -2,7 +2,7 @@ import { getSupabaseAdmin } from "@/lib/supabase-admin";
 import { parseLocaleNumber } from "@/lib/number";
 import type { PricingProduct, PurchaseAssistantImportRow, ReallocationProduct, ReallocationStockItem, SupplierCatalogItem, SupplierPaymentTerm } from "@/lib/types";
 
-const PRICING_PRODUCT_SELECT = "id,ean,description,brand,purchase_price,sell_in_value,sell_in_mode,sell_out_value,sell_out_mode,trade_value,trade_mode,sale_price,baby_wednesday_price,month_end_price,competitor_prices,store_prices,is_active,created_at,updated_at";
+const PRICING_PRODUCT_SELECT = "id,ean,description,brand,purchase_price,sell_in_value,sell_in_mode,sell_out_value,sell_out_mode,trade_value,trade_mode,sale_price,baby_wednesday_price,month_end_price,competitor_prices,store_prices,promotion_group,is_active,created_at,updated_at";
 const REALLOCATION_PRODUCT_SELECT = "id,erp_code,ean,description,manufacturer,classification,search_text,source_file,imported_at,created_at,updated_at";
 const REALLOCATION_STOCK_ITEM_SELECT = "id,snapshot_id,store_code,store_name,ean,erp_code,product_description,stock,confirmed_stock,monthly_avg_sales,stock_days,curve,confirmed_purchase,confirmed_transfer,last_sale_days,last_purchase_days,last_purchase_supplier,need_type,rupture_sales,supplied_percent,min_stock,max_stock,need_cost,created_at";
 const SUPPLIER_CATALOG_ITEM_SELECT = "id,supplier_name,source_system,source_file,row_key,ean,supplier_sku,description,manufacturer,category,delivery_type,available_stock,price_nf,list_price,discount_percent,st_value,minimum_quantity,offer_type,offer_valid_until,is_active,imported_by,imported_at,created_at,updated_at";
@@ -668,6 +668,7 @@ async function loadContext(message: string) {
         month_end_price: 0,
         competitor_prices: {},
         store_prices: {},
+        promotion_group: "",
         is_active: true,
       })),
   ].slice(0, 12);

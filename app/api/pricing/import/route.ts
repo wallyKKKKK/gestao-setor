@@ -19,6 +19,7 @@ const CITY_BRANCH_CODES: Record<string, string[]> = {
   ITAITUBA: ["12", "13"],
   CAMETA: ["04"],
   "QUATRO BOCAS": ["10"],
+  "4 BOCAS": ["10"],
   PORTEL: ["22"],
 };
 
@@ -46,6 +47,7 @@ type ImportedProduct = {
   month_end_price: number;
   competitor_prices: Record<string, number>;
   store_prices: Record<string, number>;
+  promotion_group: string;
   is_active: boolean;
 };
 
@@ -236,6 +238,18 @@ function getCell(row: Array<string | number>, headers: Map<string, number>, head
   return index === undefined ? "" : row[index];
 }
 
+function firstCell(row: Array<string | number>, headers: Map<string, number>, names: string[]) {
+  for (const name of names) {
+    const value = getCell(row, headers, name);
+    if (String(value || "").trim()) return value;
+  }
+  return "";
+}
+
+function defaultPromotionGroup(fileName: string) {
+  return normalizeKey(String(fileName || "").replace(/\.[^.]+$/, "").replace(/\s*\(\d+\)\s*$/, ""));
+}
+
 function modeForValue(): DiscountMode {
   return "currency";
 }
@@ -244,7 +258,7 @@ function branchCodesForSheet(sheetName: string) {
   return CITY_BRANCH_CODES[normalizeKey(sheetName)] || [];
 }
 
-function parseProductsFromSheet(rows: Array<Array<string | number>>, sheetName: string) {
+function parseProductsFromSheet(rows: Array<Array<string | number>>, sheetName: string, fileName: string) {
   const headerRow = rows.find((row) => row.some((cell) => normalizeHeader(cell) === "BARRAS"));
 
   if (!headerRow) return [];
@@ -253,6 +267,7 @@ function parseProductsFromSheet(rows: Array<Array<string | number>>, sheetName: 
   headerRow.forEach((cell, index) => headers.set(normalizeHeader(cell), index));
   const headerIndex = rows.indexOf(headerRow);
   const branchCodes = branchCodesForSheet(sheetName);
+  const filePromotionGroup = defaultPromotionGroup(fileName);
 
   return rows.slice(headerIndex + 1).map((row) => {
     const ean = String(getCell(row, headers, "BARRAS") || "").replace(/\.0$/, "").trim();
@@ -267,6 +282,7 @@ function parseProductsFromSheet(rows: Array<Array<string | number>>, sheetName: 
     const sellOut = numeric(getCell(row, headers, "Sell out"));
     const trade = numeric(getCell(row, headers, "Trade"));
     const salePrice = numeric(getCell(row, headers, "Novo Preco"));
+    const promotionGroup = normalizeKey(firstCell(row, headers, ["GRUPO", "GRUPO PROMOCAO", "GRUPO PROMOÇÃO", "PROMOCAO", "PROMOÇÃO", "CAMPANHA"]) || filePromotionGroup);
     const store_prices = Object.fromEntries(
       branchCodes
         .map((code): [string, number] => [code, salePrice])
@@ -289,6 +305,7 @@ function parseProductsFromSheet(rows: Array<Array<string | number>>, sheetName: 
       month_end_price: numeric(getCell(row, headers, "Fecha mes")),
       competitor_prices,
       store_prices,
+      promotion_group: promotionGroup,
       is_active: true,
     };
   }).filter(Boolean) as ImportedProduct[];
@@ -320,7 +337,7 @@ export async function POST(request: Request) {
       if (!sheetXml) continue;
 
       const rows = parseSheetRows(sheetXml, sharedStrings);
-      const sheetProducts = parseProductsFromSheet(rows, sheet.name);
+      const sheetProducts = parseProductsFromSheet(rows, sheet.name, file.name);
 
       for (const product of sheetProducts) {
         const existing = productsByEan.get(product.ean);
@@ -330,6 +347,7 @@ export async function POST(request: Request) {
         }
 
         existing.store_prices = { ...existing.store_prices, ...product.store_prices };
+        if (!existing.promotion_group && product.promotion_group) existing.promotion_group = product.promotion_group;
       }
     }
 

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { User as SupabaseUser } from '@supabase/supabase-js';
 import { TaskItem } from '@/app/components/task-item';
-import type { ProcessedTask, Profile, UserRole } from '@/lib/types';
+import type { ProcessedTask, Profile, TaskWorkflowStatus, UserRole } from '@/lib/types';
 
 interface ExitingTask {
   task: ProcessedTask;
@@ -28,6 +28,7 @@ interface TaskListViewProps {
   onDelete: (taskId: string) => void;
   canDeleteTasks: boolean;
   onScheduleOverride: (task: ProcessedTask, action: 'advance' | 'postpone' | 'clear') => void;
+  onWorkflowChange: (task: ProcessedTask, status: TaskWorkflowStatus, blockedReason?: string | null) => void;
 }
 
 export function TaskListView({
@@ -44,6 +45,7 @@ export function TaskListView({
   onDelete,
   canDeleteTasks,
   onScheduleOverride,
+  onWorkflowChange,
 }: TaskListViewProps) {
   const [exitingTasks, setExitingTasks] = useState<Record<string, ExitingTask>>({});
   const [hiddenCompletedTasks, setHiddenCompletedTasks] = useState<Record<string, { tab: string }>>({});
@@ -105,7 +107,7 @@ export function TaskListView({
   };
 
   return (
-    <div className="mx-auto max-w-[900px] space-y-5 pt-12">
+    <div className="mx-auto w-full max-w-[1180px] space-y-5 px-2 pt-12 sm:px-4">
       {displayTasks.map((task) => {
         const isExiting = exitingTasks[task.id]?.tab === activeTab;
 
@@ -129,6 +131,7 @@ export function TaskListView({
               onDelete={onDelete}
               canDelete={canDeleteTasks}
               onScheduleOverride={onScheduleOverride}
+              onWorkflowChange={onWorkflowChange}
             />
           </div>
         );

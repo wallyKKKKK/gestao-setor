@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
-import { AlertTriangle, BarChart3, Building2, Check, Download, Eye, EyeOff, FileSpreadsheet, Filter, FilterX, PackagePlus, RefreshCw, Save, Search, Tags, Trash2, X } from 'lucide-react';
+import { AlertTriangle, BarChart3, Building2, Check, Download, Edit3, Eye, EyeOff, FileSpreadsheet, Filter, FilterX, PackagePlus, RefreshCw, Save, Search, Tags, Trash2, X } from 'lucide-react';
 import {
   deletePricingBranch,
   fetchPricingBranches,
@@ -99,6 +99,7 @@ const blankProduct: PricingProductInput = {
   month_end_price: 0,
   competitor_prices: Object.fromEntries(COMPETITORS.map((item) => [item, 0])),
   store_prices: {},
+  promotion_group: '',
   is_active: true,
 };
 
@@ -163,6 +164,8 @@ interface PricingProductGroup {
   classification: string;
   brands: string[];
   classifications: string[];
+  promotionGroup: string;
+  promotionGroups: string[];
   products: PricingProduct[];
   primaryProduct: PricingProduct;
   eans: string[];
@@ -361,6 +364,8 @@ export function PricingManager() {
   const [departmentFilters, setDepartmentFilters] = useState<string[]>([]);
   const [categoryFilters, setCategoryFilters] = useState<string[]>([]);
   const [branchFilters, setBranchFilters] = useState<string[]>([]);
+  const [promotionGroupFilters, setPromotionGroupFilters] = useState<string[]>([]);
+  const [activeBranchCode, setActiveBranchCode] = useState('');
   const [visibleColumns, setVisibleColumns] = useState<string[]>(DEFAULT_VISIBLE_COLUMNS);
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
   const [showBranches, setShowBranches] = useState(false);
@@ -512,6 +517,7 @@ export function PricingManager() {
     ...catalogProducts.map((item) => item.manufacturer).filter(Boolean),
     ...catalogManufacturers,
   ]), [catalogManufacturers, catalogProducts, products]);
+  const promotionGroups = useMemo(() => canonicalizeAttributeOptions(products.map((item) => item.promotion_group || '').filter(Boolean)), [products]);
   const classifications = useMemo(() => canonicalizeAttributeOptions([
     ...catalogProducts.map((item) => item.classification).filter(Boolean),
     ...catalogClassifications,
@@ -602,6 +608,8 @@ export function PricingManager() {
   }, [mergeCatalogProducts, productFilterInput, productLaunchSearch]);
 
   const activeBranches = useMemo(() => branches.filter((branch) => branch.is_active), [branches]);
+  const selectedBranch = useMemo(() => activeBranches.find((branch) => branch.code === activeBranchCode) || null, [activeBranchCode, activeBranches]);
+  const displayPrice = useCallback((product: PricingProduct) => (activeBranchCode ? Number(product.store_prices?.[activeBranchCode] || 0) : product.sale_price), [activeBranchCode]);
   const catalogByEan = useMemo(() => new Map(catalogProducts.filter((item) => item.ean).map((item) => [item.ean, item])), [catalogProducts]);
   const catalogByDescription = useMemo(() => new Map(catalogProducts.map((item) => [normalizeKey(item.description), item])), [catalogProducts]);
   const catalogItemsByDescription = useMemo(() => {
@@ -646,6 +654,7 @@ export function PricingManager() {
         month_end_price: 0,
         competitor_prices: Object.fromEntries(COMPETITORS.map((item) => [item, 0])),
         store_prices: {},
+        promotion_group: '',
         is_active: true,
       }));
 
@@ -666,6 +675,7 @@ export function PricingManager() {
       const erpCodes = new Set(existing?.erpCodes || []);
       const brandSet = new Set(existing?.brands || []);
       const classifications = new Set(existing?.classifications || []);
+      const promotionGroups = new Set(existing?.promotionGroups || []);
       const descriptions = new Set(existing?.descriptions || []);
 
       if (master.ean) eans.add(master.ean);
@@ -676,6 +686,7 @@ export function PricingManager() {
       if (master.brand) brandSet.add(master.brand);
       if (product.brand) brandSet.add(product.brand);
       if (master.classification) classifications.add(master.classification);
+      if (product.promotion_group) promotionGroups.add(product.promotion_group);
       if (master.description) descriptions.add(master.description);
       if (product.description) descriptions.add(product.description);
 
@@ -690,6 +701,7 @@ export function PricingManager() {
       if (!existing) {
         const brandList = Array.from(new Set(Array.from(brandSet).map((value) => canonicalAttribute(value, brands)))).sort();
         const classificationList = Array.from(classifications).sort();
+        const promotionGroupList = Array.from(promotionGroups).sort();
         groups.set(key, {
           id: key,
           description: familyDescription,
@@ -698,6 +710,8 @@ export function PricingManager() {
           classification: classificationList[0] || master.classification,
           brands: brandList,
           classifications: classificationList,
+          promotionGroup: promotionGroupList[0] || product.promotion_group || '',
+          promotionGroups: promotionGroupList,
           products: [product],
           primaryProduct: product,
           eans: Array.from(eans).sort(),
@@ -709,6 +723,7 @@ export function PricingManager() {
       const shouldPromote = existing.primaryProduct.id.startsWith('catalog:') && !product.id.startsWith('catalog:');
       const brandList = Array.from(new Set(Array.from(brandSet).map((value) => canonicalAttribute(value, brands)))).sort();
       const classificationList = Array.from(classifications).sort();
+      const promotionGroupList = Array.from(promotionGroups).sort();
       groups.set(key, {
         ...existing,
         brand: existing.brand || brandList[0] || master.brand || product.brand,
@@ -716,6 +731,8 @@ export function PricingManager() {
         descriptions: Array.from(descriptions).sort(),
         brands: brandList,
         classifications: classificationList,
+        promotionGroup: existing.promotionGroup || promotionGroupList[0] || product.promotion_group || '',
+        promotionGroups: promotionGroupList,
         products: [...existing.products, product],
         primaryProduct: shouldPromote ? product : existing.primaryProduct,
         eans: Array.from(eans).sort(),
@@ -1011,6 +1028,8 @@ export function PricingManager() {
       const product = matchingStatusProducts[0];
       if (selectedProductFilterSet.size > 0 && !selectedProductFilterSet.has(group.id)) return false;
       if (!includesNormalized(group.brands.length ? group.brands : [group.brand], brandFilters)) return false;
+      if (!includesNormalized(group.promotionGroups.length ? group.promotionGroups : [group.promotionGroup], promotionGroupFilters)) return false;
+      if (branchFilters.length > 0 && !matchingStatusProducts.some((item) => branchFilters.some((code) => Number(item.store_prices?.[code] || 0) > 0))) return false;
       if (!classificationMatchesFilters(
         group.classifications.length ? group.classifications : [group.classification],
         lineFilters,
@@ -1022,8 +1041,8 @@ export function PricingManager() {
       if (priceStatusFilter === 'negative' && markup(product) >= 0) return false;
       return true;
     });
-  }, [brandFilters, categoryFilters, departmentFilters, lineFilters, priceStatusFilter, productGroups, productsForActiveFilter, selectedProductFilterSet]);
-  const hasPriceFilters = productFilterIds.length > 0 || brandFilters.length > 0 || lineFilters.length > 0 || departmentFilters.length > 0 || categoryFilters.length > 0 || branchFilters.length > 0 || priceStatusFilter !== 'all' || activeStatusFilter !== 'active';
+  }, [brandFilters, branchFilters, categoryFilters, departmentFilters, lineFilters, priceStatusFilter, productGroups, productsForActiveFilter, promotionGroupFilters, selectedProductFilterSet]);
+  const hasPriceFilters = productFilterIds.length > 0 || brandFilters.length > 0 || promotionGroupFilters.length > 0 || lineFilters.length > 0 || departmentFilters.length > 0 || categoryFilters.length > 0 || branchFilters.length > 0 || priceStatusFilter !== 'all' || activeStatusFilter !== 'active';
   const visibleProductGroups = useMemo(() => (hasPriceFilters || showPriceResults ? filteredProductGroups : []), [filteredProductGroups, hasPriceFilters, showPriceResults]);
   const visibleProducts = useMemo(() => visibleProductGroups.flatMap(productsForActiveFilter), [productsForActiveFilter, visibleProductGroups]);
   const selectedGroups = useMemo(() => {
@@ -1124,6 +1143,8 @@ export function PricingManager() {
     setProductFilterInput('');
     setProductFilterIds([]);
     setBrandFilters([]);
+    setPromotionGroupFilters([]);
+    setActiveBranchCode('');
     setLineFilters([]);
     setDepartmentFilters([]);
     setCategoryFilters([]);
@@ -1241,6 +1262,7 @@ export function PricingManager() {
             month_end_price: editingProduct.month_end_price,
             competitor_prices: editingProduct.competitor_prices,
             store_prices: applyBranchPrices(baseProduct.store_prices || {}),
+            promotion_group: editingProduct.promotion_group || baseProduct.promotion_group || '',
           });
         }
       }
@@ -1337,23 +1359,24 @@ export function PricingManager() {
     };
     const rows = [
       exportPrice === 'full_table'
-        ? ['BARRAS', 'PRODUTO', ...COMPETITORS, 'Preço', 'Sell in', 'Cálculo', 'Sell out', 'Trade', 'Custo Real', 'Custo Lançado', 'Novo Preço', 'Quarta da Fralda', 'Fecha mês', 'Margem (%)']
+        ? ['BARRAS', 'PRODUTO', 'GRUPO PROMOCAO', ...COMPETITORS, 'Preço', 'Sell in', 'Cálculo', 'Sell out', 'Trade', 'Custo Real', 'Custo Lançado', 'Novo Preço', 'Quarta da Fralda', 'Fecha mês', 'Margem (%)']
         : exportPrice === 'branch_prices'
-          ? ['BARRAS', 'PRODUTO', 'MARCA', ...tableBranches.map((branch) => branch.name)]
-        : ['BARRAS', 'PRODUTO', 'MARCA', selectedLabel],
+          ? ['BARRAS', 'PRODUTO', 'MARCA', 'GRUPO PROMOCAO', ...tableBranches.map((branch) => branch.name)]
+        : ['BARRAS', 'PRODUTO', 'MARCA', 'GRUPO PROMOCAO', selectedLabel],
       ...visibleProducts.map((product) => {
         if (exportPrice === 'branch_prices') {
           return [
             masterProductInfo(product).ean,
             masterProductInfo(product).description,
             masterProductInfo(product).brand,
+            product.promotion_group || '',
             ...tableBranches.map((branch) => String(product.store_prices?.[branch.code] || product.sale_price || 0).replace('.', ',')),
           ];
         }
 
         if (exportPrice !== 'full_table') {
           const master = masterProductInfo(product);
-          return [master.ean, master.description, master.brand, String(selectedValue(product) || 0).replace('.', ',')];
+          return [master.ean, master.description, master.brand, product.promotion_group || '', String(selectedValue(product) || 0).replace('.', ',')];
         }
 
         const calculated = finalPrice(product);
@@ -1361,6 +1384,7 @@ export function PricingManager() {
         return [
           master.ean,
           master.description,
+          product.promotion_group || '',
           ...COMPETITORS.map((competitor) => String(product.competitor_prices?.[competitor] || '').replace('.', ',')),
           String(product.purchase_price).replace('.', ','),
           String(product.sell_in_value || '').replace('.', ','),
@@ -1567,6 +1591,44 @@ export function PricingManager() {
         </div>
       </section>
 
+      {activeBranches.length > 0 && (
+        <div className="mb-3 overflow-hidden rounded-[18px] border border-slate-200 bg-white shadow-sm">
+          <div className="flex items-center gap-2 overflow-x-auto px-3 pt-2">
+            <button
+              type="button"
+              onClick={() => {
+                setActiveBranchCode('');
+                setBranchFilters([]);
+                setShowPriceResults(true);
+              }}
+              className={`relative h-9 shrink-0 rounded-t-xl border px-4 text-[10px] font-black uppercase transition ${!activeBranchCode ? 'border-blue-300 bg-blue-600 text-white shadow-sm' : 'border-slate-200 bg-slate-50 text-slate-500 hover:bg-blue-50 hover:text-blue-700'}`}
+            >
+              Geral
+            </button>
+            {activeBranches.map((branch) => {
+              const active = activeBranchCode === branch.code;
+              return (
+                <button
+                  key={branch.id}
+                  type="button"
+                  onClick={() => {
+                    setActiveBranchCode(branch.code);
+                    setBranchFilters([branch.code]);
+                    setShowPriceResults(true);
+                  }}
+                  className={`relative h-9 max-w-[190px] shrink-0 truncate rounded-t-xl border px-4 text-[10px] font-black uppercase transition ${active ? 'border-blue-300 bg-blue-600 text-white shadow-sm' : 'border-slate-200 bg-slate-50 text-slate-500 hover:bg-blue-50 hover:text-blue-700'}`}
+                  title={`${branch.code} - ${branch.name}`}
+                >
+                  {branch.code} - {branch.name}
+                </button>
+              );
+            })}
+          </div>
+          <div className="border-t border-slate-200 bg-slate-50 px-3 py-2 text-[10px] font-black uppercase text-slate-500">
+            {selectedBranch ? `Visualizando preco da loja ${selectedBranch.code} - ${selectedBranch.name}` : 'Visualizando preco geral. Escolha uma aba para trabalhar preco por loja.'}
+          </div>
+        </div>
+      )}
       <div className="hidden">
         <div className="bg-white border-2 border-slate-100 rounded-2xl p-5">
           <p className="text-[10px] font-black uppercase text-slate-400">Lançamentos exibidos</p>
@@ -1586,7 +1648,7 @@ export function PricingManager() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-2 mb-3 lg:grid-cols-[minmax(190px,1.1fr)_minmax(180px,1fr)_minmax(170px,0.9fr)_minmax(190px,1fr)_minmax(190px,1fr)_minmax(170px,0.9fr)_minmax(210px,1fr)]">
+      <div className="grid grid-cols-1 gap-2 mb-3 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-8">
         <PriceProductFilterBox
           selectedGroups={selectedProductFilterGroups}
           inputValue={productFilterInput}
@@ -1603,6 +1665,13 @@ export function PricingManager() {
           selectedValues={brandFilters}
           onChange={setBrandFilters}
           options={brands.map((brand) => ({ value: brand, label: brand }))}
+        />
+        <MultiCheckboxFilter
+          label="Grupo promo"
+          allLabel="Todos os grupos"
+          selectedValues={promotionGroupFilters}
+          onChange={setPromotionGroupFilters}
+          options={promotionGroups.map((group) => ({ value: group, label: group }))}
         />
         <MultiCheckboxFilter
           label="Linha"
@@ -1676,8 +1745,8 @@ export function PricingManager() {
                     <p className={`text-[9px] font-black uppercase mt-2 ${branch.is_active ? 'text-green-600' : 'text-red-600'}`}>{branch.is_active ? 'Ativa' : 'Inativa'}</p>
                   </div>
                   <div className="flex gap-1">
-                    <button onClick={() => setEditingBranch(branch)} className="p-2 rounded-xl bg-white text-blue-600"><Save size={15} /></button>
-                    <button onClick={() => removeBranch(branch)} className="p-2 rounded-xl bg-white text-red-600"><Trash2 size={15} /></button>
+                    <button onClick={() => setEditingBranch(branch)} className="p-2 text-slate-300 transition hover:text-blue-600" title="Editar filial"><Edit3 size={18} /></button>
+                    <button onClick={() => removeBranch(branch)} className="p-2 text-slate-200 transition hover:text-red-600" title="Excluir filial"><Trash2 size={18} /></button>
                   </div>
                 </div>
               </div>
@@ -1720,7 +1789,7 @@ export function PricingManager() {
               {renderHeader('Trade', 'trade')}
               {renderHeader('Custo Real', 'real_cost')}
               {renderHeader('Custo Lancado', 'launched_cost')}
-              {renderHeader('Novo Preco', 'sale_price')}
+              {renderHeader(selectedBranch ? `Novo Preco ${selectedBranch.code}` : 'Novo Preco', 'sale_price')}
               {renderHeader('Quarta da Fralda', 'baby_wednesday_price')}
               {renderHeader('Fecha mes', 'month_end_price')}
               {showBranchColumns && tableBranches.map((branch) => renderHeader(branch.name, `branch:${branch.code}`, 'branches'))}
@@ -1732,7 +1801,8 @@ export function PricingManager() {
             {visibleProductGroups.map((group, index) => {
               const product = primaryProductForGroup(group);
               const displayedActive = !isGroupHidden(group);
-              const currentMarkup = markup(product);
+              const rowSalePrice = displayPrice(product);
+              const currentMarkup = markup({ ...product, sale_price: rowSalePrice });
               const master = {
                 description: group.description,
               };
@@ -1750,7 +1820,10 @@ export function PricingManager() {
                   <td className="px-4 py-4 text-slate-400">{index + 1}</td>
                   <td className="px-4 py-4 font-black uppercase" title={master.description}>
                     <span className="product-description">{master.description}</span>
-                    {!displayedActive && <span className="mt-1 inline-flex rounded-full bg-slate-200 px-2 py-0.5 text-[9px] font-black uppercase text-slate-500">Inativo</span>}
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {group.promotionGroup && <span className="inline-flex rounded-full bg-blue-50 px-2 py-0.5 text-[9px] font-black uppercase text-blue-700">{group.promotionGroup}</span>}
+                      {!displayedActive && <span className="inline-flex rounded-full bg-slate-200 px-2 py-0.5 text-[9px] font-black uppercase text-slate-500">Inativo</span>}
+                    </div>
                   </td>
                   {showCompetitors && COMPETITORS.map((competitor) => (
                     <td key={competitor} className="px-4 py-4 text-right">{product.competitor_prices?.[competitor] ? money(product.competitor_prices[competitor]) : '-'}</td>
@@ -1762,7 +1835,7 @@ export function PricingManager() {
                   <td className="px-4 py-4 text-right">{product.trade_mode === 'percent' ? `${product.trade_value}%` : money(product.trade_value)}</td>
                   <td className="px-4 py-4 text-right excel-final">{money(finalPrice(product))}</td>
                   <td className="px-4 py-4 text-right excel-final">{money(finalPrice(product))}</td>
-                  <td className="px-4 py-4 text-right excel-sale">{money(product.sale_price)}</td>
+                  <td className="px-4 py-4 text-right excel-sale">{rowSalePrice > 0 ? money(rowSalePrice) : '-'}</td>
                   <td className="px-4 py-4 text-right excel-offer">{money(product.baby_wednesday_price)}</td>
                   <td className="px-4 py-4 text-right excel-offer">{money(product.month_end_price)}</td>
                   {showBranchColumns && tableBranches.map((branch) => (
@@ -1771,13 +1844,13 @@ export function PricingManager() {
                   <td className={`px-4 py-4 text-right ${currentMarkup < 0 ? 'excel-markup-negative' : 'excel-markup-positive'}`}>{currentMarkup.toFixed(2).replace('.', ',')}%</td>
                   <td className="px-4 py-4">
                     <div className="flex justify-end gap-2">
-                      <button onClick={() => { setSelectedGroupIds([group.id]); setProductLaunchSearch(''); setSelectedLaunchBranchCodes(Object.entries(product.store_prices || {}).filter(([, value]) => Number(value || 0) > 0).map(([code]) => code)); setEditingProduct(editableProduct(product)); }} className="p-2 rounded-xl bg-blue-50 text-blue-600"><Save size={16} /></button>
+                      <button onClick={() => { setSelectedGroupIds([group.id]); setProductLaunchSearch(''); setSelectedLaunchBranchCodes(Object.entries(product.store_prices || {}).filter(([, value]) => Number(value || 0) > 0).map(([code]) => code)); setEditingProduct(editableProduct(product)); }} className="p-2 text-slate-300 transition hover:text-blue-600" title="Editar lançamento"><Edit3 size={20} /></button>
                       <button
                         onClick={() => setProductGroupVisible(group, !displayedActive)}
-                        className={`p-2 rounded-xl ${displayedActive ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'}`}
+                        className={`p-2 transition ${displayedActive ? 'text-slate-200 hover:text-red-600' : 'text-slate-300 hover:text-emerald-600'}`}
                         title={displayedActive ? 'Ocultar item' : 'Mostrar item'}
                       >
-                        {displayedActive ? <EyeOff size={16} /> : <RefreshCw size={16} />}
+                        {displayedActive ? <EyeOff size={20} /> : <RefreshCw size={20} />}
                       </button>
                     </div>
                   </td>
@@ -1905,8 +1978,15 @@ export function PricingManager() {
                   </div>
                 )}
               </div>
+              <div className="mb-3 grid grid-cols-1 gap-3 md:grid-cols-[minmax(180px,0.7fr)_1fr]">
+                <PriceInput label="Grupo de promocao" value={editingProduct.promotion_group || ''} onChange={(value) => updateEditing('promotion_group', value.toUpperCase())} text />
+                <div className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                  <p className="text-[9px] font-black uppercase text-slate-400">Uso</p>
+                  <p className="text-[11px] font-bold text-slate-500">Use grupos como FRALDAS TESTE PA, FECHA MES ou CAMPANHA JULHO para filtrar e exportar lotes.</p>
+                </div>
+              </div>
               <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-              <PriceInput label="Preço de compra" value={editingProduct.purchase_price} onChange={(value) => updateEditing('purchase_price', numericValue(value))} />
+              <PriceInput label="Preco de compra" value={editingProduct.purchase_price} onChange={(value) => updateEditing('purchase_price', numericValue(value))} />
               <DiscountInput label="Sell-in" value={editingProduct.sell_in_value} mode={editingProduct.sell_in_mode} onValue={(value) => updateEditing('sell_in_value', numericValue(value))} onMode={(mode) => updateEditing('sell_in_mode', mode)} />
               <DiscountInput label="Sell-out" value={editingProduct.sell_out_value} mode={editingProduct.sell_out_mode} onValue={(value) => updateEditing('sell_out_value', numericValue(value))} onMode={(mode) => updateEditing('sell_out_mode', mode)} />
               <DiscountInput label="Trade" value={editingProduct.trade_value} mode={editingProduct.trade_mode} onValue={(value) => updateEditing('trade_value', numericValue(value))} onMode={(mode) => updateEditing('trade_mode', mode)} />
