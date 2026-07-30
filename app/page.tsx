@@ -128,7 +128,7 @@ function isFreshForBrowserNotification(notification: AppNotification) {
 }
 
 function getMeetingTimeFromNotes(notes: string | null | undefined) {
-  const match = notes?.match(/HorÃƒÂ¡rio:\s*([0-9]{2}:[0-9]{2})/i);
+  const match = notes?.match(/Horário:\s*([0-9]{2}:[0-9]{2})/i);
   return match?.[1] || null;
 }
 
@@ -143,11 +143,11 @@ const SECTION_LABELS: Record<AppSection, string> = {
   INICIO: 'Inicio',
   TAREFAS: 'Tarefas',
   COMPRAS_IA: 'Compras IA',
-  REUNIAO: 'ReuniÃƒÂ£o',
+  REUNIAO: 'Reunião',
   CADASTROS: 'Cadastros',
   ESTOQUE_ERP: 'Estoque ERP',
-  PRECIFICACAO: 'PrecificaÃƒÂ§ÃƒÂ£o',
-  PRE_VENCIDOS: 'PrÃƒÂ©-vencidos',
+  PRECIFICACAO: 'Precificação',
+  PRE_VENCIDOS: 'Pré-vencidos',
   PRAZOS: 'Prazos',
   TRANSPORTE: 'Transporte',
   BALACUBACO: 'Remanejamento Inteligente',
@@ -435,7 +435,7 @@ useEffect(() => {
     document.body.style.overflow = 'unset';
   }
 
-  // Limpeza de seguranÃƒÂ§a caso o componente feche inesperadamente
+  // Limpeza de segurança caso o componente feche inesperadamente
   return () => {
     document.body.style.overflow = 'unset';
   };
@@ -571,7 +571,7 @@ useEffect(() => {
         fetchAnnouncements(),
         fetchInternalNotifications(),
         userRole === 'admin' ? fetchAudit() : Promise.resolve(),
-        activeTab === 'HISTÃ“RICO' ? fetchHistory() : Promise.resolve(),
+        activeTab === 'HISTÓRICO' ? fetchHistory() : Promise.resolve(),
       ]);
       window.dispatchEvent(new CustomEvent('wally:app-refresh'));
     } finally {
@@ -645,7 +645,7 @@ useEffect(() => {
           const isBlocked = data.is_active === false || data.account_status === 'pending' || data.account_status === 'rejected';
 
           if (isBlocked) {
-            alert('Sua conta ainda nÃƒÂ£o foi aprovada ou estÃƒÂ¡ bloqueada. Fale com um administrador.');
+            alert('Sua conta ainda não foi aprovada ou está bloqueada. Fale com um administrador.');
             supabase.auth.signOut().then(() => window.location.reload());
             return;
           }
@@ -701,7 +701,7 @@ useEffect(() => {
 
   useEffect(() => {
     if (!user) return;
-    if (activeSection === 'TAREFAS' && activeTab === 'HISTÃƒâ€œRICO') {
+    if (activeSection === 'TAREFAS' && activeTab === 'HISTÓRICO') {
       queueMicrotask(() => {
         void fetchHistory();
       });
@@ -742,14 +742,14 @@ useEffect(() => {
     setShowEditModal(true);
   }, []);
 
-  // Marca/desmarca dias na criaÃƒÂ§ÃƒÂ£o de nova tarefa
+  // Marca/desmarca dias na criação de nova tarefa
 const toggleDay = (day: string) => {
   setSelectedDays((prev: string[]) => 
     prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day]
   )
 }
 
-// Marca/desmarca dias na ediÃƒÂ§ÃƒÂ£o de tarefa existente
+// Marca/desmarca dias na edição de tarefa existente
 const toggleDayInEdit = (day: string) => {
   if (!editingTask) return;
   const currentDays = editingTask.repeat_days ? editingTask.repeat_days.split(',') : []
@@ -774,7 +774,7 @@ const toggleDayInEdit = (day: string) => {
     try {
       await addAuditLog({
         actorId: user.id,
-        actorName: profile?.full_name || user.email || 'UsuÃƒÂ¡rio',
+        actorName: profile?.full_name || user.email || 'Usuário',
         action,
         entityType,
         entityId,
@@ -811,7 +811,7 @@ const toggleDayInEdit = (day: string) => {
   }
 
   if (category === MARGIN_FLOW_CATEGORY && !canUseMarginFlow) {
-    alert('Fluxo de margens ÃƒÂ© exclusivo do setor de PrecificaÃƒÂ§ÃƒÂ£o.');
+    alert('Fluxo de margens é exclusivo do setor de Precificação.');
     return;
   }
 
@@ -865,7 +865,7 @@ const toggleDayInEdit = (day: string) => {
     fetchTasks(); 
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Erro desconhecido';
-    alert("Erro ao lanÃƒÂ§ar tarefa: " + message);
+    alert("Erro ao lançar tarefa: " + message);
   }
 }
   // Marca ou desmarca a conclusao da tarefa
@@ -901,7 +901,7 @@ const toggleDayInEdit = (day: string) => {
     await addTaskHistory({
       taskId: task.id,
       taskTitle: task.title,
-      userName: profile?.full_name || user.email || 'UsuÃƒÂ¡rio',
+      userName: profile?.full_name || user.email || 'Usuário',
       userId: user.id,
       category: task.category,
       sector: task.sector,
@@ -913,16 +913,16 @@ const toggleDayInEdit = (day: string) => {
     await addAudit(isCurrentlyDone ? 'task_reopened' : 'task_completed', 'task', task.id, task.title, task.sector);
     if (!isCurrentlyDone) {
       const profile = profiles.find(p => p.id === user.id);
-      const actorName = profile?.full_name || user.email || 'AlguÃƒÂ©m';
+      const actorName = profile?.full_name || user.email || 'Alguém';
       await createAppNotification({
         title: `${actorName} concluiu uma tarefa`,
-        body: `${task.title} foi concluÃƒÂ­da no setor ${task.sector}.`,
+        body: `${task.title} foi concluída no setor ${task.sector}.`,
         type: 'task_completed',
         actorId: user.id,
         sector: task.sector,
         entityType: 'task',
         entityId: task.id,
-      }).catch((error) => console.error('Erro ao criar notificaÃƒÂ§ÃƒÂ£o:', error));
+      }).catch((error) => console.error('Erro ao criar notificação:', error));
       fetchInternalNotifications();
     }
   } catch (error) {
@@ -934,7 +934,7 @@ const toggleDayInEdit = (day: string) => {
 
 const deleteTask = useCallback(async (taskId: string) => {
   const taskToDelete = tasks.find((task) => task.id === taskId);
-  const isMeeting = taskToDelete?.category === 'ReuniÃƒÂ£o';
+  const isMeeting = taskToDelete?.category === 'Reunião';
   if (isMeeting ? !permissions.canDeleteMeetings : !permissions.canDeleteTasks) {
     const message = getPermissionDeniedMessage(isMeeting ? 'excluir reunioes' : 'excluir tarefas', 'managerOrAdmin');
     await recordPermissionBlock(isMeeting ? 'Reuniao' : 'Tarefas', isMeeting ? 'excluir reunioes' : 'excluir tarefas', message);
@@ -945,7 +945,7 @@ const deleteTask = useCallback(async (taskId: string) => {
 
   const shouldDeleteGoogleEvent = Boolean(
     taskToDelete?.google_event_id &&
-    confirm('Esta reuniÃƒÂ£o estÃƒÂ¡ vinculada ao Google Calendar. Deseja excluir o evento do Google tambÃƒÂ©m?')
+    confirm('Esta reunião está vinculada ao Google Calendar. Deseja excluir o evento do Google também?')
   );
 
   setTasks(prev => prev.filter(t => t.id !== taskId));
@@ -959,13 +959,13 @@ const deleteTask = useCallback(async (taskId: string) => {
 
       if (!response.ok) {
         const data = await response.json().catch(() => null);
-        alert(data?.error || 'A tarefa serÃƒÂ¡ excluÃƒÂ­da, mas nÃƒÂ£o foi possÃƒÂ­vel excluir o evento do Google Calendar.');
+        alert(data?.error || 'A tarefa será excluída, mas não foi possível excluir o evento do Google Calendar.');
       }
     }
 
     await deleteTaskApi(taskId);
     if (taskToDelete) {
-      await addAudit('task_deleted', taskToDelete.category === 'ReuniÃƒÂ£o' ? 'meeting' : 'task', taskToDelete.id, taskToDelete.title, taskToDelete.sector);
+      await addAudit('task_deleted', taskToDelete.category === 'Reunião' ? 'meeting' : 'task', taskToDelete.id, taskToDelete.title, taskToDelete.sector);
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Erro desconhecido';
@@ -1066,19 +1066,19 @@ const addMeeting = useCallback(async (meeting: CreateMeetingInput) => {
     await createMeeting(meeting);
     await fetchTasks();
     await addAudit('meeting_created', 'meeting', null, meeting.title, meeting.sector, `${meeting.date} ${meeting.time}`);
-    alert('ReuniÃƒÂ£o agendada com sucesso!');
+    alert('Reunião agendada com sucesso!');
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Erro desconhecido';
-    alert('Erro ao agendar reuniÃƒÂ£o: ' + message);
+    alert('Erro ao agendar reunião: ' + message);
   }
 }, [addAudit, fetchTasks]);
 
 const updateMeeting = useCallback(async (task: ProcessedTask, meeting: CreateMeetingInput) => {
   const details = [
-    `HorÃƒÂ¡rio: ${meeting.time}`,
+    `Horário: ${meeting.time}`,
     `Motivo: ${meeting.motive}`,
     meeting.location ? `Local: ${meeting.location}` : null,
-    meeting.notes ? `ObservaÃƒÂ§ÃƒÂµes: ${meeting.notes}` : null,
+    meeting.notes ? `Observações: ${meeting.notes}` : null,
     meeting.tone ? `Cor: ${meeting.tone}` : null,
   ].filter(Boolean).join('\n');
 
@@ -1088,7 +1088,7 @@ const updateMeeting = useCallback(async (task: ProcessedTask, meeting: CreateMee
       title: meeting.title,
       notes: details,
       assignedTo: meeting.assignedTo,
-      category: 'ReuniÃƒÂ£o',
+      category: 'Reunião',
       repeatDays: '',
       repeatInterval: 1,
       subtasks: task.subtasks || [],
@@ -1097,10 +1097,10 @@ const updateMeeting = useCallback(async (task: ProcessedTask, meeting: CreateMee
     });
     await fetchTasks();
     await addAudit('task_updated', 'meeting', task.id, meeting.title, meeting.sector, `${meeting.date} ${meeting.time}`);
-    alert('ReuniÃƒÂ£o atualizada com sucesso!');
+    alert('Reunião atualizada com sucesso!');
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Erro desconhecido';
-    alert('Erro ao atualizar reuniÃƒÂ£o: ' + message);
+    alert('Erro ao atualizar reunião: ' + message);
   }
 }, [addAudit, fetchTasks]);
 
@@ -1120,7 +1120,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
     await addAudit(isCurrentlyDone ? 'task_reopened' : 'task_completed', 'meeting', task.id, task.title, task.sector);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Erro desconhecido';
-    alert('Erro ao salvar reuniÃƒÂ£o: ' + message);
+    alert('Erro ao salvar reunião: ' + message);
     fetchTasks();
   }
 }, [addAudit, fetchTasks, user]);
@@ -1149,7 +1149,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
   }
 
   if (editingTask.category === MARGIN_FLOW_CATEGORY && !canUseMarginFlow) {
-    alert('Fluxo de margens ÃƒÂ© exclusivo do setor de PrecificaÃƒÂ§ÃƒÂ£o.');
+    alert('Fluxo de margens é exclusivo do setor de Precificação.');
     return;
   }
 
@@ -1216,7 +1216,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
 
   const meetingTasks = useMemo(() => {
     return processedTasks.filter((task) => {
-      if (task.category !== 'ReuniÃƒÂ£o') return false;
+      if (task.category !== 'Reunião') return false;
       return userRole === 'admin' || task.sector === userSector;
     });
   }, [processedTasks, userRole, userSector]);
@@ -1234,22 +1234,22 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
       return task.assigned_to === user.id;
     };
     const pendingTodayTasks = processedTasks.filter((task) => {
-      if (!canSeeTask(task) || task.isDoneToday || task.category === 'ReuniÃƒÂ£o') return false;
+      if (!canSeeTask(task) || task.isDoneToday || task.category === 'Reunião') return false;
       return task.lastOcc === today;
     });
     const pendingWorkTasks = processedTasks.filter((task) => {
-      if (!canSeeTask(task) || task.isDoneToday || task.category === 'ReuniÃƒÂ£o') return false;
+      if (!canSeeTask(task) || task.isDoneToday || task.category === 'Reunião') return false;
       return task.lastOcc <= today && task.lastOcc !== '1970-01-01';
     });
     const pendingOneOffTasks = processedTasks
       .filter((task) => {
-        if (!canSeeTask(task) || task.isDoneToday || task.category === 'ReuniÃƒÂ£o' || !task.is_one_off) return false;
+        if (!canSeeTask(task) || task.isDoneToday || task.category === 'Reunião' || !task.is_one_off) return false;
         return task.lastOcc <= today && task.lastOcc !== '1970-01-01';
       })
       .sort((left, right) => left.lastOcc.localeCompare(right.lastOcc));
     const todayMeetings = processedTasks
       .filter((task) => {
-        if (!canSeeTask(task) || task.category !== 'ReuniÃƒÂ£o') return false;
+        if (!canSeeTask(task) || task.category !== 'Reunião') return false;
         const meetingDate = task.due_date || task.lastOcc;
         return meetingDate === today && task.last_done_date !== meetingDate;
       })
@@ -1266,8 +1266,8 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
         id: `daily-morning:${user.id}:${today}`,
         title: `Bom dia, ${userFirstName}`,
         description: pendingTodayTasks.length > 0
-          ? `VocÃƒÂª tem ${pendingTodayTasks.length} tarefa${pendingTodayTasks.length === 1 ? '' : 's'} para hoje. Vamos conferir?`
-          : 'DÃƒÂ¡ uma olhada nas tarefas de hoje para comeÃƒÂ§ar o dia alinhado.',
+          ? `Você tem ${pendingTodayTasks.length} tarefa${pendingTodayTasks.length === 1 ? '' : 's'} para hoje. Vamos conferir?`
+          : 'Dá uma olhada nas tarefas de hoje para começar o dia alinhado.',
         tone: 'blue',
         createdAt: `${today}T08:00:00`,
         section: 'TAREFAS',
@@ -1295,10 +1295,10 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
 
       scheduledNotifications.push({
         id: `daily-meetings:${user.id}:${today}`,
-        title: `${todayMeetings.length} reuniÃƒÂ£o${todayMeetings.length === 1 ? '' : 'ÃƒÂµes'} hoje`,
+        title: `${todayMeetings.length} reunião${todayMeetings.length === 1 ? '' : 'ões'} hoje`,
         description: firstMeetingTime
-          ? `A primeira ÃƒÂ© ${todayMeetings[0].title} ÃƒÂ s ${firstMeetingTime}.`
-          : `Confira a agenda de reuniÃƒÂµes de hoje.`,
+          ? `A primeira é ${todayMeetings[0].title} às ${firstMeetingTime}.`
+          : `Confira a agenda de reuniões de hoje.`,
         tone: 'blue',
         createdAt: `${today}T08:05:00`,
         section: 'REUNIAO',
@@ -1314,7 +1314,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
 
         scheduledNotifications.push({
           id: `meeting-reminder:${user.id}:${meeting.id}:${today}`,
-          title: `ReuniÃƒÂ£o ÃƒÂ s ${meetingTime}`,
+          title: `Reunião às ${meetingTime}`,
           description: meeting.title,
           tone: 'amber',
           createdAt: `${today}T${meetingTime}:00`,
@@ -1326,8 +1326,8 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
     if (notificationPreferences.closingSummary && currentHour >= 17 && pendingWorkTasks.length > 0) {
       scheduledNotifications.push({
         id: `daily-closing:${user.id}:${today}`,
-        title: `${userFirstName}, vocÃƒÂª tem ${pendingWorkTasks.length} pendente${pendingWorkTasks.length === 1 ? '' : 's'}`,
-        description: 'SÃƒÂ£o 17h. Vamos verificar o que ainda falta antes de encerrar?',
+        title: `${userFirstName}, você tem ${pendingWorkTasks.length} pendente${pendingWorkTasks.length === 1 ? '' : 's'}`,
+        description: 'São 17h. Vamos verificar o que ainda falta antes de encerrar?',
         tone: 'amber',
         createdAt: `${today}T17:00:00`,
         section: 'TAREFAS',
@@ -1399,7 +1399,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
     };
     const matchesSelectedUsers = (task: ProcessedTask) => filterUsers.length === 0 || filterUsers.includes(task.assigned_to);
     const visibleTasks = processedTasks.filter((task) => canSeeTask(task) && matchesSelectedUsers(task));
-    const taskItems = visibleTasks.filter((task) => task.category !== 'ReuniÃƒÂ£o');
+    const taskItems = visibleTasks.filter((task) => task.category !== 'Reunião');
     const todayPending = taskItems.filter((task) => !task.isDoneToday && task.lastOcc === today);
     const overduePending = taskItems.filter((task) => !task.isDoneToday && task.lastOcc < today && task.lastOcc !== '1970-01-01');
     const oneOffPending = taskItems.filter((task) => task.is_one_off && !task.isDoneToday && task.lastOcc <= today && task.lastOcc !== '1970-01-01');
@@ -1407,7 +1407,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
     const completedToday = taskItems.filter((task) => task.isDoneToday && task.last_done_date === today).length;
     const todayMeetings = visibleTasks
       .filter((task) => {
-        if (task.category !== 'ReuniÃƒÂ£o') return false;
+        if (task.category !== 'Reunião') return false;
         const meetingDate = task.due_date || task.lastOcc;
         return meetingDate === today && task.last_done_date !== meetingDate;
       })
@@ -1608,29 +1608,29 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
     const items: GlobalSearchItem[] = [
       { id: 'module:INICIO', title: 'Inicio', description: 'Abrir central de modulos', section: 'INICIO', type: 'Modulo', keywords: 'inicio home central modulos aplicativos portal' },
       { id: 'module:TAREFAS', title: 'Tarefas', description: 'Abrir painel operacional de tarefas', section: 'TAREFAS', tab: 'HOJE', type: 'Modulo', keywords: 'tarefas hoje atrasados trade dashboard alertas historico' },
-      { id: 'module:REUNIAO', title: 'ReuniÃƒÂ£o', description: 'Abrir agenda mensal de reuniÃƒÂµes', section: 'REUNIAO', type: 'Modulo', keywords: 'reuniao agenda calendario google eventos' },
+      { id: 'module:REUNIAO', title: 'Reunião', description: 'Abrir agenda mensal de reuniões', section: 'REUNIAO', type: 'Modulo', keywords: 'reuniao agenda calendario google eventos' },
     ];
 
     if (canAccessRegistries) items.push({ id: 'module:CADASTROS', title: 'Cadastros', description: 'Produtos, lojas e fornecedores', section: 'CADASTROS', type: 'Modulo', keywords: 'cadastros produtos lojas fornecedores' });
     if (canAccessErpInventory) items.push({ id: 'module:ESTOQUE_ERP', title: 'Estoque ERP', description: 'Saldo atual e consulta de produtos', section: 'ESTOQUE_ERP', type: 'Modulo', keywords: 'estoque erp saldo atual produtos ean loja mercadinho' });
     if (canAccessPaymentTerms) items.push({ id: 'module:COMPRAS_IA', title: 'Compras IA', description: 'Assistente inteligente para compras', section: 'COMPRAS_IA', type: 'Modulo', keywords: 'compras ia assistente inteligencia artificial fornecedores produtos pedido cotacao' });
     if (canAccessPricing) items.push({ id: 'module:PRE_VENCIDOS', title: 'Pre-vencidos', description: 'Regras e TXT de desconto para validade', section: 'PRE_VENCIDOS', type: 'Modulo', keywords: 'pre vencidos validade desconto regras exportar txt' });
-    if (canAccessPricing) items.push({ id: 'module:PRECIFICACAO', title: 'Price', description: 'NegociaÃƒÂ§ÃƒÂµes, custos e preÃƒÂ§os', section: 'PRECIFICACAO', type: 'Modulo', keywords: 'price precificacao negociacoes custos ofertas precos' });
+    if (canAccessPricing) items.push({ id: 'module:PRECIFICACAO', title: 'Price', description: 'Negociações, custos e preços', section: 'PRECIFICACAO', type: 'Modulo', keywords: 'price precificacao negociacoes custos ofertas precos' });
     if (canAccessPaymentTerms) items.push({ id: 'module:PRAZOS', title: 'Prazos', description: 'Prazos de boleto e regras comerciais', section: 'PRAZOS', type: 'Modulo', keywords: 'prazos fornecedores boleto regras comerciais' });
-    if (canAccessTransport) items.push({ id: 'module:TRANSPORTE', title: 'Transporte', description: 'Controle de dÃƒÂ­vidas de transporte', section: 'TRANSPORTE', type: 'Modulo', keywords: 'transporte dividas cobranca fornecedores credito debito' });
-    if (canAccessReallocation) items.push({ id: 'module:BALACUBACO', title: 'Remanejamento Inteligente', description: 'SugestÃƒÂµes e exportaÃƒÂ§ÃƒÂ£o ERP', section: 'BALACUBACO', type: 'Modulo', keywords: 'remanejamento inteligente sugestoes estoque transferencia balacubaco' });
-    if (userRole === 'admin') items.push({ id: 'module:AUDITORIA', title: 'Auditoria', description: 'HistÃƒÂ³rico de alteraÃƒÂ§ÃƒÂµes do sistema', section: 'AUDITORIA', type: 'Modulo', keywords: 'auditoria historico logs alteracoes' });
+    if (canAccessTransport) items.push({ id: 'module:TRANSPORTE', title: 'Transporte', description: 'Controle de dívidas de transporte', section: 'TRANSPORTE', type: 'Modulo', keywords: 'transporte dividas cobranca fornecedores credito debito' });
+    if (canAccessReallocation) items.push({ id: 'module:BALACUBACO', title: 'Remanejamento Inteligente', description: 'Sugestões e exportação ERP', section: 'BALACUBACO', type: 'Modulo', keywords: 'remanejamento inteligente sugestoes estoque transferencia balacubaco' });
+    if (userRole === 'admin') items.push({ id: 'module:AUDITORIA', title: 'Auditoria', description: 'Histórico de alterações do sistema', section: 'AUDITORIA', type: 'Modulo', keywords: 'auditoria historico logs alteracoes' });
 
     processedTasks.filter(canSeeTask).forEach((task) => {
-      const assignee = profileById.get(task.assigned_to) || 'Sem responsÃƒÂ¡vel';
+      const assignee = profileById.get(task.assigned_to) || 'Sem responsável';
 
-      if (task.category === 'ReuniÃƒÂ£o') {
+      if (task.category === 'Reunião') {
         const meetingTime = getMeetingTimeFromNotes(task.notes);
         const meetingDate = task.due_date || task.lastOcc;
         items.push({
           id: `meeting:${task.id}`,
           title: task.title,
-          description: `${meetingDate}${meetingTime ? ` ÃƒÂ s ${meetingTime}` : ''} Ã¢â‚¬Â¢ ${assignee}`,
+          description: `${meetingDate}${meetingTime ? ` às ${meetingTime}` : ''} • ${assignee}`,
           section: 'REUNIAO',
           type: 'Reuniao',
           keywords: `${task.title} ${task.notes} ${assignee} ${task.sector} ${meetingDate} ${meetingTime || ''}`,
@@ -1649,7 +1649,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
       items.push({
         id: `task:${task.id}`,
         title: task.title,
-        description: `${task.category} Ã¢â‚¬Â¢ ${assignee} Ã¢â‚¬Â¢ ${task.lastOcc === '1970-01-01' ? 'Sem data' : task.lastOcc}`,
+        description: `${task.category} • ${assignee} • ${task.lastOcc === '1970-01-01' ? 'Sem data' : task.lastOcc}`,
         section: 'TAREFAS',
         tab,
         searchTerm: task.title,
@@ -1804,7 +1804,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
               {globalSearchResults.length === 0 ? (
                 <div className="px-5 py-10 text-center">
                   <p className="text-[11px] font-black uppercase tracking-widest text-slate-400">Nada encontrado</p>
-                  <p className="mt-2 text-xs font-bold text-slate-400">Tente buscar por tarefa, reuniÃƒÂ£o, mÃƒÂ³dulo ou aviso.</p>
+                  <p className="mt-2 text-xs font-bold text-slate-400">Tente buscar por tarefa, reunião, módulo ou aviso.</p>
                 </div>
               ) : (
                 <div className="space-y-1">
@@ -1863,7 +1863,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
       onOpenTab={(tab) => setActiveTab(tab)}
       onOpenMeetings={() => setActiveSection('REUNIAO')}
     />
-  ) : activeTab === 'HISTÃƒâ€œRICO' ? (
+  ) : activeTab === 'HISTÓRICO' ? (
     <HistoryTimeline history={history} userRole={userRole} userSector={userSector} />
   ) : activeTab === 'COMUNICADOS' ? (
     <AnnouncementBoard
@@ -1885,7 +1885,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
     /* Aba padrao de tarefas */
     <>
      {/* ----------------------------------------------------------- */}
-{/* Modal flutuante: lanÃƒÂ§ar nova tarefa */}
+{/* Modal flutuante: lançar nova tarefa */}
 {/* ----------------------------------------------------------- */}
 {showCreateBox && (
   <CreateTaskModal
