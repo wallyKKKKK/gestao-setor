@@ -484,6 +484,18 @@ export function PricingManager() {
   }, [loadCatalogAttributes]);
 
   useEffect(() => {
+    const handleRefresh = () => {
+      void loadProducts();
+      void loadBranches();
+      void loadCatalogProducts();
+      void loadCatalogAttributes();
+    };
+
+    window.addEventListener('wally:app-refresh', handleRefresh);
+    return () => window.removeEventListener('wally:app-refresh', handleRefresh);
+  }, [loadBranches, loadCatalogAttributes, loadCatalogProducts, loadProducts]);
+
+  useEffect(() => {
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
 

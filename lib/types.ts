@@ -134,7 +134,7 @@ export interface PricingBranch {
 }
 
 
-export type ExpiringRuleScopeType = "product" | "manufacturer" | "line" | "department" | "category" | "classification";
+export type ExpiringRuleScopeType = "product" | "manufacturer" | "line" | "department" | "category" | "classification" | "validity";
 export type ExpiringDiscountType = "percent" | "fixed_price";
 
 export interface ExpiringInventoryItem {
@@ -186,6 +186,91 @@ export interface ExpiringDiscountRule {
   created_by: string | null;
   created_at?: string;
   updated_at?: string;
+}
+
+export type ErpInventorySnapshotStatus = "active" | "closed" | "expired" | "discarded";
+export type ErpInventoryBranchScope = "single_branch" | "multi_branch";
+export type ErpInventoryMovementType = "import" | "sale" | "purchase" | "transfer_in" | "transfer_out" | "adjustment_in" | "adjustment_out" | "reservation" | "reservation_release" | "return";
+
+export interface ErpInventorySnapshot {
+  id: string;
+  process_key: string;
+  source_module: string;
+  source_file: string | null;
+  sector: string;
+  branch_scope: ErpInventoryBranchScope;
+  status: ErpInventorySnapshotStatus;
+  imported_by: string | null;
+  imported_at: string;
+  expires_at: string | null;
+  notes: string | null;
+}
+
+export interface ErpInventorySnapshotItem {
+  id: string;
+  snapshot_id: string;
+  branch_code: string;
+  branch_name: string;
+  ean: string;
+  erp_code: string | null;
+  product_description: string;
+  manufacturer: string;
+  classification_path: string;
+  line: string;
+  department: string;
+  category: string;
+  stock_quantity: number;
+  confirmed_quantity: number;
+  reserved_quantity: number;
+  monthly_avg_sales: number;
+  daily_avg_sales: number;
+  stock_days: number;
+  curve: string | null;
+  last_sale_days: number;
+  last_purchase_days: number;
+  last_purchase_supplier: string | null;
+  cost_price: number;
+  sale_price: number;
+  min_stock: number;
+  max_stock: number;
+  raw_payload: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface ErpInventoryCurrentItem {
+  id: string;
+  branch_code: string;
+  ean: string;
+  erp_code: string | null;
+  product_description: string;
+  stock_quantity: number;
+  reserved_quantity: number;
+  available_quantity: number;
+  average_cost: number;
+  sale_price: number;
+  last_snapshot_id: string | null;
+  updated_by: string | null;
+  updated_at: string;
+  created_at: string;
+}
+
+export interface ErpInventoryMovement {
+  id: string;
+  movement_type: ErpInventoryMovementType;
+  branch_code: string;
+  ean: string;
+  erp_code: string | null;
+  quantity: number;
+  unit_cost: number;
+  unit_price: number;
+  source_module: string;
+  source_process_id: string | null;
+  source_item_id: string | null;
+  related_branch_code: string | null;
+  document_number: string | null;
+  notes: string | null;
+  created_by: string | null;
+  created_at: string;
 }
 export interface SupplierPaymentTerm {
   id: string;

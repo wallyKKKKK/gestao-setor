@@ -1,5 +1,6 @@
-'use client'
+﻿'use client'
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react'
+import type { CSSProperties } from 'react'
 import dynamic from 'next/dynamic'
 import { AnnouncementBoard } from '@/app/components/announcement-board'
 import { AppSection, AppSidebar } from '@/app/components/app-sidebar'
@@ -9,6 +10,7 @@ import { DashboardView } from '@/app/components/dashboard-view'
 import { EditTaskModal } from '@/app/components/edit-task-modal'
 import { HistoryTimeline } from '@/app/components/history-timeline'
 import { Login } from '@/app/components/login'
+import { ModuleHome } from '@/app/components/module-home'
 import { ProfileModal } from '@/app/components/profile-modal'
 import { PurchaseAssistant } from '@/app/components/purchase-assistant'
 import { SettingsModal } from '@/app/components/settings-modal'
@@ -17,6 +19,7 @@ import { TaskListView } from '@/app/components/task-list-view'
 import { WeeklyTaskScheduleView } from '@/app/components/weekly-task-schedule-view'
 import { showSystemToast } from '@/app/components/system-toast'
 import { NAV_CATEGORIES } from '@/app/constants'
+import { getSectionTheme } from '@/lib/section-theme'
 import { useAnnouncementActions } from '@/app/hooks/use-announcement-actions'
 import { useProfileActions } from '@/app/hooks/use-profile-actions'
 import {
@@ -74,6 +77,7 @@ const MeetingCalendarView = dynamic(() => import('@/app/components/meeting-calen
 const PaymentTermsManager = dynamic(() => import('@/app/components/payment-terms-manager').then((mod) => mod.PaymentTermsManager), { loading: SectionLoader })
 const PricingManager = dynamic(() => import('@/app/components/pricing-manager').then((mod) => mod.PricingManager), { loading: SectionLoader })
 const ExpiringProductsManager = dynamic(() => import('@/app/components/expiring-products-manager').then((mod) => mod.ExpiringProductsManager), { loading: SectionLoader })
+const ErpInventoryManager = dynamic(() => import('@/app/components/erp-inventory-manager').then((mod) => mod.ErpInventoryManager), { loading: SectionLoader })
 const ReallocationManager = dynamic(() => import('@/app/components/reallocation-manager').then((mod) => mod.ReallocationManager), { loading: SectionLoader })
 const RegistrationsManager = dynamic(() => import('@/app/components/registrations-manager').then((mod) => mod.RegistrationsManager), { loading: SectionLoader })
 const TransportDebtManager = dynamic(() => import('@/app/components/transport-debt-manager').then((mod) => mod.TransportDebtManager), { loading: SectionLoader })
@@ -124,7 +128,7 @@ function isFreshForBrowserNotification(notification: AppNotification) {
 }
 
 function getMeetingTimeFromNotes(notes: string | null | undefined) {
-  const match = notes?.match(/Horário:\s*([0-9]{2}:[0-9]{2})/i);
+  const match = notes?.match(/HorÃƒÂ¡rio:\s*([0-9]{2}:[0-9]{2})/i);
   return match?.[1] || null;
 }
 
@@ -136,12 +140,14 @@ function timeToMinutes(time: string | null) {
 }
 
 const SECTION_LABELS: Record<AppSection, string> = {
+  INICIO: 'Inicio',
   TAREFAS: 'Tarefas',
   COMPRAS_IA: 'Compras IA',
-  REUNIAO: 'Reunião',
+  REUNIAO: 'ReuniÃƒÂ£o',
   CADASTROS: 'Cadastros',
-  PRECIFICACAO: 'Precificação',
-  PRE_VENCIDOS: 'Pré-vencidos',
+  ESTOQUE_ERP: 'Estoque ERP',
+  PRECIFICACAO: 'PrecificaÃƒÂ§ÃƒÂ£o',
+  PRE_VENCIDOS: 'PrÃƒÂ©-vencidos',
   PRAZOS: 'Prazos',
   TRANSPORTE: 'Transporte',
   BALACUBACO: 'Remanejamento Inteligente',
@@ -150,7 +156,6 @@ const SECTION_LABELS: Record<AppSection, string> = {
 
 const APP_PREFERENCES_KEY_PREFIX = 'wally-app-preferences';
 const NOTIFICATION_PREFERENCES_KEY_PREFIX = 'wally-notification-preferences';
-const APP_SECTIONS: AppSection[] = ['TAREFAS', 'REUNIAO', 'COMPRAS_IA', 'CADASTROS', 'PRECIFICACAO', 'PRE_VENCIDOS', 'PRAZOS', 'TRANSPORTE', 'BALACUBACO', 'AUDITORIA'];
 const TASK_TABS = NAV_CATEGORIES.map((category) => category.id);
 
 const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
@@ -190,7 +195,6 @@ function readUserAppPreferences(userId: string): UserAppPreferences {
     const parsed = JSON.parse(stored) as UserAppPreferences;
 
     return {
-      activeSection: parsed.activeSection && APP_SECTIONS.includes(parsed.activeSection) ? parsed.activeSection : undefined,
       activeTab: parsed.activeTab && TASK_TABS.includes(parsed.activeTab) ? parsed.activeTab : undefined,
       dashFilter: parsed.dashFilter === 'HOJE' || parsed.dashFilter === 'SEMANAL' ? parsed.dashFilter : undefined,
       filterUsers: Array.isArray(parsed.filterUsers) ? parsed.filterUsers.filter((id) => typeof id === 'string') : undefined,
@@ -246,7 +250,7 @@ export default function App() {
   const browserNotifiedIdsRef = useRef<Set<string>>(new Set())
   const [preferencesReady, setPreferencesReady] = useState(false)
   
-  const [activeSection, setActiveSection] = useState<AppSection>('TAREFAS')
+  const [activeSection, setActiveSection] = useState<AppSection>('INICIO')
   const [activeTab, setActiveTab] = useState('HOJE')
   const [dashFilter, setDashFilter] = useState<'HOJE' | 'SEMANAL'>('HOJE')
   const [filterUsers, setFilterUsers] = useState<string[]>([])
@@ -270,6 +274,7 @@ export default function App() {
   const [viewingTask, setViewingTask] = useState<ProcessedTask | null>(null);
   const [announcements, setAnnouncements] = useState<Announcement[]>([])
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [globalRefreshing, setGlobalRefreshing] = useState(false);
   const [displayDate, setDisplayDate] = useState('DD/MM/YYYY');
   const dateInputRef = useRef<HTMLInputElement>(null);
   const [editDisplayDate, setEditDisplayDate] = useState('DD/MM/YYYY');
@@ -290,7 +295,7 @@ export default function App() {
 
     const preferences = readUserAppPreferences(user.id);
     queueMicrotask(() => {
-      if (preferences.activeSection) setActiveSection(preferences.activeSection);
+      setActiveSection('INICIO');
       if (preferences.activeTab) setActiveTab(preferences.activeTab);
       if (preferences.dashFilter) setDashFilter(preferences.dashFilter);
       if (preferences.filterUsers) setFilterUsers(preferences.filterUsers);
@@ -303,7 +308,6 @@ export default function App() {
     if (!user?.id || !preferencesReady) return;
 
     const preferences: UserAppPreferences = {
-      activeSection,
       activeTab,
       dashFilter,
       filterUsers,
@@ -311,7 +315,7 @@ export default function App() {
     };
 
     window.localStorage.setItem(`${APP_PREFERENCES_KEY_PREFIX}:${user.id}`, JSON.stringify(preferences));
-  }, [activeSection, activeTab, dashFilter, filterUsers, preferencesReady, searchTerm, user?.id]);
+  }, [activeTab, dashFilter, filterUsers, preferencesReady, searchTerm, user?.id]);
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -344,6 +348,47 @@ export default function App() {
     document.documentElement.dataset.theme = theme;
     window.localStorage.setItem('wally-theme', theme);
   }, [theme]);
+  useEffect(() => {
+    const reloadKey = 'wally-chunk-reload-attempt';
+    const chunkErrorPattern = /ChunkLoadError|Loading chunk|Failed to load chunk|failed to fetch dynamically imported module|Importing a module script failed/i;
+
+    const getMessage = (value: unknown) => {
+      if (value instanceof Error) return `${value.name} ${value.message}`;
+      if (typeof value === 'string') return value;
+      if (value && typeof value === 'object' && 'message' in value) {
+        return String((value as { message?: unknown }).message || '');
+      }
+      return '';
+    };
+
+    const reloadOnce = () => {
+      const lastAttempt = Number(window.sessionStorage.getItem(reloadKey) || '0');
+      if (Date.now() - lastAttempt < 10000) return;
+
+      window.sessionStorage.setItem(reloadKey, String(Date.now()));
+      window.location.reload();
+    };
+
+    const handleError = (event: ErrorEvent) => {
+      if (chunkErrorPattern.test(getMessage(event.error)) || chunkErrorPattern.test(getMessage(event.message))) {
+        reloadOnce();
+      }
+    };
+
+    const handleRejection = (event: PromiseRejectionEvent) => {
+      if (chunkErrorPattern.test(getMessage(event.reason))) {
+        reloadOnce();
+      }
+    };
+
+    window.addEventListener('error', handleError);
+    window.addEventListener('unhandledrejection', handleRejection);
+
+    return () => {
+      window.removeEventListener('error', handleError);
+      window.removeEventListener('unhandledrejection', handleRejection);
+    };
+  }, []);
 
   useEffect(() => {
     if (!user?.id) {
@@ -390,7 +435,7 @@ useEffect(() => {
     document.body.style.overflow = 'unset';
   }
 
-  // Limpeza de segurança caso o componente feche inesperadamente
+  // Limpeza de seguranÃƒÂ§a caso o componente feche inesperadamente
   return () => {
     document.body.style.overflow = 'unset';
   };
@@ -514,6 +559,38 @@ useEffect(() => {
     setAppNotifications(data);
   }, []);
 
+  const refreshSystemData = useCallback(async () => {
+    if (!user?.id || globalRefreshing) return;
+
+    setGlobalRefreshing(true);
+    try {
+      await Promise.all([
+        fetchProfiles(),
+        fetchTasks(),
+        fetchMarginRules(),
+        fetchAnnouncements(),
+        fetchInternalNotifications(),
+        userRole === 'admin' ? fetchAudit() : Promise.resolve(),
+        activeTab === 'HISTÃ“RICO' ? fetchHistory() : Promise.resolve(),
+      ]);
+      window.dispatchEvent(new CustomEvent('wally:app-refresh'));
+    } finally {
+      setGlobalRefreshing(false);
+    }
+  }, [
+    activeTab,
+    fetchAnnouncements,
+    fetchAudit,
+    fetchHistory,
+    fetchInternalNotifications,
+    fetchMarginRules,
+    fetchProfiles,
+    fetchTasks,
+    globalRefreshing,
+    user?.id,
+    userRole,
+  ]);
+
   const announcementActions = useAnnouncementActions({
     user,
     userSector,
@@ -568,7 +645,7 @@ useEffect(() => {
           const isBlocked = data.is_active === false || data.account_status === 'pending' || data.account_status === 'rejected';
 
           if (isBlocked) {
-            alert('Sua conta ainda não foi aprovada ou está bloqueada. Fale com um administrador.');
+            alert('Sua conta ainda nÃƒÂ£o foi aprovada ou estÃƒÂ¡ bloqueada. Fale com um administrador.');
             supabase.auth.signOut().then(() => window.location.reload());
             return;
           }
@@ -624,7 +701,7 @@ useEffect(() => {
 
   useEffect(() => {
     if (!user) return;
-    if (activeSection === 'TAREFAS' && activeTab === 'HISTÓRICO') {
+    if (activeSection === 'TAREFAS' && activeTab === 'HISTÃƒâ€œRICO') {
       queueMicrotask(() => {
         void fetchHistory();
       });
@@ -665,14 +742,14 @@ useEffect(() => {
     setShowEditModal(true);
   }, []);
 
-  // Marca/desmarca dias na criação de nova tarefa
+  // Marca/desmarca dias na criaÃƒÂ§ÃƒÂ£o de nova tarefa
 const toggleDay = (day: string) => {
   setSelectedDays((prev: string[]) => 
     prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day]
   )
 }
 
-// Marca/desmarca dias na edição de tarefa existente
+// Marca/desmarca dias na ediÃƒÂ§ÃƒÂ£o de tarefa existente
 const toggleDayInEdit = (day: string) => {
   if (!editingTask) return;
   const currentDays = editingTask.repeat_days ? editingTask.repeat_days.split(',') : []
@@ -697,7 +774,7 @@ const toggleDayInEdit = (day: string) => {
     try {
       await addAuditLog({
         actorId: user.id,
-        actorName: profile?.full_name || user.email || 'Usuário',
+        actorName: profile?.full_name || user.email || 'UsuÃƒÂ¡rio',
         action,
         entityType,
         entityId,
@@ -734,7 +811,7 @@ const toggleDayInEdit = (day: string) => {
   }
 
   if (category === MARGIN_FLOW_CATEGORY && !canUseMarginFlow) {
-    alert('Fluxo de margens é exclusivo do setor de Precificação.');
+    alert('Fluxo de margens ÃƒÂ© exclusivo do setor de PrecificaÃƒÂ§ÃƒÂ£o.');
     return;
   }
 
@@ -788,7 +865,7 @@ const toggleDayInEdit = (day: string) => {
     fetchTasks(); 
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Erro desconhecido';
-    alert("Erro ao lançar tarefa: " + message);
+    alert("Erro ao lanÃƒÂ§ar tarefa: " + message);
   }
 }
   // Marca ou desmarca a conclusao da tarefa
@@ -824,7 +901,7 @@ const toggleDayInEdit = (day: string) => {
     await addTaskHistory({
       taskId: task.id,
       taskTitle: task.title,
-      userName: profile?.full_name || user.email || 'Usuário',
+      userName: profile?.full_name || user.email || 'UsuÃƒÂ¡rio',
       userId: user.id,
       category: task.category,
       sector: task.sector,
@@ -836,16 +913,16 @@ const toggleDayInEdit = (day: string) => {
     await addAudit(isCurrentlyDone ? 'task_reopened' : 'task_completed', 'task', task.id, task.title, task.sector);
     if (!isCurrentlyDone) {
       const profile = profiles.find(p => p.id === user.id);
-      const actorName = profile?.full_name || user.email || 'Alguém';
+      const actorName = profile?.full_name || user.email || 'AlguÃƒÂ©m';
       await createAppNotification({
         title: `${actorName} concluiu uma tarefa`,
-        body: `${task.title} foi concluída no setor ${task.sector}.`,
+        body: `${task.title} foi concluÃƒÂ­da no setor ${task.sector}.`,
         type: 'task_completed',
         actorId: user.id,
         sector: task.sector,
         entityType: 'task',
         entityId: task.id,
-      }).catch((error) => console.error('Erro ao criar notificação:', error));
+      }).catch((error) => console.error('Erro ao criar notificaÃƒÂ§ÃƒÂ£o:', error));
       fetchInternalNotifications();
     }
   } catch (error) {
@@ -857,7 +934,7 @@ const toggleDayInEdit = (day: string) => {
 
 const deleteTask = useCallback(async (taskId: string) => {
   const taskToDelete = tasks.find((task) => task.id === taskId);
-  const isMeeting = taskToDelete?.category === 'Reunião';
+  const isMeeting = taskToDelete?.category === 'ReuniÃƒÂ£o';
   if (isMeeting ? !permissions.canDeleteMeetings : !permissions.canDeleteTasks) {
     const message = getPermissionDeniedMessage(isMeeting ? 'excluir reunioes' : 'excluir tarefas', 'managerOrAdmin');
     await recordPermissionBlock(isMeeting ? 'Reuniao' : 'Tarefas', isMeeting ? 'excluir reunioes' : 'excluir tarefas', message);
@@ -868,7 +945,7 @@ const deleteTask = useCallback(async (taskId: string) => {
 
   const shouldDeleteGoogleEvent = Boolean(
     taskToDelete?.google_event_id &&
-    confirm('Esta reunião está vinculada ao Google Calendar. Deseja excluir o evento do Google também?')
+    confirm('Esta reuniÃƒÂ£o estÃƒÂ¡ vinculada ao Google Calendar. Deseja excluir o evento do Google tambÃƒÂ©m?')
   );
 
   setTasks(prev => prev.filter(t => t.id !== taskId));
@@ -882,13 +959,13 @@ const deleteTask = useCallback(async (taskId: string) => {
 
       if (!response.ok) {
         const data = await response.json().catch(() => null);
-        alert(data?.error || 'A tarefa será excluída, mas não foi possível excluir o evento do Google Calendar.');
+        alert(data?.error || 'A tarefa serÃƒÂ¡ excluÃƒÂ­da, mas nÃƒÂ£o foi possÃƒÂ­vel excluir o evento do Google Calendar.');
       }
     }
 
     await deleteTaskApi(taskId);
     if (taskToDelete) {
-      await addAudit('task_deleted', taskToDelete.category === 'Reunião' ? 'meeting' : 'task', taskToDelete.id, taskToDelete.title, taskToDelete.sector);
+      await addAudit('task_deleted', taskToDelete.category === 'ReuniÃƒÂ£o' ? 'meeting' : 'task', taskToDelete.id, taskToDelete.title, taskToDelete.sector);
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Erro desconhecido';
@@ -942,6 +1019,13 @@ const changeTaskWorkflow = useCallback(async (task: ProcessedTask, workflowStatu
   const actorName = profile?.full_name || user.email || 'Usuario';
   const startedAt = new Date().toISOString();
   const isPending = workflowStatus === 'pendente';
+  const isPausingInProgress = isPending && task.workflow_status === 'em_andamento';
+
+  if (isPausingInProgress && task.workflow_started_by && task.workflow_started_by !== user.id) {
+    const starterName = task.workflow_started_by_name || profiles.find((item) => item.id === task.workflow_started_by)?.full_name || 'quem iniciou';
+    alert(`Somente ${starterName.split(' ')[0] || starterName} pode pausar esta tarefa.`);
+    return;
+  }
 
   setTasks((prevTasks) => prevTasks.map((item) => (
     item.id === task.id
@@ -982,19 +1066,19 @@ const addMeeting = useCallback(async (meeting: CreateMeetingInput) => {
     await createMeeting(meeting);
     await fetchTasks();
     await addAudit('meeting_created', 'meeting', null, meeting.title, meeting.sector, `${meeting.date} ${meeting.time}`);
-    alert('Reunião agendada com sucesso!');
+    alert('ReuniÃƒÂ£o agendada com sucesso!');
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Erro desconhecido';
-    alert('Erro ao agendar reunião: ' + message);
+    alert('Erro ao agendar reuniÃƒÂ£o: ' + message);
   }
 }, [addAudit, fetchTasks]);
 
 const updateMeeting = useCallback(async (task: ProcessedTask, meeting: CreateMeetingInput) => {
   const details = [
-    `Horário: ${meeting.time}`,
+    `HorÃƒÂ¡rio: ${meeting.time}`,
     `Motivo: ${meeting.motive}`,
     meeting.location ? `Local: ${meeting.location}` : null,
-    meeting.notes ? `Observações: ${meeting.notes}` : null,
+    meeting.notes ? `ObservaÃƒÂ§ÃƒÂµes: ${meeting.notes}` : null,
     meeting.tone ? `Cor: ${meeting.tone}` : null,
   ].filter(Boolean).join('\n');
 
@@ -1004,7 +1088,7 @@ const updateMeeting = useCallback(async (task: ProcessedTask, meeting: CreateMee
       title: meeting.title,
       notes: details,
       assignedTo: meeting.assignedTo,
-      category: 'Reunião',
+      category: 'ReuniÃƒÂ£o',
       repeatDays: '',
       repeatInterval: 1,
       subtasks: task.subtasks || [],
@@ -1013,10 +1097,10 @@ const updateMeeting = useCallback(async (task: ProcessedTask, meeting: CreateMee
     });
     await fetchTasks();
     await addAudit('task_updated', 'meeting', task.id, meeting.title, meeting.sector, `${meeting.date} ${meeting.time}`);
-    alert('Reunião atualizada com sucesso!');
+    alert('ReuniÃƒÂ£o atualizada com sucesso!');
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Erro desconhecido';
-    alert('Erro ao atualizar reunião: ' + message);
+    alert('Erro ao atualizar reuniÃƒÂ£o: ' + message);
   }
 }, [addAudit, fetchTasks]);
 
@@ -1036,7 +1120,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
     await addAudit(isCurrentlyDone ? 'task_reopened' : 'task_completed', 'meeting', task.id, task.title, task.sector);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Erro desconhecido';
-    alert('Erro ao salvar reunião: ' + message);
+    alert('Erro ao salvar reuniÃƒÂ£o: ' + message);
     fetchTasks();
   }
 }, [addAudit, fetchTasks, user]);
@@ -1065,7 +1149,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
   }
 
   if (editingTask.category === MARGIN_FLOW_CATEGORY && !canUseMarginFlow) {
-    alert('Fluxo de margens é exclusivo do setor de Precificação.');
+    alert('Fluxo de margens ÃƒÂ© exclusivo do setor de PrecificaÃƒÂ§ÃƒÂ£o.');
     return;
   }
 
@@ -1132,7 +1216,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
 
   const meetingTasks = useMemo(() => {
     return processedTasks.filter((task) => {
-      if (task.category !== 'Reunião') return false;
+      if (task.category !== 'ReuniÃƒÂ£o') return false;
       return userRole === 'admin' || task.sector === userSector;
     });
   }, [processedTasks, userRole, userSector]);
@@ -1150,22 +1234,22 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
       return task.assigned_to === user.id;
     };
     const pendingTodayTasks = processedTasks.filter((task) => {
-      if (!canSeeTask(task) || task.isDoneToday || task.category === 'Reunião') return false;
+      if (!canSeeTask(task) || task.isDoneToday || task.category === 'ReuniÃƒÂ£o') return false;
       return task.lastOcc === today;
     });
     const pendingWorkTasks = processedTasks.filter((task) => {
-      if (!canSeeTask(task) || task.isDoneToday || task.category === 'Reunião') return false;
+      if (!canSeeTask(task) || task.isDoneToday || task.category === 'ReuniÃƒÂ£o') return false;
       return task.lastOcc <= today && task.lastOcc !== '1970-01-01';
     });
     const pendingOneOffTasks = processedTasks
       .filter((task) => {
-        if (!canSeeTask(task) || task.isDoneToday || task.category === 'Reunião' || !task.is_one_off) return false;
+        if (!canSeeTask(task) || task.isDoneToday || task.category === 'ReuniÃƒÂ£o' || !task.is_one_off) return false;
         return task.lastOcc <= today && task.lastOcc !== '1970-01-01';
       })
       .sort((left, right) => left.lastOcc.localeCompare(right.lastOcc));
     const todayMeetings = processedTasks
       .filter((task) => {
-        if (!canSeeTask(task) || task.category !== 'Reunião') return false;
+        if (!canSeeTask(task) || task.category !== 'ReuniÃƒÂ£o') return false;
         const meetingDate = task.due_date || task.lastOcc;
         return meetingDate === today && task.last_done_date !== meetingDate;
       })
@@ -1182,8 +1266,8 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
         id: `daily-morning:${user.id}:${today}`,
         title: `Bom dia, ${userFirstName}`,
         description: pendingTodayTasks.length > 0
-          ? `Você tem ${pendingTodayTasks.length} tarefa${pendingTodayTasks.length === 1 ? '' : 's'} para hoje. Vamos conferir?`
-          : 'Dá uma olhada nas tarefas de hoje para começar o dia alinhado.',
+          ? `VocÃƒÂª tem ${pendingTodayTasks.length} tarefa${pendingTodayTasks.length === 1 ? '' : 's'} para hoje. Vamos conferir?`
+          : 'DÃƒÂ¡ uma olhada nas tarefas de hoje para comeÃƒÂ§ar o dia alinhado.',
         tone: 'blue',
         createdAt: `${today}T08:00:00`,
         section: 'TAREFAS',
@@ -1211,10 +1295,10 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
 
       scheduledNotifications.push({
         id: `daily-meetings:${user.id}:${today}`,
-        title: `${todayMeetings.length} reunião${todayMeetings.length === 1 ? '' : 'ões'} hoje`,
+        title: `${todayMeetings.length} reuniÃƒÂ£o${todayMeetings.length === 1 ? '' : 'ÃƒÂµes'} hoje`,
         description: firstMeetingTime
-          ? `A primeira é ${todayMeetings[0].title} às ${firstMeetingTime}.`
-          : `Confira a agenda de reuniões de hoje.`,
+          ? `A primeira ÃƒÂ© ${todayMeetings[0].title} ÃƒÂ s ${firstMeetingTime}.`
+          : `Confira a agenda de reuniÃƒÂµes de hoje.`,
         tone: 'blue',
         createdAt: `${today}T08:05:00`,
         section: 'REUNIAO',
@@ -1230,7 +1314,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
 
         scheduledNotifications.push({
           id: `meeting-reminder:${user.id}:${meeting.id}:${today}`,
-          title: `Reunião às ${meetingTime}`,
+          title: `ReuniÃƒÂ£o ÃƒÂ s ${meetingTime}`,
           description: meeting.title,
           tone: 'amber',
           createdAt: `${today}T${meetingTime}:00`,
@@ -1242,8 +1326,8 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
     if (notificationPreferences.closingSummary && currentHour >= 17 && pendingWorkTasks.length > 0) {
       scheduledNotifications.push({
         id: `daily-closing:${user.id}:${today}`,
-        title: `${userFirstName}, você tem ${pendingWorkTasks.length} pendente${pendingWorkTasks.length === 1 ? '' : 's'}`,
-        description: 'São 17h. Vamos verificar o que ainda falta antes de encerrar?',
+        title: `${userFirstName}, vocÃƒÂª tem ${pendingWorkTasks.length} pendente${pendingWorkTasks.length === 1 ? '' : 's'}`,
+        description: 'SÃƒÂ£o 17h. Vamos verificar o que ainda falta antes de encerrar?',
         tone: 'amber',
         createdAt: `${today}T17:00:00`,
         section: 'TAREFAS',
@@ -1315,7 +1399,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
     };
     const matchesSelectedUsers = (task: ProcessedTask) => filterUsers.length === 0 || filterUsers.includes(task.assigned_to);
     const visibleTasks = processedTasks.filter((task) => canSeeTask(task) && matchesSelectedUsers(task));
-    const taskItems = visibleTasks.filter((task) => task.category !== 'Reunião');
+    const taskItems = visibleTasks.filter((task) => task.category !== 'ReuniÃƒÂ£o');
     const todayPending = taskItems.filter((task) => !task.isDoneToday && task.lastOcc === today);
     const overduePending = taskItems.filter((task) => !task.isDoneToday && task.lastOcc < today && task.lastOcc !== '1970-01-01');
     const oneOffPending = taskItems.filter((task) => task.is_one_off && !task.isDoneToday && task.lastOcc <= today && task.lastOcc !== '1970-01-01');
@@ -1323,7 +1407,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
     const completedToday = taskItems.filter((task) => task.isDoneToday && task.last_done_date === today).length;
     const todayMeetings = visibleTasks
       .filter((task) => {
-        if (task.category !== 'Reunião') return false;
+        if (task.category !== 'ReuniÃƒÂ£o') return false;
         const meetingDate = task.due_date || task.lastOcc;
         return meetingDate === today && task.last_done_date !== meetingDate;
       })
@@ -1479,19 +1563,38 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
   const isPerfumePurchasing = isPerfumePurchasingSector(userSector);
   const canAccessTransport = isSupremeAdmin || isPerfumePurchasing;
   const canAccessReallocation = true;
+  const canAccessErpInventory = userRole === 'admin';
   const canManageBranches = userRole === 'admin' || canAccessPricing;
   const canAccessRegistries = true;
   const visibleSection =
     (activeSection === 'AUDITORIA' && userRole !== 'admin') ||
     (activeSection === 'CADASTROS' && !canAccessRegistries) ||
+    (activeSection === 'ESTOQUE_ERP' && !canAccessErpInventory) ||
     (activeSection === 'COMPRAS_IA' && !canAccessPaymentTerms) ||
     (activeSection === 'PRECIFICACAO' && !canAccessPricing) ||
     (activeSection === 'PRE_VENCIDOS' && !canAccessPricing) ||
     (activeSection === 'PRAZOS' && !canAccessPaymentTerms) ||
     (activeSection === 'TRANSPORTE' && !canAccessTransport) ||
     (activeSection === 'BALACUBACO' && !canAccessReallocation)
-      ? 'TAREFAS'
+      ? 'INICIO'
       : activeSection;
+  const visibleSectionTheme = getSectionTheme(visibleSection);
+  const baseBackground = theme === 'dark' ? '#111827' : '#E8EEF7';
+  const appThemeStyle = {
+    background: baseBackground,
+    '--section-accent': visibleSectionTheme.accent,
+    '--section-soft': visibleSectionTheme.soft,
+    '--section-soft-dark': visibleSectionTheme.softDark,
+  } as CSSProperties;
+  const availableSections = useMemo<AppSection[]>(() => {
+    const sections: AppSection[] = ['TAREFAS', 'REUNIAO', 'CADASTROS', 'BALACUBACO'];
+    if (canAccessErpInventory) sections.push('ESTOQUE_ERP');
+    if (canAccessPaymentTerms) sections.push('COMPRAS_IA', 'PRAZOS');
+    if (canAccessPricing) sections.push('PRECIFICACAO', 'PRE_VENCIDOS');
+    if (canAccessTransport) sections.push('TRANSPORTE');
+    if (userRole === 'admin') sections.push('AUDITORIA');
+    return sections;
+  }, [canAccessErpInventory, canAccessPaymentTerms, canAccessPricing, canAccessTransport, userRole]);
   const globalSearchItems = useMemo<GlobalSearchItem[]>(() => {
     if (!user) return [];
 
@@ -1503,28 +1606,31 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
     };
     const profileById = new Map(profiles.map((profile) => [profile.id, profile.full_name || 'Usuario']));
     const items: GlobalSearchItem[] = [
+      { id: 'module:INICIO', title: 'Inicio', description: 'Abrir central de modulos', section: 'INICIO', type: 'Modulo', keywords: 'inicio home central modulos aplicativos portal' },
       { id: 'module:TAREFAS', title: 'Tarefas', description: 'Abrir painel operacional de tarefas', section: 'TAREFAS', tab: 'HOJE', type: 'Modulo', keywords: 'tarefas hoje atrasados trade dashboard alertas historico' },
-      { id: 'module:REUNIAO', title: 'Reunião', description: 'Abrir agenda mensal de reuniões', section: 'REUNIAO', type: 'Modulo', keywords: 'reuniao agenda calendario google eventos' },
+      { id: 'module:REUNIAO', title: 'ReuniÃƒÂ£o', description: 'Abrir agenda mensal de reuniÃƒÂµes', section: 'REUNIAO', type: 'Modulo', keywords: 'reuniao agenda calendario google eventos' },
     ];
 
     if (canAccessRegistries) items.push({ id: 'module:CADASTROS', title: 'Cadastros', description: 'Produtos, lojas e fornecedores', section: 'CADASTROS', type: 'Modulo', keywords: 'cadastros produtos lojas fornecedores' });
+    if (canAccessErpInventory) items.push({ id: 'module:ESTOQUE_ERP', title: 'Estoque ERP', description: 'Saldo atual e consulta de produtos', section: 'ESTOQUE_ERP', type: 'Modulo', keywords: 'estoque erp saldo atual produtos ean loja mercadinho' });
     if (canAccessPaymentTerms) items.push({ id: 'module:COMPRAS_IA', title: 'Compras IA', description: 'Assistente inteligente para compras', section: 'COMPRAS_IA', type: 'Modulo', keywords: 'compras ia assistente inteligencia artificial fornecedores produtos pedido cotacao' });
-    if (canAccessPricing) items.push({ id: 'module:PRECIFICACAO', title: 'Price', description: 'Negociações, custos e preços', section: 'PRECIFICACAO', type: 'Modulo', keywords: 'price precificacao negociacoes custos ofertas precos' });
+    if (canAccessPricing) items.push({ id: 'module:PRE_VENCIDOS', title: 'Pre-vencidos', description: 'Regras e TXT de desconto para validade', section: 'PRE_VENCIDOS', type: 'Modulo', keywords: 'pre vencidos validade desconto regras exportar txt' });
+    if (canAccessPricing) items.push({ id: 'module:PRECIFICACAO', title: 'Price', description: 'NegociaÃƒÂ§ÃƒÂµes, custos e preÃƒÂ§os', section: 'PRECIFICACAO', type: 'Modulo', keywords: 'price precificacao negociacoes custos ofertas precos' });
     if (canAccessPaymentTerms) items.push({ id: 'module:PRAZOS', title: 'Prazos', description: 'Prazos de boleto e regras comerciais', section: 'PRAZOS', type: 'Modulo', keywords: 'prazos fornecedores boleto regras comerciais' });
-    if (canAccessTransport) items.push({ id: 'module:TRANSPORTE', title: 'Transporte', description: 'Controle de dívidas de transporte', section: 'TRANSPORTE', type: 'Modulo', keywords: 'transporte dividas cobranca fornecedores credito debito' });
-    if (canAccessReallocation) items.push({ id: 'module:BALACUBACO', title: 'Remanejamento Inteligente', description: 'Sugestões e exportação ERP', section: 'BALACUBACO', type: 'Modulo', keywords: 'remanejamento inteligente sugestoes estoque transferencia balacubaco' });
-    if (userRole === 'admin') items.push({ id: 'module:AUDITORIA', title: 'Auditoria', description: 'Histórico de alterações do sistema', section: 'AUDITORIA', type: 'Modulo', keywords: 'auditoria historico logs alteracoes' });
+    if (canAccessTransport) items.push({ id: 'module:TRANSPORTE', title: 'Transporte', description: 'Controle de dÃƒÂ­vidas de transporte', section: 'TRANSPORTE', type: 'Modulo', keywords: 'transporte dividas cobranca fornecedores credito debito' });
+    if (canAccessReallocation) items.push({ id: 'module:BALACUBACO', title: 'Remanejamento Inteligente', description: 'SugestÃƒÂµes e exportaÃƒÂ§ÃƒÂ£o ERP', section: 'BALACUBACO', type: 'Modulo', keywords: 'remanejamento inteligente sugestoes estoque transferencia balacubaco' });
+    if (userRole === 'admin') items.push({ id: 'module:AUDITORIA', title: 'Auditoria', description: 'HistÃƒÂ³rico de alteraÃƒÂ§ÃƒÂµes do sistema', section: 'AUDITORIA', type: 'Modulo', keywords: 'auditoria historico logs alteracoes' });
 
     processedTasks.filter(canSeeTask).forEach((task) => {
-      const assignee = profileById.get(task.assigned_to) || 'Sem responsável';
+      const assignee = profileById.get(task.assigned_to) || 'Sem responsÃƒÂ¡vel';
 
-      if (task.category === 'Reunião') {
+      if (task.category === 'ReuniÃƒÂ£o') {
         const meetingTime = getMeetingTimeFromNotes(task.notes);
         const meetingDate = task.due_date || task.lastOcc;
         items.push({
           id: `meeting:${task.id}`,
           title: task.title,
-          description: `${meetingDate}${meetingTime ? ` às ${meetingTime}` : ''} • ${assignee}`,
+          description: `${meetingDate}${meetingTime ? ` ÃƒÂ s ${meetingTime}` : ''} Ã¢â‚¬Â¢ ${assignee}`,
           section: 'REUNIAO',
           type: 'Reuniao',
           keywords: `${task.title} ${task.notes} ${assignee} ${task.sector} ${meetingDate} ${meetingTime || ''}`,
@@ -1543,7 +1649,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
       items.push({
         id: `task:${task.id}`,
         title: task.title,
-        description: `${task.category} • ${assignee} • ${task.lastOcc === '1970-01-01' ? 'Sem data' : task.lastOcc}`,
+        description: `${task.category} Ã¢â‚¬Â¢ ${assignee} Ã¢â‚¬Â¢ ${task.lastOcc === '1970-01-01' ? 'Sem data' : task.lastOcc}`,
         section: 'TAREFAS',
         tab,
         searchTerm: task.title,
@@ -1566,7 +1672,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
     });
 
     return items;
-  }, [announcements, canAccessPaymentTerms, canAccessPricing, canAccessRegistries, canAccessReallocation, canAccessTransport, processedTasks, profiles, user, userRole, userSector]);
+  }, [announcements, canAccessErpInventory, canAccessPaymentTerms, canAccessPricing, canAccessRegistries, canAccessReallocation, canAccessTransport, processedTasks, profiles, user, userRole, userSector]);
 
   const globalSearchResults = useMemo(() => {
     const query = globalSearchTerm.trim().toLowerCase();
@@ -1595,21 +1701,27 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
   if (!user || isPasswordRecovery) return <Login />
 
   return (
-    <div className={`app-responsive-root app-density-compact min-h-screen bg-[#E8EEF7] text-slate-900 font-sans overflow-x-hidden w-full ${visibleSection === 'TRANSPORTE' || visibleSection === 'REUNIAO' || visibleSection === 'BALACUBACO' || visibleSection === 'COMPRAS_IA' || visibleSection === 'PRE_VENCIDOS' ? 'pb-24 md:pb-0' : 'pb-24 md:pb-20'}`}>
-      <AppSidebar
-        activeSection={visibleSection}
-        userRole={userRole}
-        userSector={userSector}
-        isSupremeAdmin={isSupremeAdmin}
-        onSectionChange={(section) => {
-          setActiveSection(section);
-          if (section === 'AUDITORIA') {
-            fetchAudit();
-          }
-        }}
-      />
+    <div
+      className={`app-responsive-root app-density-compact min-h-screen text-slate-900 font-sans overflow-x-hidden w-full ${visibleSection === 'INICIO' ? 'pb-0' : visibleSection === 'TRANSPORTE' || visibleSection === 'REUNIAO' || visibleSection === 'BALACUBACO' || visibleSection === 'COMPRAS_IA' || visibleSection === 'PRE_VENCIDOS' || visibleSection === 'ESTOQUE_ERP' ? 'pb-24 md:pb-0' : 'pb-24 md:pb-20'}`}
+      data-section-theme={visibleSection}
+      style={appThemeStyle}
+    >
+      {visibleSection !== 'INICIO' && (
+        <AppSidebar
+          activeSection={visibleSection}
+          userRole={userRole}
+          userSector={userSector}
+          isSupremeAdmin={isSupremeAdmin}
+          onSectionChange={(section) => {
+            setActiveSection(section);
+            if (section === 'AUDITORIA') {
+              fetchAudit();
+            }
+          }}
+        />
+      )}
 
-      <div className="md:pl-20">
+      <div className={visibleSection === 'INICIO' ? '' : 'md:pl-20'}>
       <AppShellNav
         section={visibleSection}
         sectionTitle={SECTION_LABELS[visibleSection]}
@@ -1627,7 +1739,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
             className={`flex h-12 w-full max-w-[340px] items-center justify-center gap-3 rounded-full border-2 px-7 text-[11px] font-black uppercase tracking-[0.18em] transition-all duration-300 ${
               showCreateBox
                 ? 'border-slate-200 bg-slate-100 text-slate-500 shadow-none'
-                : 'border-blue-600 bg-blue-600 text-white shadow-[0_8px_18px_rgba(37,99,235,0.22)] hover:border-blue-700 hover:bg-blue-700 hover:shadow-[0_10px_22px_rgba(37,99,235,0.28)]'
+                : 'border-[var(--section-accent)] bg-[var(--section-accent)] text-white shadow-[0_8px_18px_color-mix(in_srgb,var(--section-accent)_24%,transparent)] hover:brightness-95 hover:shadow-[0_10px_22px_color-mix(in_srgb,var(--section-accent)_30%,transparent)]'
             }`}
           >
             {showCreateBox ? <><X size={18} /> Cancelar Operação</> : <><Plus size={18} strokeWidth={3} /> Lançar Nova Tarefa</>}
@@ -1648,6 +1760,8 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
         onOpenGlobalSearch={() => setShowGlobalSearch(true)}
         onOpenProfile={() => setShowProfileModal(true)}
         onOpenSettings={() => setShowSettingsModal(true)}
+        onRefresh={refreshSystemData}
+        isRefreshing={globalRefreshing}
         notifications={notifications}
         unreadNotificationIds={unreadNotificationIds}
         browserNotificationPermission={browserNotificationPermission}
@@ -1690,7 +1804,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
               {globalSearchResults.length === 0 ? (
                 <div className="px-5 py-10 text-center">
                   <p className="text-[11px] font-black uppercase tracking-widest text-slate-400">Nada encontrado</p>
-                  <p className="mt-2 text-xs font-bold text-slate-400">Tente buscar por tarefa, reunião, módulo ou aviso.</p>
+                  <p className="mt-2 text-xs font-bold text-slate-400">Tente buscar por tarefa, reuniÃƒÂ£o, mÃƒÂ³dulo ou aviso.</p>
                 </div>
               ) : (
                 <div className="space-y-1">
@@ -1723,7 +1837,20 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
         </div>
       )}
 
-      {visibleSection === 'TAREFAS' ? (
+      {visibleSection === 'INICIO' ? (
+        <ModuleHome
+          availableSections={availableSections}
+          dailyOverview={dailyOverview}
+          userName={profiles.find((profile) => profile.id === user.id)?.full_name || user.email || 'Usuario'}
+          userSector={userSector}
+          onOpenSection={(section, tab) => {
+            setActiveSection(section);
+            if (tab) setActiveTab(tab);
+            if (section === 'AUDITORIA') fetchAudit();
+          }}
+          onOpenGlobalSearch={() => setShowGlobalSearch(true)}
+        />
+      ) : visibleSection === 'TAREFAS' ? (
         <>
       <main className="mx-auto max-w-6xl px-4 pb-6">
   {activeTab === 'DASHBOARD' ? (
@@ -1736,7 +1863,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
       onOpenTab={(tab) => setActiveTab(tab)}
       onOpenMeetings={() => setActiveSection('REUNIAO')}
     />
-  ) : activeTab === 'HISTÓRICO' ? (
+  ) : activeTab === 'HISTÃƒâ€œRICO' ? (
     <HistoryTimeline history={history} userRole={userRole} userSector={userSector} />
   ) : activeTab === 'COMUNICADOS' ? (
     <AnnouncementBoard
@@ -1758,7 +1885,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
     /* Aba padrao de tarefas */
     <>
      {/* ----------------------------------------------------------- */}
-{/* Modal flutuante: lançar nova tarefa */}
+{/* Modal flutuante: lanÃƒÂ§ar nova tarefa */}
 {/* ----------------------------------------------------------- */}
 {showCreateBox && (
   <CreateTaskModal
@@ -1851,6 +1978,8 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
           canManageProducts={canManageBranches || permissions.canImportReallocationData}
           canManageMargins={canAccessPricing}
         />
+      ) : visibleSection === 'ESTOQUE_ERP' ? (
+        <ErpInventoryManager />
       ) : visibleSection === 'PRECIFICACAO' ? (
         <PricingManager />
       ) : visibleSection === 'PRE_VENCIDOS' ? (
@@ -1951,5 +2080,8 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
     </div> 
   );
 }
+
+
+
 
 

@@ -4,6 +4,7 @@ import { getSupabaseAdmin } from "@/lib/supabase-admin";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { requireAuthenticatedProfile } from "@/lib/server-auth";
 import { normalizeReallocationSector } from "@/lib/reallocation-sector";
+import { createErpInventorySnapshot, splitErpClassificationPath } from "@/lib/erp-inventory";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -560,6 +561,32 @@ export async function POST(request: Request) {
       enrichedProducts += chunk.length;
     }
 
+    const productMetaByEan = new Map<string, {
+      description: string;
+      manufacturer: string;
+      classification: string;
+    }>();
+
+    productsByEan.forEach((products, ean) => {
+      const product = products.find((item) => item.manufacturer || item.classification || item.description) || products[0];
+      if (!product) return;
+
+      productMetaByEan.set(ean, {
+        description: product.description || "",
+        manufacturer: product.manufacturer || "",
+        classification: product.classification || "",
+      });
+    });
+
+    attributesByEan.forEach((attribute, ean) => {
+      const current = productMetaByEan.get(ean);
+      productMetaByEan.set(ean, {
+        description: current?.description || attribute.description || "",
+        manufacturer: attribute.manufacturer || current?.manufacturer || "",
+        classification: attribute.classification || current?.classification || "",
+      });
+    });
+
     const payload: StockRow[] = rows.map((row) => ({
       ...row,
       snapshot_id: snapshot.id,
@@ -602,6 +629,64 @@ export async function POST(request: Request) {
       })
       .eq("id", snapshot.id);
 
+    importStage = "espelhar estoque no nucleo ERP";
+    let erpInventorySnapshotId: string | null = null;
+    let erpInventoryCurrentUpdated = 0;
+    let erpInventoryWarning: string | null = null;
+
+    try {
+      const erpResult = await createErpInventorySnapshot({
+        sourceModule: "reallocation",
+        sourceFile,
+        sector: activeSector,
+        importedBy: auth.userId,
+        notes: `Espelho ERP gerado a partir da importacao de remanejamento ${snapshot.id}`,
+        items: payload.map((row) => {
+          const meta = productMetaByEan.get(row.ean);
+          const classificationPath = meta?.classification || "";
+          const classification = splitErpClassificationPath(classificationPath);
+
+          return {
+            branchCode: row.store_code,
+            branchName: row.store_name,
+            ean: row.ean,
+            erpCode: row.erp_code,
+            productDescription: meta?.description || row.product_description,
+            manufacturer: meta?.manufacturer || "",
+            classificationPath,
+            line: classification.line,
+            department: classification.department,
+            category: classification.category,
+            stockQuantity: row.stock,
+            confirmedQuantity: row.confirmed_stock,
+            monthlyAvgSales: row.monthly_avg_sales,
+            dailyAvgSales: row.monthly_avg_sales > 0 ? row.monthly_avg_sales / 30 : 0,
+            stockDays: row.stock_days,
+            curve: row.curve,
+            lastSaleDays: row.last_sale_days,
+            lastPurchaseDays: row.last_purchase_days,
+            lastPurchaseSupplier: row.last_purchase_supplier,
+            minStock: row.min_stock,
+            maxStock: row.max_stock,
+            rawPayload: {
+              confirmed_purchase: row.confirmed_purchase,
+              confirmed_transfer: row.confirmed_transfer,
+              need_type: row.need_type,
+              rupture_sales: row.rupture_sales,
+              supplied_percent: row.supplied_percent,
+              need_cost: row.need_cost,
+            },
+          };
+        }),
+      });
+
+      erpInventorySnapshotId = erpResult.snapshotId;
+      erpInventoryCurrentUpdated = erpResult.currentUpdated;
+    } catch (erpError) {
+      erpInventoryWarning = erpError instanceof Error ? erpError.message : "Nao foi possivel espelhar o estoque no nucleo ERP.";
+      console.error("Erro ao espelhar estoque no nucleo ERP", erpError);
+    }
+
     return NextResponse.json({
       snapshotId: snapshot.id,
       sector: activeSector,
@@ -613,6 +698,9 @@ export async function POST(request: Request) {
       enrichedProducts,
       skipped,
       movementColumnsAvailable,
+      erpInventorySnapshotId,
+      erpInventoryCurrentUpdated,
+      erpInventoryWarning,
     });
   } catch (error) {
     if (createdSnapshotId && supabase) {

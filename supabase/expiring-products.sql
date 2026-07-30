@@ -47,7 +47,7 @@ create table if not exists public.expiring_discount_rules (
   created_by uuid references auth.users(id) on delete set null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  constraint expiring_discount_rules_scope_type_check check (scope_type in ('product', 'manufacturer', 'line', 'department', 'category', 'classification')),
+  constraint expiring_discount_rules_scope_type_check check (scope_type in ('product', 'manufacturer', 'line', 'department', 'category', 'classification', 'validity')),
   constraint expiring_discount_rules_discount_type_check check (discount_type in ('percent', 'fixed_price'))
 );
 

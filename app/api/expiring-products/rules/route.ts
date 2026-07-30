@@ -23,6 +23,8 @@ function intValue(value: unknown, fallback = 0) {
   return Number.isFinite(number) ? Math.trunc(number) : fallback;
 }
 
+const allowedScopeTypes = new Set(['product', 'manufacturer', 'line', 'department', 'category', 'classification', 'validity']);
+
 async function requirePricing(request: Request) {
   const auth = await requireAuthenticatedProfile(request);
   if (!auth.ok) return auth;
@@ -60,10 +62,12 @@ export async function POST(request: Request) {
     const auth = await requirePricing(request);
     if (!auth.ok) return auth.response;
     const body = await request.json();
+    const requestedScopeType = String(body.scope_type || "category");
+    const scopeType = allowedScopeTypes.has(requestedScopeType) ? requestedScopeType : "category";
     const payload = {
       name: cleanText(body.name),
-      scope_type: body.scope_type || "category",
-      scope_value: cleanText(body.scope_value),
+      scope_type: scopeType,
+      scope_value: scopeType === "validity" ? "VALIDADE" : cleanText(body.scope_value),
       discount_type: body.discount_type || "percent",
       discount_value: numberValue(body.discount_value),
       min_days_to_expire: intValue(body.min_days_to_expire, 0),

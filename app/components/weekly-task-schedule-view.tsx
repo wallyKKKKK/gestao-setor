@@ -4,6 +4,7 @@ import * as XLSX from 'xlsx-js-style';
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import { CalendarDays, CheckCircle2, Clock, Download, UserRound } from 'lucide-react';
 import { taskPriorityBadgeClassName, taskPriorityLabel } from '@/lib/task-priority';
+import { monthlyWeekdayOccursOnDate, parseMonthlyWeekdayRepeats } from '@/lib/task-recurrence';
 import type { ProcessedTask, Profile } from '@/lib/types';
 
 interface WeeklyTaskScheduleViewProps {
@@ -92,6 +93,10 @@ function taskOccursOnDay(task: ProcessedTask, day: WeekDayInfo) {
 
   const repeatDays = task.repeat_days || '';
   if (!repeatDays) return false;
+
+  if (parseMonthlyWeekdayRepeats(repeatDays).length) {
+    return monthlyWeekdayOccursOnDate(repeatDays, day.date, task.repeat_interval || 1, task.created_at);
+  }
 
   const weeklyDays = repeatDays.split(',');
   if (weeklyDays.includes(day.id)) return isWeeklyIntervalWeek(task, day.date);

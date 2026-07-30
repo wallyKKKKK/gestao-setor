@@ -1,5 +1,7 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
 :root {
   --background: #ffffff;
   --foreground: #171717;
@@ -668,4 +670,67 @@ html[data-theme="dark"] .opacity-80 {
 html {
   /* Reserva o espaço da scrollbar sem necessariamente mostrá-la */
   scrollbar-gutter: stable;
+}
+
+/* Module accent system: keep screens neutral and color only controls/details. */
+[data-section-theme] {
+  --section-accent: #2563eb;
+  --section-soft: #e8f1ff;
+  --section-soft-dark: #101b33;
+}
+
+[data-section-theme]:not([data-section-theme="INICIO"]) .bg-blue-600,
+[data-section-theme]:not([data-section-theme="INICIO"]) .bg-blue-500,
+[data-section-theme]:not([data-section-theme="INICIO"]) .checked\:bg-blue-600:checked {
+  background-color: var(--section-accent) !important;
+}
+
+[data-section-theme]:not([data-section-theme="INICIO"]) .text-blue-800,
+[data-section-theme]:not([data-section-theme="INICIO"]) .text-blue-700,
+[data-section-theme]:not([data-section-theme="INICIO"]) .text-blue-600,
+[data-section-theme]:not([data-section-theme="INICIO"]) .text-blue-500,
+[data-section-theme]:not([data-section-theme="INICIO"]) .checked\:text-blue-600:checked {
+  color: var(--section-accent) !important;
+}
+
+[data-section-theme]:not([data-section-theme="INICIO"]) .border-blue-600,
+[data-section-theme]:not([data-section-theme="INICIO"]) .border-blue-500,
+[data-section-theme]:not([data-section-theme="INICIO"]) .border-blue-400,
+[data-section-theme]:not([data-section-theme="INICIO"]) .border-blue-300,
+[data-section-theme]:not([data-section-theme="INICIO"]) .border-blue-200,
+[data-section-theme]:not([data-section-theme="INICIO"]) .border-blue-100,
+[data-section-theme]:not([data-section-theme="INICIO"]) .checked\:border-blue-600:checked {
+  border-color: color-mix(in srgb, var(--section-accent) 58%, white) !important;
+}
+
+[data-section-theme]:not([data-section-theme="INICIO"]) .ring-blue-500,
+[data-section-theme]:not([data-section-theme="INICIO"]) .ring-blue-300,
+[data-section-theme]:not([data-section-theme="INICIO"]) .ring-blue-100 {
+  --tw-ring-color: color-mix(in srgb, var(--section-accent) 28%, white) !important;
+}
+
+[data-section-theme]:not([data-section-theme="INICIO"]) .bg-blue-50,
+[data-section-theme]:not([data-section-theme="INICIO"]) .bg-blue-100,
+[data-section-theme]:not([data-section-theme="INICIO"]) .hover\:bg-blue-50:hover,
+[data-section-theme]:not([data-section-theme="INICIO"]) .hover\:bg-blue-100:hover {
+  background-color: color-mix(in srgb, var(--section-accent) 10%, white) !important;
+}
+
+[data-section-theme]:not([data-section-theme="INICIO"]) .hover\:text-blue-700:hover,
+[data-section-theme]:not([data-section-theme="INICIO"]) .hover\:text-blue-600:hover,
+[data-section-theme]:not([data-section-theme="INICIO"]) .hover\:text-blue-500:hover {
+  color: var(--section-accent) !important;
+}
+
+[data-section-theme]:not([data-section-theme="INICIO"]) .hover\:border-blue-400:hover,
+[data-section-theme]:not([data-section-theme="INICIO"]) .hover\:border-blue-300:hover,
+[data-section-theme]:not([data-section-theme="INICIO"]) .hover\:border-blue-200:hover {
+  border-color: color-mix(in srgb, var(--section-accent) 58%, white) !important;
+}
+
+html[data-theme="dark"] [data-section-theme]:not([data-section-theme="INICIO"]) .bg-blue-50,
+html[data-theme="dark"] [data-section-theme]:not([data-section-theme="INICIO"]) .bg-blue-100,
+html[data-theme="dark"] [data-section-theme]:not([data-section-theme="INICIO"]) .hover\:bg-blue-50:hover,
+html[data-theme="dark"] [data-section-theme]:not([data-section-theme="INICIO"]) .hover\:bg-blue-100:hover {
+  background-color: color-mix(in srgb, var(--section-accent) 18%, black) !important;
 }

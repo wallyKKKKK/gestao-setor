@@ -7,11 +7,10 @@ import { getSupabaseAdmin } from "@/lib/supabase-admin";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const UPSERT_CHUNK_SIZE = 1000;
-
 type RowMap = Record<string, unknown>;
 
 interface ParsedExpiringInventoryItem {
+  id: string;
   row_key: string;
   branch_code: string;
   branch_name: string;
@@ -220,8 +219,11 @@ export async function POST(request: Request) {
 
       if (!branchCode || !ean) return null;
 
+      const key = rowKey({ branchCode, ean, lot, expirationDate });
+
       return {
-        row_key: rowKey({ branchCode, ean, lot, expirationDate }),
+        id: key,
+        row_key: key,
         branch_code: branchCode,
         branch_name: branchName,
         item_status: normalizeText(cell(row, ["Status"])),
@@ -307,20 +309,13 @@ export async function POST(request: Request) {
       };
     });
 
-    for (const enrichedChunk of chunkArray(enriched, UPSERT_CHUNK_SIZE)) {
-      const { error } = await supabase
-        .from("expiring_inventory_items")
-        .upsert(enrichedChunk as Array<Record<string, unknown>>, { onConflict: "row_key" });
-
-      if (error) {
-        if (error.code === "42P01" || error.code === "PGRST205") {
-          return NextResponse.json({ error: "A tabela de pre-vencidos ainda nao existe. Rode o SQL supabase/expiring-products.sql no Supabase." }, { status: 400 });
-        }
-        throw error;
-      }
-    }
-
-    return NextResponse.json({ imported: enriched.length, duplicatesIgnored, sheets: workbook.SheetNames });
+    return NextResponse.json({
+      imported: enriched.length,
+      duplicatesIgnored,
+      sheets: workbook.SheetNames,
+      items: enriched,
+      transient: true,
+    });
   } catch (error) {
     console.error("[expiring-products/import]", error);
     const message = error instanceof Error && error.message ? error.message : "Nao foi possivel importar pre-vencidos.";

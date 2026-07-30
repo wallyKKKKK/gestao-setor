@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BadgePercent, Calculator, Check, ChevronDown, Download, Edit3, Save, Search, Trash2, UploadCloud, X } from 'lucide-react';
@@ -6,7 +6,6 @@ import { strToU8, zipSync } from 'fflate';
 import {
   deleteExpiringDiscountRule,
   fetchExpiringDiscountRules,
-  fetchExpiringInventoryItems,
   fetchPricingBranches,
   fetchPricingProducts,
   fetchReallocationAttributeOptions,
@@ -30,6 +29,7 @@ type ExportMode = 'single' | 'byBranch';
 type ExpiringManagerCache = {
   items: ExpiringInventoryItem[];
   rules: ExpiringDiscountRule[];
+  disabledRuleIds: string[];
   branches: PricingBranch[];
   pricingProducts: PricingProduct[];
   masterProducts: ReallocationProduct[];
@@ -47,6 +47,7 @@ const SCOPE_LABELS: Record<ExpiringRuleScopeType, string> = {
   department: 'Departamento',
   category: 'Categoria',
   classification: 'Classificacao completa',
+  validity: 'Validade',
 };
 
 const blankRule: ExpiringDiscountRuleInput = {
@@ -144,16 +145,18 @@ function scopeValueForItem(item: ExpiringInventoryItem, scope: ExpiringRuleScope
   if (scope === 'line') return item.line;
   if (scope === 'department') return item.department;
   if (scope === 'category') return item.category;
+  if (scope === 'validity') return 'VALIDADE';
   return item.classification_path;
 }
 
 function scopeRank(scope: ExpiringRuleScopeType) {
-  return { product: 0, manufacturer: 1, category: 2, department: 3, line: 4, classification: 5 }[scope] ?? 9;
+  return { product: 0, manufacturer: 1, category: 2, department: 3, line: 4, classification: 5, validity: 9 }[scope] ?? 9;
 }
 
 function ruleMatchesItem(rule: ExpiringDiscountRule, item: ExpiringInventoryItem) {
   if (!rule.is_active) return false;
   if (item.days_to_expire < rule.min_days_to_expire || item.days_to_expire > rule.max_days_to_expire) return false;
+  if (rule.scope_type === 'validity') return true;
   return normalize(scopeValueForItem(item, rule.scope_type)) === normalize(rule.scope_value);
 }
 
@@ -300,6 +303,7 @@ export function ExpiringProductsManager() {
   const [items, setItems] = useState<ExpiringInventoryItem[]>(() => expiringManagerCache?.items || []);
   const [rules, setRules] = useState<ExpiringDiscountRule[]>(() => expiringManagerCache?.rules || []);
   const rulesRef = useRef<ExpiringDiscountRule[]>(expiringManagerCache?.rules || []);
+  const [disabledRuleIds, setDisabledRuleIds] = useState<string[]>(() => expiringManagerCache?.disabledRuleIds || []);
   const [branches, setBranches] = useState<PricingBranch[]>(() => expiringManagerCache?.branches || []);
   const [pricingProducts, setPricingProducts] = useState<PricingProduct[]>(() => expiringManagerCache?.pricingProducts || []);
   const [masterProducts, setMasterProducts] = useState<ReallocationProduct[]>(() => expiringManagerCache?.masterProducts || []);
@@ -325,8 +329,7 @@ export function ExpiringProductsManager() {
   const loadData = useCallback(async () => {
     setLoading(!expiringManagerCache);
     try {
-      const [itemResult, ruleResult, branchRows, pricingRows, masterRows, quickManufacturers, quickClassifications, manufacturerRows, classificationRows] = await Promise.all([
-        fetchExpiringInventoryItems(),
+      const [ruleResult, branchRows, pricingRows, masterRows, quickManufacturers, quickClassifications, manufacturerRows, classificationRows] = await Promise.all([
         fetchExpiringDiscountRules(),
         fetchPricingBranches(),
         fetchPricingProducts(),
@@ -339,11 +342,14 @@ export function ExpiringProductsManager() {
       const nextRules = ruleResult.missingTable ? rulesRef.current : ruleResult.rules;
       const nextManufacturers = Array.from(new Set([...quickManufacturers, ...manufacturerRows.map((item) => item.value)].filter(Boolean))).sort((a, b) => a.localeCompare(b, 'pt-BR'));
       const nextClassifications = Array.from(new Set([...quickClassifications, ...classificationRows.map((item) => item.value)].filter(Boolean))).sort((a, b) => a.localeCompare(b, 'pt-BR'));
-      const nextMissingTable = itemResult.missingTable || ruleResult.missingTable;
+      const nextMissingTable = ruleResult.missingTable;
+      const nextItems = expiringManagerCache?.items || [];
+      const nextDisabledRuleIds = expiringManagerCache?.disabledRuleIds || [];
 
       expiringManagerCache = {
-        items: itemResult.items,
+        items: nextItems,
         rules: nextRules,
+        disabledRuleIds: nextDisabledRuleIds,
         branches: branchRows,
         pricingProducts: pricingRows,
         masterProducts: masterRows,
@@ -352,7 +358,8 @@ export function ExpiringProductsManager() {
         missingTable: nextMissingTable,
       };
 
-      setItems(itemResult.items);
+      setItems(nextItems);
+      setDisabledRuleIds(nextDisabledRuleIds);
       rulesRef.current = nextRules;
       setRules(nextRules);
       setBranches(branchRows);
@@ -375,6 +382,17 @@ export function ExpiringProductsManager() {
     return () => window.clearTimeout(timer);
   }, [loadData]);
 
+  useEffect(() => {
+    const handleRefresh = () => {
+      void loadData();
+    };
+
+    window.addEventListener('wally:app-refresh', handleRefresh);
+    return () => window.removeEventListener('wally:app-refresh', handleRefresh);
+  }, [loadData]);
+
+  const disabledRuleSet = useMemo(() => new Set(disabledRuleIds), [disabledRuleIds]);
+  const activeProcessRules = useMemo(() => rules.filter((rule) => rule.is_active && !disabledRuleSet.has(rule.id)), [disabledRuleSet, rules]);
   const pricingByEan = useMemo(() => new Map(pricingProducts.map((product) => [product.ean, product])), [pricingProducts]);
   const branchByCode = useMemo(() => {
     const map = new Map<string, PricingBranch>();
@@ -410,16 +428,17 @@ export function ExpiringProductsManager() {
       department: uniqueOptions([...items.map((item) => item.department), ...masterClassificationPaths.map((classification) => classification.split('>').map((part) => part.trim()).filter(Boolean)[2] || '')]),
       category: uniqueOptions([...items.map((item) => item.category), ...masterClassificationPaths.map((classification) => classification.split('>').map((part) => part.trim()).filter(Boolean)[3] || '')]),
       classification: uniqueOptions([...items.map((item) => item.classification_path), ...masterClassificationPaths]),
+      validity: [{ value: 'VALIDADE', label: 'Todos os produtos dentro do periodo' }],
     } satisfies Record<ExpiringRuleScopeType, Array<{ value: string; label: string }>>;
   }, [items, manufacturerOptions, masterClassificationPaths, masterProducts]);
 
   const classifiedRows = useMemo(() => items.map((item) => {
-    const rule = bestRuleForItem(item, rules);
+    const rule = bestRuleForItem(item, activeProcessRules);
     const basePrice = basePriceForItem(item, pricingByEan);
     const price = offerPrice(basePrice, rule);
     const discount = discountPercent(basePrice, rule);
     return { item, rule, basePrice, price, discount };
-  }), [items, pricingByEan, rules]);
+  }), [activeProcessRules, items, pricingByEan]);
 
   const eligibleRows = useMemo(() => classifiedRows.filter((row) => row.rule), [classifiedRows]);
   const calculatedSet = useMemo(() => new Set(calculatedItemIds), [calculatedItemIds]);
@@ -474,9 +493,9 @@ export function ExpiringProductsManager() {
       ignored: Math.max(0, items.length - eligibleRows.length),
       visible: visibleRows.length,
       units,
-      rules: rules.filter((rule) => rule.is_active).length,
+      rules: activeProcessRules.length,
     };
-  }, [eligibleRows.length, items.length, reportRows.length, rules, visibleRows]);
+  }, [activeProcessRules.length, eligibleRows.length, items.length, reportRows.length, visibleRows]);
 
   const importFile = async (file: File | null) => {
     if (!file) return;
@@ -487,13 +506,27 @@ export function ExpiringProductsManager() {
       const response = await fetch('/api/expiring-products/import', { method: 'POST', headers: await getAuthHeaders(), body: formData });
       const data = await response.json().catch(() => null);
       if (!response.ok) throw new Error(data?.error || 'Erro ao importar pre-vencidos.');
-      await loadData();
+      const importedItems = (data?.items || []) as ExpiringInventoryItem[];
+      setItems(importedItems);
+      setDisabledRuleIds([]);
+      if (expiringManagerCache) expiringManagerCache = { ...expiringManagerCache, items: importedItems, disabledRuleIds: [] };
+      else expiringManagerCache = {
+        items: importedItems,
+        rules,
+        disabledRuleIds: [],
+        branches,
+        pricingProducts,
+        masterProducts,
+        catalogManufacturers,
+        catalogClassifications,
+        missingTable,
+      };
       setCalculatedItemIds([]);
       setCalculatedAt(null);
       setSelectedIds([]);
       setActiveTab('calculate');
       const duplicateText = data?.duplicatesIgnored ? ` ${data.duplicatesIgnored} duplicatas ignoradas.` : '';
-      alert(`${data.imported || 0} lotes importados.${duplicateText} Clique em calcular para aplicar as regras ativas.`);
+      alert(`${data.imported || importedItems.length || 0} lotes importados para este processo.${duplicateText} Clique em calcular para aplicar as regras ativas.`);
     } catch (error) {
       alert(error instanceof Error ? error.message : 'Erro ao importar pre-vencidos.');
     } finally {
@@ -505,7 +538,10 @@ export function ExpiringProductsManager() {
   const saveRule = async () => {
     setSavingRule(true);
     try {
-      const savedRule = await saveExpiringDiscountRule({ ...ruleDraft, priority: 100, is_active: true });
+      const payload: ExpiringDiscountRuleInput = ruleDraft.scope_type === 'validity'
+        ? { ...ruleDraft, name: ruleDraft.name || 'VALIDADE', scope_value: 'VALIDADE', priority: 100, is_active: true }
+        : { ...ruleDraft, priority: 100, is_active: true };
+      const savedRule = await saveExpiringDiscountRule(payload);
       setRules((current) => {
         const withoutSaved = current.filter((rule) => rule.id !== savedRule.id);
         const nextRules = [savedRule, ...withoutSaved].sort((left, right) => left.priority - right.priority || new Date(right.created_at || 0).getTime() - new Date(left.created_at || 0).getTime());
@@ -546,9 +582,11 @@ export function ExpiringProductsManager() {
 
     const previousRules = rules;
     const nextRules = rules.filter((rule) => rule.id !== ruleId);
+    const nextDisabledRuleIds = disabledRuleIds.filter((id) => id !== ruleId);
     rulesRef.current = nextRules;
     setRules(nextRules);
-    if (expiringManagerCache) expiringManagerCache = { ...expiringManagerCache, rules: nextRules };
+    setDisabledRuleIds(nextDisabledRuleIds);
+    if (expiringManagerCache) expiringManagerCache = { ...expiringManagerCache, rules: nextRules, disabledRuleIds: nextDisabledRuleIds };
     setCalculatedItemIds([]);
     setCalculatedAt(null);
 
@@ -557,9 +595,22 @@ export function ExpiringProductsManager() {
     } catch (error) {
       rulesRef.current = previousRules;
       setRules(previousRules);
-      if (expiringManagerCache) expiringManagerCache = { ...expiringManagerCache, rules: previousRules };
+      setDisabledRuleIds(disabledRuleIds);
+      if (expiringManagerCache) expiringManagerCache = { ...expiringManagerCache, rules: previousRules, disabledRuleIds };
       alert(error instanceof Error ? error.message : 'Erro ao excluir regra.');
     }
+  };
+
+
+  const toggleRuleForCurrentImport = (ruleId: string) => {
+    setDisabledRuleIds((current) => {
+      const next = current.includes(ruleId) ? current.filter((id) => id !== ruleId) : [...current, ruleId];
+      if (expiringManagerCache) expiringManagerCache = { ...expiringManagerCache, disabledRuleIds: next };
+      return next;
+    });
+    setCalculatedItemIds([]);
+    setCalculatedAt(null);
+    setSelectedIds([]);
   };
 
   const calculateExpiringItems = () => {
@@ -568,8 +619,8 @@ export function ExpiringProductsManager() {
       return;
     }
 
-    if (!rules.some((rule) => rule.is_active)) {
-      alert('Cadastre ao menos uma regra ativa antes de calcular.');
+    if (!activeProcessRules.length) {
+      alert('Ative ao menos uma regra para esta importacao antes de calcular.');
       return;
     }
 
@@ -586,6 +637,17 @@ export function ExpiringProductsManager() {
 
     alert('Calculo concluido: ' + ids.length + ' item' + (ids.length === 1 ? '' : 's') + ' entraram no relatorio.');
   };
+  const clearImportedProcess = () => {
+    setItems([]);
+    setCalculatedItemIds([]);
+    setCalculatedAt(null);
+    setSelectedIds([]);
+    setDisabledRuleIds([]);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (expiringManagerCache) expiringManagerCache = { ...expiringManagerCache, items: [], disabledRuleIds: [] };
+    setActiveTab('import');
+  };
+
   const exportTxt = () => {
     const lineForRow = ({ item, discount }: (typeof exportableRows)[number]) => `B|${item.ean}|||${formatTxtNumber(discount)}`;
     const ruleFilePart = (rows: typeof exportableRows) => {
@@ -605,6 +667,7 @@ export function ExpiringProductsManager() {
 
     if (exportMode === 'single') {
       downloadTextFile(`pre-vencidos-B-${exportedRule}-${date}.txt`, exportableRows.map(lineForRow).join('\r\n'));
+      clearImportedProcess();
       return;
     }
 
@@ -623,6 +686,7 @@ export function ExpiringProductsManager() {
 
     const zip = zipSync(zipEntries, { level: 6 });
     downloadBinaryFile(`pre-vencidos-B-por-loja-${exportedRule}-${date}.zip`, zip, 'application/zip');
+    clearImportedProcess();
   };
 
   const toggleSelected = (id: string) => {
@@ -703,21 +767,19 @@ export function ExpiringProductsManager() {
 
             {activeTab === 'calculate' && (
               <section className="flex h-full min-h-0 items-center justify-center overflow-auto p-4">
-                <div className="w-full max-w-3xl">
-                  <div className="rounded-[28px] bg-slate-950 p-6 text-white shadow-xl shadow-slate-950/10">
-                    <Calculator size={34} className="text-emerald-300" />
-                    <h2 className="mt-3 text-xl font-black uppercase italic">Calcular pre-vencidos</h2>
-                    <p className="mt-1 text-sm font-bold text-slate-300">O sistema cruza o arquivo importado com as regras ativas e gera o relatorio dos itens que entram em oferta.</p>
-                    <div className="mt-5 grid grid-cols-2 gap-2 md:grid-cols-4">
-                      <div className="rounded-2xl bg-white/10 px-4 py-3"><p className="text-[9px] font-black uppercase text-slate-300">Importados</p><p className="text-2xl font-black">{summary.imported.toLocaleString('pt-BR')}</p></div>
-                      <div className="rounded-2xl bg-white/10 px-4 py-3"><p className="text-[9px] font-black uppercase text-slate-300">Regras</p><p className="text-2xl font-black">{summary.rules.toLocaleString('pt-BR')}</p></div>
-                      <div className="rounded-2xl bg-emerald-400/15 px-4 py-3"><p className="text-[9px] font-black uppercase text-emerald-200">Entrariam</p><p className="text-2xl font-black">{eligibleRows.length.toLocaleString('pt-BR')}</p></div>
-                      <div className="rounded-2xl bg-amber-400/15 px-4 py-3"><p className="text-[9px] font-black uppercase text-amber-200">Fora regra</p><p className="text-2xl font-black">{summary.ignored.toLocaleString('pt-BR')}</p></div>
-                    </div>
-                    <button onClick={calculateExpiringItems} className="mt-6 inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-emerald-500 px-6 text-xs font-black uppercase tracking-widest text-white transition hover:bg-emerald-400">
-                      <Calculator size={16} /> Aplicar regras e gerar relatorio
-                    </button>
+                <div className="w-full max-w-3xl rounded-[28px] border-2 border-dashed border-slate-200 bg-slate-50 p-6 text-center">
+                  <Calculator size={34} className="mx-auto text-[var(--section-accent)]" />
+                  <h2 className="mt-3 text-xl font-black uppercase italic text-slate-950">Calcular pre-vencidos</h2>
+                  <p className="mx-auto mt-1 max-w-2xl text-sm font-bold leading-relaxed text-slate-500">O sistema cruza o arquivo importado com as regras ativas e gera o relatorio dos itens que entram em oferta.</p>
+                  <div className="mt-5 grid grid-cols-2 gap-2 text-left md:grid-cols-4">
+                    <div className="rounded-2xl bg-white px-4 py-3"><p className="text-[9px] font-black uppercase text-slate-400">Importados</p><p className="text-2xl font-black text-slate-950">{summary.imported.toLocaleString('pt-BR')}</p></div>
+                    <div className="rounded-2xl bg-white px-4 py-3"><p className="text-[9px] font-black uppercase text-slate-400">Regras</p><p className="text-2xl font-black text-slate-950">{summary.rules.toLocaleString('pt-BR')}</p></div>
+                    <div className="rounded-2xl bg-[color-mix(in_srgb,var(--section-accent)_10%,white)] px-4 py-3"><p className="text-[9px] font-black uppercase text-[var(--section-accent)]">Entrariam</p><p className="text-2xl font-black text-slate-950">{eligibleRows.length.toLocaleString('pt-BR')}</p></div>
+                    <div className="rounded-2xl bg-amber-50 px-4 py-3"><p className="text-[9px] font-black uppercase text-amber-600">Fora regra</p><p className="text-2xl font-black text-slate-950">{summary.ignored.toLocaleString('pt-BR')}</p></div>
                   </div>
+                  <button onClick={calculateExpiringItems} className="mt-6 inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-[var(--section-accent)] px-6 text-xs font-black uppercase tracking-widest text-white transition hover:brightness-95">
+                    <Calculator size={16} /> Aplicar regras e gerar relatorio
+                  </button>
                 </div>
               </section>
             )}
@@ -769,7 +831,7 @@ export function ExpiringProductsManager() {
                       <td className={['px-3 py-3 text-right font-black', item.days_to_expire <= 60 ? 'text-red-600' : item.days_to_expire <= 120 ? 'text-amber-600' : 'text-slate-700'].join(' ')}>{item.days_to_expire}</td>
                       <td className="px-3 py-3 font-bold text-slate-600">{dateLabel(item.expiration_date)}</td>
                       <td className="px-3 py-3 font-bold text-slate-600">{item.manufacturer || '-'}</td>
-                      <td className="px-3 py-3"><span className="rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-black uppercase text-emerald-700">{rule?.name}</span></td>
+                      <td className="px-3 py-3"><span className="rounded-full bg-[color-mix(in_srgb,var(--section-accent)_10%,white)] px-2 py-1 text-[10px] font-black uppercase text-[var(--section-accent)]">{rule?.name}</span></td>
                       <td className="px-3 py-3 text-right font-bold">{base ? money(base) : '-'}</td>
                       <td className="px-3 py-3 text-right font-black text-blue-600">{price ? money(price) : '-'}</td>
                     </tr>
@@ -789,7 +851,7 @@ export function ExpiringProductsManager() {
                     <BadgePercent size={18} className="text-blue-600" />
                     <h2 className="text-sm font-black uppercase tracking-widest text-slate-950">Regras de desconto</h2>
                   </div>
-                  <p className="mt-1 text-xs font-bold text-slate-500">Crie regras por produto, fabricante, linha, departamento ou categoria.</p>
+                  <p className="mt-1 text-xs font-bold text-slate-500">Crie regras e escolha quais entram no calculo da importacao atual.</p>
                 </div>
                 <button
                   type="button"
@@ -811,24 +873,37 @@ export function ExpiringProductsManager() {
                 </div>
               ) : (
                 <div className="grid gap-2">
-                  {rules.map((rule) => (
-                    <article key={rule.id} className="grid grid-cols-1 gap-3 rounded-3xl border border-slate-100 bg-white px-4 py-3 shadow-sm shadow-slate-200/70 transition hover:border-blue-100 hover:shadow-md md:grid-cols-[minmax(180px,1fr)_minmax(260px,1.4fr)_130px_110px_auto] md:items-center">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-black uppercase text-slate-950" title={rule.name}>{rule.name}</p>
-                        <p className="mt-1 text-[10px] font-black uppercase tracking-widest text-slate-400 md:hidden">{SCOPE_LABELS[rule.scope_type]}</p>
-                      </div>
-                      <div className="min-w-0 rounded-2xl bg-slate-50 px-3 py-2">
-                        <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">{SCOPE_LABELS[rule.scope_type]}</p>
-                        <p className="mt-1 truncate text-xs font-black uppercase text-slate-700" title={rule.scope_value}>{rule.scope_value}</p>
-                      </div>
-                      <span className="text-xs font-black uppercase text-slate-700 md:text-right">{monthsRangeLabel(rule.min_days_to_expire, rule.max_days_to_expire)}</span>
-                      <span className="rounded-2xl bg-emerald-50 px-3 py-2 text-center text-sm font-black text-emerald-700">{rule.discount_type === 'percent' ? String(rule.discount_value) + '%' : money(rule.discount_value)}</span>
-                      <div className="flex justify-end gap-2">
-                        <button onClick={() => editRule(rule)} className="p-2 text-slate-300 transition hover:text-blue-600" title="Editar regra"><Edit3 size={20} /></button>
-                        <button onClick={() => void removeRule(rule.id)} className="p-2 text-slate-200 transition hover:text-red-600" title="Excluir regra"><Trash2 size={20} /></button>
-                      </div>
-                    </article>
-                  ))}
+                  {rules.map((rule) => {
+                    const disabledForCurrentImport = disabledRuleSet.has(rule.id);
+                    const usableInCurrentImport = rule.is_active && !disabledForCurrentImport;
+                    return (
+                      <article key={rule.id} className={['grid grid-cols-1 gap-3 rounded-3xl border bg-white px-4 py-3 shadow-sm shadow-slate-200/70 transition hover:shadow-md md:grid-cols-[minmax(180px,1fr)_minmax(260px,1.4fr)_130px_110px_150px_auto] md:items-center', usableInCurrentImport ? 'border-blue-100 hover:border-blue-200' : 'border-slate-100 opacity-70'].join(' ')}>
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-black uppercase text-slate-950" title={rule.name}>{rule.name}</p>
+                          <p className="mt-1 text-[10px] font-black uppercase tracking-widest text-slate-400 md:hidden">{SCOPE_LABELS[rule.scope_type]}</p>
+                        </div>
+                        <div className="min-w-0 rounded-2xl bg-slate-50 px-3 py-2">
+                          <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">{SCOPE_LABELS[rule.scope_type]}</p>
+                          <p className="mt-1 truncate text-xs font-black uppercase text-slate-700" title={rule.scope_type === 'validity' ? 'Todos os produtos dentro do periodo' : rule.scope_value}>{rule.scope_type === 'validity' ? 'Todos os produtos dentro do periodo' : rule.scope_value}</p>
+                        </div>
+                        <span className="text-xs font-black uppercase text-slate-700 md:text-right">{monthsRangeLabel(rule.min_days_to_expire, rule.max_days_to_expire)}</span>
+                        <span className="rounded-2xl bg-[color-mix(in_srgb,var(--section-accent)_10%,white)] px-3 py-2 text-center text-sm font-black text-[var(--section-accent)]">{rule.discount_type === 'percent' ? String(rule.discount_value) + '%' : money(rule.discount_value)}</span>
+                        <button
+                          type="button"
+                          disabled={!rule.is_active}
+                          onClick={() => toggleRuleForCurrentImport(rule.id)}
+                          className={['inline-flex h-10 items-center justify-center rounded-2xl px-3 text-[10px] font-black uppercase tracking-widest transition', !rule.is_active ? 'cursor-not-allowed bg-slate-100 text-slate-300' : usableInCurrentImport ? 'bg-blue-50 text-blue-700 ring-1 ring-blue-100 hover:bg-blue-100' : 'bg-amber-50 text-amber-700 ring-1 ring-amber-100 hover:bg-amber-100'].join(' ')}
+                          title={!rule.is_active ? 'Regra inativa no cadastro' : usableInCurrentImport ? 'Clique para ignorar esta regra neste processo' : 'Clique para usar esta regra neste processo'}
+                        >
+                          {!rule.is_active ? 'Inativa' : usableInCurrentImport ? 'Usando agora' : 'Ignorada agora'}
+                        </button>
+                        <div className="flex justify-end gap-2">
+                          <button onClick={() => editRule(rule)} className="p-2 text-slate-300 transition hover:text-blue-600" title="Editar regra"><Edit3 size={20} /></button>
+                          <button onClick={() => void removeRule(rule.id)} className="p-2 text-slate-200 transition hover:text-red-600" title="Excluir regra"><Trash2 size={20} /></button>
+                        </div>
+                      </article>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -866,8 +941,15 @@ export function ExpiringProductsManager() {
                 <div className="rounded-3xl border border-slate-100 bg-slate-50/60 p-4 lg:col-span-2">
                   <p className="mb-3 text-[10px] font-black uppercase tracking-widest text-slate-400">Alvo da regra</p>
                   <div className="grid grid-cols-1 gap-3 md:grid-cols-[220px_1fr]">
-                    <RuleSearchableSelect value={ruleDraft.scope_type} options={scopeTypeOptions} placeholder="Tipo" onChange={(value) => setRuleDraft({ ...ruleDraft, scope_type: (value || 'category') as ExpiringRuleScopeType, scope_value: '' })} />
-                    <RuleSearchableSelect value={ruleDraft.scope_value} options={ruleScopeOptions[ruleDraft.scope_type]} placeholder="Escolha o alvo" onChange={(value) => setRuleDraft({ ...ruleDraft, scope_value: value })} />
+                    <RuleSearchableSelect value={ruleDraft.scope_type} options={scopeTypeOptions} placeholder="Tipo" onChange={(value) => {
+                      const nextScope = (value || 'category') as ExpiringRuleScopeType;
+                      setRuleDraft({ ...ruleDraft, scope_type: nextScope, scope_value: nextScope === 'validity' ? 'VALIDADE' : '' });
+                    }} />
+                    {ruleDraft.scope_type === 'validity' ? (
+                      <div className="flex h-12 items-center rounded-2xl bg-white px-4 text-xs font-black uppercase text-slate-500 ring-1 ring-slate-100">Todos os produtos dentro do periodo</div>
+                    ) : (
+                      <RuleSearchableSelect value={ruleDraft.scope_value} options={ruleScopeOptions[ruleDraft.scope_type]} placeholder="Escolha o alvo" onChange={(value) => setRuleDraft({ ...ruleDraft, scope_value: value })} />
+                    )}
                   </div>
                 </div>
 
@@ -950,7 +1032,7 @@ export function ExpiringProductsManager() {
                         <td className="px-3 py-3 font-bold text-slate-500">{normalizeBranchCode(item.branch_code)} - {branchByCode.get(normalizeBranchCode(item.branch_code))?.name || item.branch_name || 'LOJA NAO CADASTRADA'}</td>
                         <td className="px-3 py-3 font-bold uppercase text-slate-500">{rule?.name}</td>
                         <td className="px-3 py-3 text-right font-black text-blue-700">{price ? money(price) : '-'}</td>
-                        <td className="px-3 py-3 text-right font-black text-emerald-700">{discount ? formatTxtNumber(discount) + '%' : '-'}</td>
+                        <td className="px-3 py-3 text-right font-black text-[var(--section-accent)]">{discount ? formatTxtNumber(discount) + '%' : '-'}</td>
                         <td className="px-3 py-3 font-mono text-[11px] text-slate-500">B|{item.ean}|||{formatTxtNumber(discount)}</td>
                       </tr>
                     ))}

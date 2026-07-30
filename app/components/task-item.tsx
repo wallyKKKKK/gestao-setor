@@ -60,6 +60,8 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
   const workflowStartedProfile = task.workflow_started_by ? profiles.find((p: Profile) => p.id === task.workflow_started_by) : null;
   const workflowName = task.workflow_started_by_name || workflowStartedProfile?.full_name || "";
   const workflowFirstName = workflowName.split(" ")[0] || assignedFirstName;
+  const canPauseWorkflow = !isInProgress || !task.workflow_started_by || task.workflow_started_by === currentUser?.id;
+  const pauseDeniedMessage = `Somente ${workflowFirstName} pode pausar esta tarefa.`;
   const workflowBadgeClassName = workflowStatus === "em_andamento"
     ? "border-blue-600 bg-blue-600 text-white shadow-[0_8px_18px_rgba(37,99,235,0.20)]"
     : workflowStatus === "bloqueada"
@@ -79,6 +81,12 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
     if (!canManage) {
       void recordBlockedTaskAttempt("Alterar status da tarefa");
       alert(manageTaskDeniedMessage);
+      return;
+    }
+
+    if (status === "pendente" && isInProgress && !canPauseWorkflow) {
+      void recordBlockedTaskAttempt("Pausar tarefa iniciada por outro usuario");
+      alert(pauseDeniedMessage);
       return;
     }
 
@@ -512,8 +520,8 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
                 event.stopPropagation();
                 changeWorkflow(workflowStatus === "em_andamento" ? "pendente" : "em_andamento");
               }}
-              className="inline-flex items-center justify-center gap-1 text-[9px] font-black uppercase tracking-widest text-slate-300 transition hover:text-blue-600"
-              title={workflowStatus === "em_andamento" ? "Pausar andamento" : "Marcar em andamento"}
+              className={`inline-flex items-center justify-center gap-1 text-[9px] font-black uppercase tracking-widest transition ${workflowStatus === "em_andamento" && !canPauseWorkflow ? "cursor-not-allowed text-slate-200 hover:text-slate-300" : "text-slate-300 hover:text-blue-600"}`}
+              title={workflowStatus === "em_andamento" ? (canPauseWorkflow ? "Pausar andamento" : pauseDeniedMessage) : "Marcar em andamento"}
             >
               {workflowStatus === "em_andamento" ? <PauseCircle size={12} strokeWidth={3} /> : <Play size={12} strokeWidth={3} />}
               {workflowStatus === "em_andamento" ? "Pausar" : "Iniciar"}

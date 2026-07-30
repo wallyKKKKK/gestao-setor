@@ -30,27 +30,39 @@ export function buildMonthlyWeekdayRepeat(ordinal: MonthlyWeekdayOrdinal, weekda
   return `mw:${ordinal}:${weekday}`;
 }
 
+export function parseMonthlyWeekdayRepeats(repeatDays: string | null | undefined) {
+  return (repeatDays || "")
+    .split(",")
+    .map((part) => part.trim())
+    .map((part) => {
+      const [prefix, ordinal, weekday] = part.split(":");
+      if (prefix !== "mw") return null;
+      if (!MONTHLY_WEEKDAY_ORDINALS.some((item) => item.value === ordinal)) return null;
+      if (!(weekday in WEEK_DAYS)) return null;
+      return {
+        ordinal: ordinal as MonthlyWeekdayOrdinal,
+        weekday,
+        value: buildMonthlyWeekdayRepeat(ordinal as MonthlyWeekdayOrdinal, weekday),
+      };
+    })
+    .filter((item): item is { ordinal: MonthlyWeekdayOrdinal; weekday: string; value: string } => Boolean(item));
+}
+
 export function parseMonthlyWeekdayRepeat(repeatDays: string | null | undefined) {
-  const [prefix, ordinal, weekday] = (repeatDays || "").split(":");
-
-  if (prefix !== "mw") return null;
-  if (!MONTHLY_WEEKDAY_ORDINALS.some((item) => item.value === ordinal)) return null;
-  if (!(weekday in WEEK_DAYS)) return null;
-
-  return {
-    ordinal: ordinal as MonthlyWeekdayOrdinal,
-    weekday,
-  };
+  return parseMonthlyWeekdayRepeats(repeatDays)[0] || null;
 }
 
 export function getRecurrenceLabel(task: Pick<Task, "repeat_days" | "repeat_interval" | "is_one_off">) {
   if (task.is_one_off || !task.repeat_days) return "PONTUAL";
 
-  const monthlyWeekdayRepeat = parseMonthlyWeekdayRepeat(task.repeat_days);
-  if (monthlyWeekdayRepeat) {
-    const ordinalLabel = MONTHLY_WEEKDAY_ORDINALS.find((item) => item.value === monthlyWeekdayRepeat.ordinal)?.label || "1a";
-    const weekdayLabel = WEEK_DAY_LABELS[monthlyWeekdayRepeat.weekday] || monthlyWeekdayRepeat.weekday.toUpperCase();
-    return `${ordinalLabel} ${weekdayLabel} DO MES`;
+  const monthlyWeekdayRepeats = parseMonthlyWeekdayRepeats(task.repeat_days);
+  if (monthlyWeekdayRepeats.length) {
+    const labels = monthlyWeekdayRepeats.map((repeat) => {
+      const ordinalLabel = MONTHLY_WEEKDAY_ORDINALS.find((item) => item.value === repeat.ordinal)?.label || "1a";
+      const weekdayLabel = WEEK_DAY_LABELS[repeat.weekday] || repeat.weekday.toUpperCase();
+      return `${ordinalLabel} ${weekdayLabel}`;
+    });
+    return `${labels.join(" + ")} DO MES`;
   }
 
   const dayOfMonth = parseInt(task.repeat_days);
@@ -124,25 +136,23 @@ export const getLastOccurrence = (task: Task) => {
 
   let theoreticalLastStr = "1970-01-01";
 
-  const monthlyWeekdayRepeat = parseMonthlyWeekdayRepeat(task.repeat_days);
-  if (monthlyWeekdayRepeat) {
+  const monthlyWeekdayRepeats = parseMonthlyWeekdayRepeats(task.repeat_days);
+  if (monthlyWeekdayRepeats.length) {
     const today = new Date();
-    const thisMonthOcc = getMonthlyWeekdayOccurrence(
-      today.getFullYear(),
-      today.getMonth(),
-      monthlyWeekdayRepeat.ordinal,
-      monthlyWeekdayRepeat.weekday,
-    );
-    const previousMonthOcc = getMonthlyWeekdayOccurrence(
-      today.getFullYear(),
-      today.getMonth() - (task.repeat_interval || 1),
-      monthlyWeekdayRepeat.ordinal,
-      monthlyWeekdayRepeat.weekday,
-    );
+    const interval = task.repeat_interval || 1;
 
-    const thisMonthOccStr = thisMonthOcc ? toDateStr(thisMonthOcc) : "9999-12-31";
-    const targetDate = thisMonthOccStr <= todayStr ? thisMonthOcc : previousMonthOcc;
-    theoreticalLastStr = targetDate ? toDateStr(targetDate) : "1970-01-01";
+    for (let monthOffset = -interval * 24; monthOffset <= 0; monthOffset += interval) {
+      for (const repeat of monthlyWeekdayRepeats) {
+        const occurrence = getMonthlyWeekdayOccurrence(
+          today.getFullYear(),
+          today.getMonth() + monthOffset,
+          repeat.ordinal,
+          repeat.weekday,
+        );
+        const occStr = occurrence ? toDateStr(occurrence) : "";
+        if (occStr && occStr <= todayStr && occStr > theoreticalLastStr) theoreticalLastStr = occStr;
+      }
+    }
   } else {
   const dayOfMonth = parseInt(task.repeat_days);
   if (!isNaN(dayOfMonth) && !task.repeat_days.includes(",")) {
@@ -185,22 +195,47 @@ export const getLastOccurrence = (task: Task) => {
   return theoreticalLastStr;
 };
 
+
+export function monthlyWeekdayOccursOnDate(repeatDays: string | null | undefined, dateStr: string, interval = 1, createdAt?: string | null) {
+  const repeats = parseMonthlyWeekdayRepeats(repeatDays);
+  if (!repeats.length) return false;
+
+  const [year, month, day] = dateStr.split("-").map(Number);
+  const target = new Date(year, month - 1, day);
+
+  if (createdAt && interval > 1) {
+    const created = new Date(createdAt);
+    const monthsSinceStart = (target.getFullYear() - created.getFullYear()) * 12 + (target.getMonth() - created.getMonth());
+    if (monthsSinceStart < 0 || monthsSinceStart % interval !== 0) return false;
+  }
+
+  return repeats.some((repeat) => {
+    const occurrence = getMonthlyWeekdayOccurrence(target.getFullYear(), target.getMonth(), repeat.ordinal, repeat.weekday);
+    return occurrence ? toDateStr(occurrence) === dateStr : false;
+  });
+}
+
 export const getNextOccurrence = (task: Task) => {
   const today = new Date();
   const todayStr = getTodayStr();
   if (!task.repeat_days || task.repeat_days === "") return task.due_date || "--/--/----";
 
-  const monthlyWeekdayRepeat = parseMonthlyWeekdayRepeat(task.repeat_days);
-  if (monthlyWeekdayRepeat) {
+  const monthlyWeekdayRepeats = parseMonthlyWeekdayRepeats(task.repeat_days);
+  if (monthlyWeekdayRepeats.length) {
     for (let monthOffset = 0; monthOffset <= 60; monthOffset += task.repeat_interval || 1) {
-      const occurrence = getMonthlyWeekdayOccurrence(
-        today.getFullYear(),
-        today.getMonth() + monthOffset,
-        monthlyWeekdayRepeat.ordinal,
-        monthlyWeekdayRepeat.weekday,
-      );
-      const occStr = occurrence ? toDateStr(occurrence) : "";
-      if (occStr >= todayStr) return formatToBR(occStr);
+      const occurrences = monthlyWeekdayRepeats
+        .map((repeat) => getMonthlyWeekdayOccurrence(
+          today.getFullYear(),
+          today.getMonth() + monthOffset,
+          repeat.ordinal,
+          repeat.weekday,
+        ))
+        .filter((date): date is Date => Boolean(date))
+        .map(toDateStr)
+        .sort();
+
+      const nextDate = occurrences.find((occStr) => occStr >= todayStr);
+      if (nextDate) return formatToBR(nextDate);
     }
 
     return "--/--/----";

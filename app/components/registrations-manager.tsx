@@ -201,6 +201,29 @@ export function RegistrationsManager({ canManageBranches, canManageProducts, can
   }, [canManageBranches, loadBranches, loadMargins, loadProductAttributes, loadProducts, loadSuppliers]);
 
   useEffect(() => {
+    const handleRefresh = () => {
+      void loadProducts(productSearch, productManufacturerFilter, productClassificationFilter);
+      void loadProductAttributes();
+      void loadMargins();
+      void loadBranches();
+      if (canManageBranches) void loadSuppliers();
+    };
+
+    window.addEventListener('wally:app-refresh', handleRefresh);
+    return () => window.removeEventListener('wally:app-refresh', handleRefresh);
+  }, [
+    canManageBranches,
+    loadBranches,
+    loadMargins,
+    loadProductAttributes,
+    loadProducts,
+    loadSuppliers,
+    productClassificationFilter,
+    productManufacturerFilter,
+    productSearch,
+  ]);
+
+  useEffect(() => {
     const timeout = window.setTimeout(() => loadProducts(productSearch, productManufacturerFilter, productClassificationFilter), 300);
     return () => window.clearTimeout(timeout);
   }, [loadProducts, productClassificationFilter, productManufacturerFilter, productSearch]);

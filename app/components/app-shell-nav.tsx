@@ -10,9 +10,12 @@ import {
   Database,
   Eye,
   EyeOff,
+  LayoutGrid,
   ListTodo,
   Moon,
+  PackageSearch,
   Search,
+  RefreshCw,
   Settings,
   ShoppingCart,
   Shuffle,
@@ -26,6 +29,7 @@ import { NAV_CATEGORIES } from '@/app/constants';
 import { MultiCheckboxFilter } from '@/app/components/multi-checkbox-filter';
 import { MARGIN_FLOW_CATEGORY, canUseMarginFlowTasks } from '@/lib/margin-flow-task';
 import type { AppSection } from '@/app/components/app-sidebar';
+import { getSectionTheme } from '@/lib/section-theme';
 import type { AppNotification, NotificationPreferences, Profile, UserRole } from '@/lib/types';
 
 interface AppShellNavProps {
@@ -49,6 +53,8 @@ interface AppShellNavProps {
   onOpenGlobalSearch: () => void;
   onOpenProfile: () => void;
   onOpenSettings: () => void;
+  onRefresh: () => void;
+  isRefreshing: boolean;
   notifications: AppNotification[];
   unreadNotificationIds: string[];
   browserNotificationPermission: NotificationPermission | "unsupported";
@@ -59,17 +65,19 @@ interface AppShellNavProps {
   onNotificationPreferenceChange: (key: keyof NotificationPreferences, value: boolean) => void;
 }
 
-const SECTION_NAV_META: Record<AppSection, { icon: LucideIcon; iconClassName: string }> = {
-  TAREFAS: { icon: ListTodo, iconClassName: 'bg-blue-600 text-white' },
-  REUNIAO: { icon: CalendarDays, iconClassName: 'bg-sky-600 text-white' },
-  COMPRAS_IA: { icon: ShoppingCart, iconClassName: 'bg-emerald-600 text-white' },
-  CADASTROS: { icon: Database, iconClassName: 'bg-slate-700 text-white' },
-  PRECIFICACAO: { icon: Tags, iconClassName: 'bg-indigo-600 text-white' },
-  PRE_VENCIDOS: { icon: BadgePercent, iconClassName: 'bg-amber-500 text-white' },
-  PRAZOS: { icon: Clock3, iconClassName: 'bg-emerald-600 text-white' },
-  TRANSPORTE: { icon: Truck, iconClassName: 'bg-blue-600 text-white' },
-  BALACUBACO: { icon: Shuffle, iconClassName: 'bg-violet-600 text-white' },
-  AUDITORIA: { icon: ClipboardList, iconClassName: 'bg-amber-600 text-white' },
+const SECTION_NAV_META: Record<AppSection, { icon: LucideIcon }> = {
+  INICIO: { icon: LayoutGrid },
+  TAREFAS: { icon: ListTodo },
+  REUNIAO: { icon: CalendarDays },
+  COMPRAS_IA: { icon: ShoppingCart },
+  CADASTROS: { icon: Database },
+  ESTOQUE_ERP: { icon: PackageSearch },
+  PRECIFICACAO: { icon: Tags },
+  PRE_VENCIDOS: { icon: BadgePercent },
+  PRAZOS: { icon: Clock3 },
+  TRANSPORTE: { icon: Truck },
+  BALACUBACO: { icon: Shuffle },
+  AUDITORIA: { icon: ClipboardList },
 };
 
 const NOTIFICATION_GROUPS = [
@@ -122,6 +130,8 @@ export function AppShellNav({
   onOpenGlobalSearch,
   onOpenProfile,
   onOpenSettings,
+  onRefresh,
+  isRefreshing,
   notifications,
   unreadNotificationIds,
   browserNotificationPermission,
@@ -135,6 +145,7 @@ export function AppShellNav({
   const visibleProfiles = profiles.filter((profile) => userRole === 'admin' || profile.sector === userSector);
   const visibleTaskTabs = NAV_CATEGORIES.filter((tab) => tab.id !== MARGIN_FLOW_CATEGORY || canUseMarginFlowTasks(userSector));
   const SectionIcon = SECTION_NAV_META[section].icon;
+  const sectionTheme = getSectionTheme(section);
   const [showNotifications, setShowNotifications] = useState(false);
   const [showNotificationPreferences, setShowNotificationPreferences] = useState(false);
   const unreadCount = unreadNotificationIds.length;
@@ -165,9 +176,9 @@ export function AppShellNav({
 
   return (
     <>
-      <nav className="bg-[#151D33] text-white sticky top-0 z-[200] border-b border-white/10 px-3 sm:px-5 h-16 flex justify-between items-center">
+      <nav className="sticky top-0 z-[200] flex h-16 items-center justify-between border-b border-white/10 bg-[#151D33] px-3 text-white shadow-[0_8px_24px_rgba(15,23,42,0.22)] sm:px-5">
         <div className="flex items-center gap-2 sm:gap-3 min-w-0 overflow-visible">
-          <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl shadow-lg ${SECTION_NAV_META[section].iconClassName}`}>
+          <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl shadow-lg ${sectionTheme.iconClassName}`}>
             <SectionIcon size={22} strokeWidth={2.8} />
           </div>
 
@@ -176,7 +187,10 @@ export function AppShellNav({
               {sectionTitle}
             </p>
             {sectionSubtitle && (
-              <p className="mt-0.5 truncate text-[9px] font-black uppercase tracking-[0.18em] text-blue-300">
+              <p
+                className="mt-0.5 truncate text-[9px] font-black uppercase tracking-[0.18em]"
+                style={{ color: sectionTheme.accent }}
+              >
                 {sectionSubtitle}
               </p>
             )}
@@ -195,6 +209,18 @@ export function AppShellNav({
             Buscar
             <span className="rounded-md border border-white/10 bg-white/5 px-1.5 py-0.5 text-[8px] text-slate-400">Ctrl K</span>
           </button>
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={isRefreshing}
+            className="flex h-10 w-10 items-center justify-center rounded-xl border bg-white/5 text-slate-200 transition-all hover:bg-white/10 hover:text-white disabled:cursor-wait disabled:opacity-60 lg:w-auto lg:px-3"
+            style={{ borderColor: `${sectionTheme.accent}55` }}
+            aria-label="Atualizar dados do sistema"
+            title="Atualizar dados"
+          >
+            <RefreshCw size={17} className={isRefreshing ? 'animate-spin' : ''} />
+            <span className="hidden text-[10px] font-black uppercase tracking-widest lg:inline">Atualizar</span>
+          </button>
 
           <div className="relative">
             <button
@@ -206,7 +232,10 @@ export function AppShellNav({
             >
               <Bell size={20} />
               {unreadCount > 0 && (
-                <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full border-2 border-[#151D33] bg-blue-500 px-1 text-[9px] font-black text-white">
+                <span
+                  className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full border-2 border-[#151D33] px-1 text-[9px] font-black text-white"
+                  style={{ backgroundColor: sectionTheme.accent }}
+                >
                   {unreadCount > 9 ? '9+' : unreadCount}
                 </span>
               )}
@@ -407,7 +436,10 @@ export function AppShellNav({
             onClick={onOpenProfile}
             className="flex items-center gap-3 bg-white/5 p-1.5 sm:pl-2 sm:pr-4 sm:py-1.5 rounded-full border border-white/10 hover:bg-white/10 transition-all shadow-sm"
           >
-            <div className="w-8 h-8 bg-gradient-to-tr from-blue-600 to-indigo-600 rounded-full flex items-center justify-center text-[10px] font-black shadow-lg">
+            <div
+              className="w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-black text-white shadow-lg"
+              style={{ backgroundColor: sectionTheme.accent }}
+            >
               {currentProfile?.full_name?.charAt(0) || 'U'}
             </div>
             <span className="text-[11px] font-bold uppercase text-slate-300 hidden md:block">
@@ -449,16 +481,18 @@ export function AppShellNav({
                       onClick={() => onActiveTabChange(tab.id)}
                       className={`flex min-w-[104px] flex-col items-center justify-center gap-1.5 rounded-t-[16px] border px-4 transition-all ${
                         isActive
-                          ? 'h-[82px] bg-white text-blue-600 border-white shadow-[0_14px_28px_rgba(37,99,235,0.16)]'
-                          : 'h-[66px] bg-slate-100 text-slate-600 border-slate-200/80 hover:bg-slate-50 hover:text-blue-600'
+                          ? 'h-[82px] bg-white border-white'
+                          : 'h-[66px] bg-slate-100 text-slate-600 border-slate-200/80 hover:bg-slate-50'
                       }`}
+                      style={isActive ? { color: sectionTheme.accent, boxShadow: `0 14px 28px ${sectionTheme.accent}22` } : undefined}
                     >
                       <Icon
                         size={isActive ? 25 : 21}
-                        className={isActive ? 'text-blue-500' : 'text-slate-500'}
+                        className={isActive ? '' : 'text-slate-500'}
+                        style={isActive ? { color: sectionTheme.accent } : undefined}
                         strokeWidth={isActive ? 3 : 2.4}
                       />
-                      <span className={`text-[10px] font-black uppercase tracking-tight ${isActive ? 'text-blue-600' : ''}`}>
+                      <span className="text-[10px] font-black uppercase tracking-tight">
                         {tab.label}
                       </span>
                     </button>
@@ -480,7 +514,7 @@ export function AppShellNav({
                   helper: profile.sector || 'Geral',
                 }))}
                 className="w-full"
-                buttonClassName="h-12 rounded-2xl border-2 border-slate-200 bg-white text-slate-900 shadow-[0_4px_12px_rgba(15,23,42,0.06)] hover:border-blue-200 hover:text-blue-700"
+                buttonClassName="h-12 rounded-2xl border-2 border-slate-200 bg-white text-slate-900 shadow-[0_4px_12px_rgba(15,23,42,0.06)] hover:border-[var(--section-accent)] hover:text-[var(--section-accent)]"
               />
 
               <div className="flex justify-center">
@@ -489,7 +523,11 @@ export function AppShellNav({
 
               <div className="group w-full">
                 <div className="relative flex h-12 items-center">
-                  <Search size={18} className={`absolute left-5 top-1/2 -translate-y-1/2 transition-colors duration-300 z-10 ${searchTerm ? 'text-blue-600' : 'text-slate-400'}`} />
+                  <Search
+                    size={18}
+                    className="absolute left-5 top-1/2 z-10 -translate-y-1/2 transition-colors duration-300 text-slate-400"
+                    style={{ color: searchTerm ? sectionTheme.accent : undefined }}
+                  />
                   <input
                     type="text"
                     placeholder="DIGITE PARA BUSCAR TAREFAS..."
@@ -497,8 +535,8 @@ export function AppShellNav({
                     onChange={(event) => onSearchTermChange(event.target.value)}
                     className={`h-full w-full rounded-2xl border-2 border-slate-200 bg-white pl-14 pr-12 text-[11px] font-black text-slate-900 outline-none transition-all placeholder:text-slate-400 shadow-[0_4px_12px_rgba(15,23,42,0.06)] ${
                       searchTerm
-                        ? 'ring-2 ring-blue-500'
-                        : 'hover:border-blue-200 focus:border-blue-300 focus:ring-2 focus:ring-blue-100'
+                        ? 'ring-2 ring-[var(--section-accent)]'
+                        : 'hover:border-[var(--section-accent)] focus:border-[var(--section-accent)] focus:ring-2 focus:ring-[color-mix(in_srgb,var(--section-accent)_18%,white)]'
                     }`}
                   />
                   {searchTerm && (

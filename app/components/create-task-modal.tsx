@@ -6,7 +6,7 @@ import { TASK_CATEGORIES, WEEK_DAYS } from "@/app/constants";
 import { MarginFlowTaskFields } from "@/app/components/margin-flow-task-fields";
 import { buildMarginFlowTaskNotes, MARGIN_FLOW_CATEGORY, canUseMarginFlowTasks, marginFlowTaskTitle, parseMarginFlowTaskNotes } from "@/lib/margin-flow-task";
 import { TASK_PRIORITY_OPTIONS } from "@/lib/task-priority";
-import { buildMonthlyWeekdayRepeat, MONTHLY_WEEKDAY_ORDINALS, parseMonthlyWeekdayRepeat } from "@/lib/task-recurrence";
+import { buildMonthlyWeekdayRepeat, MONTHLY_WEEKDAY_ORDINALS, parseMonthlyWeekdayRepeats } from "@/lib/task-recurrence";
 import type { PricingMarginRule, Profile, Subtask, TaskPriority, UserRole } from "@/lib/types";
 
 interface CreateTaskModalProps {
@@ -84,10 +84,9 @@ export function CreateTaskModal({
 }: CreateTaskModalProps) {
   const isMonthly = taskScheduleMode === "mensal";
   const isOneOff = taskScheduleMode === "pontual";
-  const monthlyWeekdayRepeat = parseMonthlyWeekdayRepeat(selectedDays[0]);
-  const isMonthlyWeekday = isMonthly && Boolean(monthlyWeekdayRepeat);
-  const selectedMonthlyOrdinal = monthlyWeekdayRepeat?.ordinal || "1";
-  const selectedMonthlyWeekday = monthlyWeekdayRepeat?.weekday || "seg";
+  const monthlyWeekdayRepeats = parseMonthlyWeekdayRepeats(selectedDays.join(','));
+  const isMonthlyWeekday = isMonthly && monthlyWeekdayRepeats.length > 0;
+  const selectedMonthlyWeekdayValues = new Set(monthlyWeekdayRepeats.map((repeat) => repeat.value));
   const canUseMarginFlow = canUseMarginFlowTasks(userSector);
   const taskCategoryOptions = TASK_CATEGORIES.filter((option) => option !== MARGIN_FLOW_CATEGORY || canUseMarginFlow);
   const isMarginFlow = category === MARGIN_FLOW_CATEGORY;
@@ -97,8 +96,10 @@ export function CreateTaskModal({
   const updateVisibleNotes = (value: string) => {
     setNotes(isMarginFlow ? buildMarginFlowTaskNotes(value, marginFlowNotes.data) : value);
   };
-  const setMonthlyWeekdayRepeat = (ordinal: typeof selectedMonthlyOrdinal, weekday: string) => {
-    setSelectedDays([buildMonthlyWeekdayRepeat(ordinal, weekday)]);
+  const toggleMonthlyWeekdayRepeat = (ordinal: (typeof MONTHLY_WEEKDAY_ORDINALS)[number]['value'], weekday: string) => {
+    const value = buildMonthlyWeekdayRepeat(ordinal, weekday);
+    const currentValues = parseMonthlyWeekdayRepeats(selectedDays.join(',')).map((repeat) => repeat.value);
+    setSelectedDays(currentValues.includes(value) ? currentValues.filter((item) => item !== value) : [...currentValues, value]);
   };
 
   return (
@@ -178,7 +179,7 @@ export function CreateTaskModal({
                 <div className="space-y-2">
                   <div className="grid grid-cols-2 gap-2 rounded-xl border-2 border-slate-100 bg-slate-50 p-1">
                     <button type="button" onClick={() => setSelectedDays(["1"])} className={`rounded-lg py-2 text-[9px] font-black uppercase transition ${!isMonthlyWeekday ? "bg-white text-blue-600 shadow-sm" : "text-slate-400"}`}>Dia fixo</button>
-                    <button type="button" onClick={() => setMonthlyWeekdayRepeat("1", "seg")} className={`rounded-lg py-2 text-[9px] font-black uppercase transition ${isMonthlyWeekday ? "bg-white text-blue-600 shadow-sm" : "text-slate-400"}`}>Dia da semana</button>
+                    <button type="button" onClick={() => setSelectedDays([buildMonthlyWeekdayRepeat("1", "seg")])} className={`rounded-lg py-2 text-[9px] font-black uppercase transition ${isMonthlyWeekday ? "bg-white text-blue-600 shadow-sm" : "text-slate-400"}`}>Dia da semana</button>
                   </div>
 
                   {!isMonthlyWeekday ? (
@@ -188,18 +189,25 @@ export function CreateTaskModal({
                     </div>
                   ) : (
                     <div className="space-y-2">
-                      <div className="grid grid-cols-5 gap-1">
-                        {MONTHLY_WEEKDAY_ORDINALS.map((item) => (
-                          <button key={item.value} type="button" onClick={() => setMonthlyWeekdayRepeat(item.value, selectedMonthlyWeekday)} className={`h-9 rounded-xl text-[9px] font-black uppercase transition ${selectedMonthlyOrdinal === item.value ? "bg-blue-600 text-white shadow-sm" : "bg-slate-50 text-slate-400"}`}>
-                            {item.label}
-                          </button>
-                        ))}
-                      </div>
-                      <div className="grid grid-cols-5 gap-1">
+                      <p className="px-1 text-[8px] font-black uppercase tracking-widest text-slate-400">Marque uma ou mais semanas do mes</p>
+                      <div className="grid grid-cols-[74px_repeat(5,minmax(0,1fr))] gap-1 rounded-2xl border-2 border-slate-100 bg-slate-50 p-2">
+                        <span className="self-center text-[8px] font-black uppercase text-slate-400">Semana</span>
                         {WEEK_DAYS.map((day) => (
-                          <button key={day.id} type="button" onClick={() => setMonthlyWeekdayRepeat(selectedMonthlyOrdinal, day.id)} className={`h-9 rounded-xl text-[9px] font-black uppercase transition ${selectedMonthlyWeekday === day.id ? "bg-slate-950 text-white shadow-sm" : "bg-slate-50 text-slate-400"}`}>
-                            {day.label}
-                          </button>
+                          <span key={day.id} className="text-center text-[8px] font-black uppercase text-slate-400">{day.label}</span>
+                        ))}
+                        {MONTHLY_WEEKDAY_ORDINALS.map((item) => (
+                          <div key={item.value} className="contents">
+                            <span className="flex items-center text-[8px] font-black uppercase text-slate-500">{item.label}</span>
+                            {WEEK_DAYS.map((day) => {
+                              const value = buildMonthlyWeekdayRepeat(item.value, day.id);
+                              const selected = selectedMonthlyWeekdayValues.has(value);
+                              return (
+                                <button key={value} type="button" onClick={() => toggleMonthlyWeekdayRepeat(item.value, day.id)} className={`h-8 rounded-xl text-[9px] font-black uppercase transition ${selected ? "bg-blue-600 text-white shadow-sm" : "bg-white text-slate-400 hover:text-blue-600"}`}>
+                                  {day.label}
+                                </button>
+                              );
+                            })}
+                          </div>
                         ))}
                       </div>
                     </div>
