@@ -1,4 +1,4 @@
-﻿'use client'
+'use client'
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react'
 import type { CSSProperties } from 'react'
 import dynamic from 'next/dynamic'
@@ -1065,7 +1065,7 @@ const addMeeting = useCallback(async (meeting: CreateMeetingInput) => {
   try {
     await createMeeting(meeting);
     await fetchTasks();
-    await addAudit('meeting_created', 'meeting', null, meeting.title, meeting.sector, `${meeting.date} ${meeting.time}`);
+    await addAudit('meeting_created', 'meeting', null, meeting.title, meeting.sector, `${meeting.date}${meeting.endDate && meeting.endDate !== meeting.date ? ` ate ${meeting.endDate}` : ''} ${meeting.time}`);
     alert('Reunião agendada com sucesso!');
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Erro desconhecido';
@@ -1076,6 +1076,7 @@ const addMeeting = useCallback(async (meeting: CreateMeetingInput) => {
 const updateMeeting = useCallback(async (task: ProcessedTask, meeting: CreateMeetingInput) => {
   const details = [
     `Horário: ${meeting.time}`,
+    meeting.endDate && meeting.endDate !== meeting.date ? `Data final: ${meeting.endDate}` : null,
     `Motivo: ${meeting.motive}`,
     meeting.location ? `Local: ${meeting.location}` : null,
     meeting.notes ? `Observações: ${meeting.notes}` : null,
@@ -1096,7 +1097,7 @@ const updateMeeting = useCallback(async (task: ProcessedTask, meeting: CreateMee
       sector: meeting.sector,
     });
     await fetchTasks();
-    await addAudit('task_updated', 'meeting', task.id, meeting.title, meeting.sector, `${meeting.date} ${meeting.time}`);
+    await addAudit('task_updated', 'meeting', task.id, meeting.title, meeting.sector, `${meeting.date}${meeting.endDate && meeting.endDate !== meeting.date ? ` ate ${meeting.endDate}` : ''} ${meeting.time}`);
     alert('Reunião atualizada com sucesso!');
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Erro desconhecido';

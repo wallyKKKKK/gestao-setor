@@ -1124,6 +1124,7 @@ export function ReallocationManager({
 
       setTransferSuggestions(draft.transferSuggestions);
       setConfirmedSuggestions(draft.confirmedSuggestions);
+      if (draft.transferSuggestions.length > 0) setShowOnlyProblemSuggestions(false);
       setSuggestionView(draft.suggestionView === 'orders' ? 'draft' : draft.suggestionView);
       setAppliedSuggestionSignature(draft.appliedSuggestionSignature);
       setSuggestionGenerationContext(draft.suggestionGenerationContext);
@@ -1398,6 +1399,7 @@ export function ReallocationManager({
 
     return ids;
   }, [activeSuggestionRows, maxRoutePriority, overAllocatedOrigins]);
+  const shouldShowOnlyProblemSuggestions = showOnlyProblemSuggestions && problemSuggestionIds.size > 0;
   const originSummary = useMemo(() => {
     const map = new Map<string, { originName: string; rows: number; units: number; stock: number; exceeded: number }>();
 
@@ -1786,6 +1788,7 @@ export function ReallocationManager({
 
       setTransferSuggestions(nextSuggestions);
       setSuggestionView('draft');
+      setShowOnlyProblemSuggestions(false);
       setSelectedSuggestionIds([]);
       setAppliedSuggestionSignature(suggestionSettingsSignature);
       setSuggestionGenerationContext({
@@ -1928,12 +1931,12 @@ export function ReallocationManager({
   }, [destinationAllocationByProduct]);
 
   const tableSearchBaseCount = useMemo(() => (
-    showOnlyProblemSuggestions
+    shouldShowOnlyProblemSuggestions
       ? activeSuggestionRows.filter((suggestion) => problemSuggestionIds.has(suggestion.id)).length
       : activeSuggestionRows.length
-  ), [activeSuggestionRows, problemSuggestionIds, showOnlyProblemSuggestions]);
+  ), [activeSuggestionRows, problemSuggestionIds, shouldShowOnlyProblemSuggestions]);
   const displayedTransferSuggestions = useMemo(() => {
-    const baseSuggestions = showOnlyProblemSuggestions
+    const baseSuggestions = shouldShowOnlyProblemSuggestions
       ? activeSuggestionRows.filter((suggestion) => problemSuggestionIds.has(suggestion.id))
       : activeSuggestionRows;
     const query = normalizeAutocompleteText(suggestionTableSearch);
@@ -1955,7 +1958,7 @@ export function ReallocationManager({
       ].join(' ');
       return normalizeAutocompleteText(searchable).includes(query);
     });
-  }, [activeSuggestionRows, problemSuggestionIds, showOnlyProblemSuggestions, suggestionTableSearch]);
+  }, [activeSuggestionRows, problemSuggestionIds, shouldShowOnlyProblemSuggestions, suggestionTableSearch]);
   const sortedTransferSuggestions = [...displayedTransferSuggestions];
   if (suggestionSort && suggestionSort.key !== 'actions' && suggestionSort.key !== 'quantity') {
     const directionFactor = suggestionSort.direction === 'asc' ? 1 : -1;
@@ -3167,9 +3170,9 @@ export function ReallocationManager({
               type="button"
               onClick={() => setShowOnlyProblemSuggestions((current) => !current)}
               disabled={problemSuggestionIds.size === 0}
-              className={`h-8 rounded-md px-3 text-[10px] font-black uppercase disabled:opacity-40 ${showOnlyProblemSuggestions ? 'bg-slate-900 text-white' : 'bg-amber-50 text-amber-700'}`}
+              className={`h-8 rounded-md px-3 text-[10px] font-black uppercase disabled:opacity-40 ${shouldShowOnlyProblemSuggestions ? 'bg-slate-900 text-white' : 'bg-amber-50 text-amber-700'}`}
             >
-              {showOnlyProblemSuggestions ? 'Mostrar todos' : 'So problemas'}
+              {shouldShowOnlyProblemSuggestions ? 'Mostrar todos' : 'So problemas'}
             </button>
             <button
               type="button"
@@ -3310,7 +3313,7 @@ export function ReallocationManager({
               {sortedTransferSuggestions.length === 0 && (
                 <tr>
                   <td colSpan={orderedSuggestionColumns.length} className="h-72 border-b border-slate-100 px-3 text-center align-middle text-[10px] font-black uppercase tracking-widest text-black">
-                    {suggestionTableSearch ? 'Nenhuma linha encontrada na pesquisa' : showOnlyProblemSuggestions ? 'Nenhuma linha com problema encontrada' : suggestionView === 'confirmed' ? 'Nenhuma sugestão confirmada ainda' : 'Gere as sugestões após importar o estoque'}
+                    {suggestionTableSearch ? 'Nenhuma linha encontrada na pesquisa' : shouldShowOnlyProblemSuggestions ? 'Nenhuma linha com problema encontrada' : suggestionView === 'confirmed' ? 'Nenhuma sugestão confirmada ainda' : 'Gere as sugestões após importar o estoque'}
                   </td>
                 </tr>
               )}
@@ -4578,3 +4581,4 @@ function QuickFilterBox({
     </div>
   );
 }
+

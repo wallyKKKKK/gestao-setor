@@ -218,7 +218,10 @@ function addMinutesToLocalDateTime(date: string, time: string, minutesToAdd: num
 
 export async function createGoogleCalendarEvent(accessToken: string, meeting: CreateMeetingInput) {
   const start = `${meeting.date}T${meeting.time}:00`;
-  const end = addMinutesToLocalDateTime(meeting.date, meeting.time, 60);
+  const hasDateRange = Boolean(meeting.endDate && meeting.endDate > meeting.date);
+  const end = hasDateRange
+    ? `${meeting.endDate}T23:59:00`
+    : addMinutesToLocalDateTime(meeting.date, meeting.time, 60);
 
   const response = await fetch(GOOGLE_CALENDAR_EVENTS_URL, {
     method: "POST",

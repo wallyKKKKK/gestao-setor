@@ -208,6 +208,64 @@ function TimePickerField({ value, onChange }: { value: string; onChange: (value:
   );
 }
 
+function addDaysToISODate(date: string, days: number) {
+  const [year, month, day] = date.split('-').map(Number);
+  const nextDate = new Date(year, month - 1, day + days);
+  return toISODate(nextDate);
+}
+
+function getISODateRange(startDate: string, endDate: string, maxDays = 370) {
+  if (!startDate) return [];
+  const safeEndDate = endDate && endDate >= startDate ? endDate : startDate;
+  const dates: string[] = [];
+  let cursor = startDate;
+
+  while (cursor <= safeEndDate && dates.length < maxDays) {
+    dates.push(cursor);
+    cursor = addDaysToISODate(cursor, 1);
+  }
+
+  return dates;
+}
+
+function getMeetingFieldFromNotes(notes: string | null | undefined, label: string) {
+  const match = notes?.match(new RegExp(`${label}:\\s*([^\\n]+)`, 'i'));
+  return match?.[1] || '';
+}
+
+function getMeetingStartDateFromTask(task: ProcessedTask) {
+  return task.due_date || task.nextOcc;
+}
+
+function getMeetingEndDateFromTask(task: ProcessedTask) {
+  const startDate = getMeetingStartDateFromTask(task);
+  const storedEndDate = getMeetingFieldFromNotes(task.notes, 'Data final');
+  return storedEndDate && /^\d{4}-\d{2}-\d{2}$/.test(storedEndDate) && storedEndDate >= startDate
+    ? storedEndDate
+    : startDate;
+}
+
+function getGoogleEventStartDate(event: GoogleCalendarEvent) {
+  return event.start?.date || event.start?.dateTime?.slice(0, 10) || '';
+}
+
+function getGoogleEventEndDate(event: GoogleCalendarEvent) {
+  const startDate = getGoogleEventStartDate(event);
+  if (!startDate) return '';
+
+  const rawEndDate = event.end?.date || event.end?.dateTime?.slice(0, 10) || startDate;
+  const endDate = event.end?.date ? addDaysToISODate(rawEndDate, -1) : rawEndDate;
+  return endDate >= startDate ? endDate : startDate;
+}
+
+function formatDateRange(startDate: string, endDate: string) {
+  const start = new Date(`${startDate}T00:00:00`).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
+  if (!endDate || endDate === startDate) return start;
+
+  const end = new Date(`${endDate}T00:00:00`).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
+  return `${start} até ${end}`;
+}
+
 export function MeetingCalendarView({
   tasks,
   profiles,
@@ -229,6 +287,7 @@ export function MeetingCalendarView({
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [meetingTitle, setMeetingTitle] = useState('');
   const [meetingDate, setMeetingDate] = useState(toISODate(new Date()));
+  const [meetingEndDate, setMeetingEndDate] = useState(toISODate(new Date()));
   const [meetingTime, setMeetingTime] = useState('09:00');
   const [meetingMotive, setMeetingMotive] = useState('');
   const [meetingLocation, setMeetingLocation] = useState('');
@@ -307,8 +366,13 @@ export function MeetingCalendarView({
 
   const tasksByDay = useMemo(() => {
     return tasks.reduce<Record<string, ProcessedTask[]>>((acc, task) => {
-      const key = task.due_date || task.nextOcc;
-      acc[key] = [...(acc[key] || []), task];
+      const startDate = getMeetingStartDateFromTask(task);
+      const endDate = getMeetingEndDateFromTask(task);
+
+      getISODateRange(startDate, endDate).forEach((key) => {
+        acc[key] = [...(acc[key] || []), task];
+      });
+
       return acc;
     }, {});
   }, [tasks]);
@@ -316,13 +380,20 @@ export function MeetingCalendarView({
   const monthTasks = useMemo(() => {
     const year = visibleMonth.getFullYear();
     const month = visibleMonth.getMonth();
+    const monthStart = toISODate(new Date(year, month, 1));
+    const monthEnd = toISODate(new Date(year, month + 1, 0));
 
     return tasks
       .filter((task) => {
-        const date = new Date(`${task.due_date || task.nextOcc}T00:00:00`);
-        return date.getFullYear() === year && date.getMonth() === month;
+        const startDate = getMeetingStartDateFromTask(task);
+        const endDate = getMeetingEndDateFromTask(task);
+        return startDate <= monthEnd && endDate >= monthStart;
       })
-      .sort((a, b) => (a.due_date || a.nextOcc).localeCompare(b.due_date || b.nextOcc));
+      .sort((a, b) => (
+        getMeetingStartDateFromTask(a).localeCompare(getMeetingStartDateFromTask(b))
+        || getTimeSortValue(getMeetingFieldFromNotes(a.notes, 'Horário') || '--:--') - getTimeSortValue(getMeetingFieldFromNotes(b.notes, 'Horário') || '--:--')
+        || a.title.localeCompare(b.title)
+      ));
   }, [tasks, visibleMonth]);
   const completedMonthTasks = useMemo(() => monthTasks.filter((task) => task.isDoneToday).length, [monthTasks]);
   const selectedMeetingDetails = useMemo(() => (
@@ -334,10 +405,14 @@ export function MeetingCalendarView({
 
     return googleEvents.reduce<Record<string, GoogleCalendarEvent[]>>((acc, event) => {
       if (linkedEventIds.has(event.id)) return acc;
-      const key = event.start?.date || event.start?.dateTime?.slice(0, 10);
-      if (!key) return acc;
+      const startDate = getGoogleEventStartDate(event);
+      const endDate = getGoogleEventEndDate(event);
+      if (!startDate) return acc;
 
-      acc[key] = [...(acc[key] || []), event];
+      getISODateRange(startDate, endDate).forEach((key) => {
+        acc[key] = [...(acc[key] || []), event];
+      });
+
       return acc;
     }, {});
   }, [googleEvents, tasks]);
@@ -379,29 +454,43 @@ export function MeetingCalendarView({
 
   const isMeetingCompleted = (task: ProcessedTask) => task.isDoneToday;
 
-  const getMeetingField = (task: ProcessedTask, label: string) => {
-    const match = task.notes?.match(new RegExp(`${label}:\\s*([^\\n]+)`, 'i'));
-    return match?.[1] || '';
-  };
+  const getMeetingField = (task: ProcessedTask, label: string) => getMeetingFieldFromNotes(task.notes, label);
 
-  const monthGoogleEvents = useMemo(() => (
-    Object.entries(googleEventsByDay).flatMap(([date, events]) => (
-      events.map((event) => ({
+  const getMeetingStartDate = (task: ProcessedTask) => getMeetingStartDateFromTask(task);
+
+  const getMeetingEndDate = (task: ProcessedTask) => getMeetingEndDateFromTask(task);
+
+  const monthGoogleEvents = useMemo(() => {
+    const linkedEventIds = new Set(tasks.map((task) => task.google_event_id).filter(Boolean));
+    const year = visibleMonth.getFullYear();
+    const month = visibleMonth.getMonth();
+    const monthStart = toISODate(new Date(year, month, 1));
+    const monthEnd = toISODate(new Date(year, month + 1, 0));
+
+    return googleEvents
+      .filter((event) => {
+        if (linkedEventIds.has(event.id)) return false;
+        const startDate = getGoogleEventStartDate(event);
+        const endDate = getGoogleEventEndDate(event);
+        return Boolean(startDate) && startDate <= monthEnd && endDate >= monthStart;
+      })
+      .map((event) => ({
         id: `google:${event.id}`,
-        date,
+        date: getGoogleEventStartDate(event),
+        endDate: getGoogleEventEndDate(event),
         time: getGoogleEventTime(event),
         title: event.summary || 'Evento Google',
         source: 'Google',
         completed: false,
-      }))
-    ))
-  ), [googleEventsByDay]);
+      }));
+  }, [googleEvents, tasks, visibleMonth]);
 
   const monthSummaryItems = useMemo(() => (
     [
       ...monthTasks.map((task) => ({
         id: `task:${task.id}`,
-        date: task.due_date || task.nextOcc,
+        date: getMeetingStartDate(task),
+        endDate: getMeetingEndDate(task),
         time: getMeetingTime(task),
         title: task.title,
         source: getAssigneeName(task),
@@ -419,14 +508,19 @@ export function MeetingCalendarView({
 
   const monthActiveDays = useMemo(() => {
     const dates = new Set<string>();
-    monthTasks.forEach((task) => dates.add(task.due_date || task.nextOcc));
-    monthGoogleEvents.forEach((event) => dates.add(event.date));
+    monthTasks.forEach((task) => {
+      getISODateRange(getMeetingStartDate(task), getMeetingEndDate(task)).forEach((date) => dates.add(date));
+    });
+    monthGoogleEvents.forEach((event) => {
+      getISODateRange(event.date, event.endDate).forEach((date) => dates.add(date));
+    });
     return dates.size;
   }, [monthGoogleEvents, monthTasks]);
 
   const resetMeetingForm = useCallback(() => {
     setMeetingTitle('');
     setMeetingDate(toISODate(new Date()));
+    setMeetingEndDate(toISODate(new Date()));
     setMeetingTime('09:00');
     setMeetingMotive('');
     setMeetingLocation('');
@@ -437,7 +531,9 @@ export function MeetingCalendarView({
 
   const openCreateMeeting = useCallback((date = new Date()) => {
     resetMeetingForm();
-    setMeetingDate(toISODate(date));
+    const selectedDate = toISODate(date);
+    setMeetingDate(selectedDate);
+    setMeetingEndDate(selectedDate);
     setShowCreateModal(true);
   }, [resetMeetingForm]);
 
@@ -469,7 +565,9 @@ export function MeetingCalendarView({
   const openEditMeeting = (task: ProcessedTask) => {
     setEditingMeeting(task);
     setMeetingTitle(task.title);
-    setMeetingDate(task.due_date || task.nextOcc || toISODate(new Date()));
+    const startDate = task.due_date || task.nextOcc || toISODate(new Date());
+    setMeetingDate(startDate);
+    setMeetingEndDate(getMeetingEndDateFromTask(task));
     setMeetingTime(getMeetingTime(task) === '--:--' ? '09:00' : getMeetingTime(task));
     setMeetingMotive(getMeetingField(task, 'Motivo'));
     setMeetingLocation(getMeetingField(task, 'Local'));
@@ -480,8 +578,13 @@ export function MeetingCalendarView({
   };
 
   const submitMeeting = async () => {
-    if (!meetingTitle || !meetingDate || !meetingTime || !meetingMotive || !meetingAssignedTo) {
-      alert('Preencha título, data, hora, motivo e responsável.');
+    if (!meetingTitle || !meetingDate || !meetingEndDate || !meetingTime || !meetingMotive || !meetingAssignedTo) {
+      alert('Preencha titulo, data inicial, data final, hora, motivo e responsavel.');
+      return;
+    }
+
+    if (meetingEndDate < meetingDate) {
+      alert('A data final nao pode ser anterior a data inicial.');
       return;
     }
 
@@ -490,6 +593,7 @@ export function MeetingCalendarView({
       const meeting = {
         title: meetingTitle,
         date: meetingDate,
+        endDate: meetingEndDate,
         time: meetingTime,
         motive: meetingMotive,
         location: meetingLocation,
@@ -800,6 +904,8 @@ export function MeetingCalendarView({
                   type: 'task' as const,
                   task,
                   time: getMeetingTime(task),
+                  rangeStart: getMeetingStartDate(task),
+                  rangeEnd: getMeetingEndDate(task),
                   sortValue: getTimeSortValue(getMeetingTime(task)),
                 })),
                 ...dayGoogleEvents.map((event) => ({
@@ -807,6 +913,8 @@ export function MeetingCalendarView({
                   type: 'google' as const,
                   event,
                   time: getGoogleEventTime(event),
+                  rangeStart: getGoogleEventStartDate(event),
+                  rangeEnd: getGoogleEventEndDate(event),
                   sortValue: getTimeSortValue(getGoogleEventTime(event)),
                 })),
               ].sort((left, right) => left.sortValue - right.sortValue || left.id.localeCompare(right.id))
@@ -842,6 +950,8 @@ export function MeetingCalendarView({
                             ? getMeetingEventTone(item.task, itemIndex)
                             : getStableMeetingEventTone(item.event.id || item.event.summary || item.id, itemIndex);
                           const fillClassName = meetingEventFillClassNames[tone] || meetingEventFillClassNames.blue;
+                          const isRangeEvent = item.rangeEnd > item.rangeStart;
+                          const shouldShowRangeLabel = !isRangeEvent || dayKey === item.rangeStart || day?.getDay() === 0;
 
                           if (item.type === 'google') {
                             return (
@@ -852,7 +962,7 @@ export function MeetingCalendarView({
                                 style={{ height: `${segmentHeight}%`, top: `${segmentTop}%` }}
                               >
                                 <a href={item.event.htmlLink} target="_blank" rel="noreferrer" className="flex min-w-0 flex-1 items-center gap-1.5">
-                                  <span className="shrink-0 tabular-nums opacity-85">{item.time}</span>
+                                  <span className="shrink-0 tabular-nums opacity-85">{shouldShowRangeLabel ? item.time : ''}</span>
                                   <span className="min-w-0 flex-1 truncate">{item.event.summary || 'Evento Google'}</span>
                                 </a>
                                 <button
@@ -883,7 +993,7 @@ export function MeetingCalendarView({
                               className={`absolute inset-x-0 flex min-w-0 items-center gap-1.5 px-2 text-left text-[10px] font-black uppercase transition ${fillClassName}`}
                               style={{ height: `${segmentHeight}%`, top: `${segmentTop}%` }}
                             >
-                              <span className="shrink-0 tabular-nums opacity-85">{item.time}</span>
+                              <span className="shrink-0 tabular-nums opacity-85">{shouldShowRangeLabel ? item.time : ''}</span>
                               <span className={`min-w-0 flex-1 truncate ${completed ? 'opacity-70' : ''}`}>
                                 {item.task.title}
                               </span>
@@ -1015,7 +1125,7 @@ export function MeetingCalendarView({
             <div className="grid gap-5 px-6 py-5 md:grid-cols-[1fr_260px]">
               <div className="space-y-4">
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm font-bold text-slate-600">
-                  <span>{new Date(`${selectedMeetingDetails.due_date || selectedMeetingDetails.lastOcc}T00:00:00`).toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' })}</span>
+                  <span>{formatDateRange(getMeetingStartDate(selectedMeetingDetails), getMeetingEndDate(selectedMeetingDetails))}</span>
                   <span className="text-slate-300">-</span>
                   <span>{getMeetingTime(selectedMeetingDetails)}</span>
                 </div>
@@ -1119,8 +1229,17 @@ export function MeetingCalendarView({
               </label>
 
               <label className="space-y-1">
-                <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest">Data</span>
-                <input type="date" value={meetingDate} onChange={(event) => setMeetingDate(event.target.value)} className="h-12 w-full rounded-2xl border-2 border-slate-100 bg-slate-50 px-4 text-sm font-black outline-none transition focus:border-blue-600" />
+                <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest">Data inicial</span>
+                <input type="date" value={meetingDate} onChange={(event) => {
+                  const nextDate = event.target.value;
+                  setMeetingDate(nextDate);
+                  if (meetingEndDate < nextDate) setMeetingEndDate(nextDate);
+                }} className="h-12 w-full rounded-2xl border-2 border-slate-100 bg-slate-50 px-4 text-sm font-black outline-none transition focus:border-blue-600" />
+              </label>
+
+              <label className="space-y-1">
+                <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest">Data final</span>
+                <input type="date" value={meetingEndDate} min={meetingDate} onChange={(event) => setMeetingEndDate(event.target.value)} className="h-12 w-full rounded-2xl border-2 border-slate-100 bg-slate-50 px-4 text-sm font-black outline-none transition focus:border-blue-600" />
               </label>
 
               <div className="space-y-1">

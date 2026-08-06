@@ -31,6 +31,7 @@ interface CreateTaskInput {
 export interface CreateMeetingInput {
   title: string;
   date: string;
+  endDate?: string | null;
   time: string;
   motive: string;
   location: string;
@@ -958,6 +959,7 @@ export async function createTask(input: CreateTaskInput) {
 export async function createMeeting(input: CreateMeetingInput) {
   const details = [
     `Horário: ${input.time}`,
+    input.endDate && input.endDate !== input.date ? `Data final: ${input.endDate}` : null,
     `Motivo: ${input.motive}`,
     input.location ? `Local: ${input.location}` : null,
     input.notes ? `Observações: ${input.notes}` : null,
