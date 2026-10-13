@@ -202,6 +202,7 @@ interface TransferSuggestion {
   originStockDays: number;
   destinationStockDays: number;
   destinationNeed: number;
+  minimumStockQuantity?: number;
   routePriority: number;
   decisionRequired?: boolean;
   decisionResolved?: boolean;
@@ -1747,6 +1748,7 @@ export function ReallocationManager({
       const selectedManufacturers = manufacturerFilters.map((item) => item.columns[0]).filter(Boolean);
       const selectedNeedTypes = needTypeFilters.map((item) => item.columns[0]).filter(Boolean);
       const selectedLastPurchaseSuppliers = lastPurchaseSupplierFilters.map((item) => item.columns[0]).filter(Boolean);
+      const requestStartedAt = performance.now();
       const response = await fetch(`/api/reallocation-suggestions-v2?ts=${Date.now()}`, {
         method: 'POST',
         cache: 'no-store',
@@ -1779,7 +1781,9 @@ export function ReallocationManager({
           branchLogistics: Object.fromEntries(branchLogisticsByCode),
         }),
       });
+      const responseStartedAt = performance.now();
       const data = await response.json().catch(() => null);
+      const dataReadyAt = performance.now();
 
       if (!response.ok || !Array.isArray(data?.suggestions)) {
         throw new Error(data?.error || 'Não foi possível gerar sugestões.');
@@ -1788,6 +1792,22 @@ export function ReallocationManager({
       if (data.apiVersion !== REALLOCATION_API_VERSION || data.engine === 'python') {
         throw new Error('A API de remanejamento no dominio ainda esta em versao antiga. Aguarde o ultimo deploy ficar Ready no Vercel e atualize a pagina com Ctrl+F5.');
       }
+
+      // Timing-only diagnostics: never include imported rows or product details.
+      const timingSummary = {
+        server: data.timings,
+        untilHeadersMs: responseStartedAt - requestStartedAt,
+        downloadAndParseMs: dataReadyAt - responseStartedAt,
+        rows: Number(data.stockRows || 0),
+        suggestions: data.suggestions.length,
+      };
+      window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+        console.info('[remanejamento:tempos]', {
+          ...timingSummary,
+          afterDataUntilFrameMs: performance.now() - dataReadyAt,
+          totalUntilFrameMs: performance.now() - requestStartedAt,
+        });
+      }));
 
       const suggestionEngine: SuggestionDiagnostic['engine'] = ['python', 'typescript', 'fallback'].includes(data.engine)
         ? data.engine
@@ -2197,6 +2217,10 @@ export function ReallocationManager({
       return 'shadow-[inset_4px_0_0_#7c3aed]';
     }
 
+    if (Number(suggestion.minimumStockQuantity || 0) > 0) {
+      return 'shadow-[inset_4px_0_0_#65a30d]';
+    }
+
     if (multiDestination && multiOrigin) {
       return 'shadow-[inset_4px_0_0_#0f766e]';
     }
@@ -2219,12 +2243,16 @@ export function ReallocationManager({
       return 'bg-[#fecaca] group-hover:bg-[#fca5a5]';
     }
 
+    if (isSuggestionManuallyChanged(suggestion)) {
+      return 'bg-[#ddd6fe] group-hover:bg-[#c4b5fd]';
+    }
+
     if (suggestion.decisionRequired && !suggestion.decisionResolved) {
       return 'bg-[#fed7aa] group-hover:bg-[#fdba74]';
     }
 
-    if (isSuggestionManuallyChanged(suggestion)) {
-      return 'bg-[#ddd6fe] group-hover:bg-[#c4b5fd]';
+    if (Number(suggestion.minimumStockQuantity || 0) > 0) {
+      return 'bg-[#ecfccb] group-hover:bg-[#d9f99d]';
     }
 
     if (multiDestination && multiOrigin) {
@@ -2245,6 +2273,7 @@ export function ReallocationManager({
   const visibleMultiOriginCount = sortedTransferSuggestions.filter((suggestion) => isSuggestionMultiOrigin(suggestion)).length;
   const visibleSharedRouteCount = sortedTransferSuggestions.filter((suggestion) => isSuggestionMultiDestination(suggestion) && isSuggestionMultiOrigin(suggestion)).length;
   const visiblePendingDecisionCount = sortedTransferSuggestions.filter((suggestion) => suggestion.decisionRequired && !suggestion.decisionResolved).length;
+  const visibleMinimumStockCount = sortedTransferSuggestions.filter((suggestion) => Number(suggestion.minimumStockQuantity || 0) > 0).length;
 
   const downloadSuggestionsTxt = () => {
     if (!canExport) {
@@ -2520,7 +2549,16 @@ export function ReallocationManager({
           </td>
         );
       case 'description':
-        return <td key={column.key} className={`${cellClass} font-bold uppercase`}>{suggestion.description}</td>;
+        return (
+          <td key={column.key} className={`${cellClass} font-bold uppercase`} title={suggestion.description}>
+            <div className="flex items-center gap-2">
+              <span className="min-w-0 flex-1 truncate">{suggestion.description}</span>
+              {Number(suggestion.minimumStockQuantity || 0) > 0 && (
+                <span title="Inclui reposicao por estoque minimo" className="shrink-0 rounded border border-lime-400 bg-lime-100 px-1 text-[9px] font-black text-lime-900">Mínimo</span>
+              )}
+            </div>
+          </td>
+        );
       case 'ean':
         return <td key={column.key} className={`${cellClass} font-bold`}>{suggestion.ean || ''}</td>;
       case 'originName': {
@@ -2596,9 +2634,14 @@ export function ReallocationManager({
                 className={`h-5 w-full bg-transparent px-2 text-center font-black leading-none outline-none ${isOverAllocated ? 'text-red-700' : isSuggestionManuallyChanged(suggestion) ? 'text-violet-700' : 'text-emerald-700'}`}
               />
             </div>
-            {(isSuggestionManuallyChanged(suggestion) || isOverAllocated) && (
-              <p className={`mt-0.5 text-[8px] font-black uppercase tracking-wide leading-none ${isOverAllocated ? 'text-red-700' : 'text-violet-700'}`}>
-                {isOverAllocated ? `Excede ${wholeNumber((allocation?.allocated || 0) - (allocation?.stock || 0))}` : 'Manual'}
+            {isSuggestionManuallyChanged(suggestion) && (
+              <p className="mt-0.5 whitespace-normal text-[8px] font-black uppercase leading-tight text-violet-700">
+                Manual · Sugestão {wholeNumber(suggestion.maxQuantity)}
+              </p>
+            )}
+            {isOverAllocated && (
+              <p className="mt-0.5 whitespace-normal text-[8px] font-black uppercase leading-tight text-red-700">
+                Excede {wholeNumber((allocation?.allocated || 0) - (allocation?.stock || 0))}
               </p>
             )}
           </td>
@@ -3234,6 +3277,10 @@ export function ReallocationManager({
               <span className="inline-flex items-center gap-1.5 rounded-md border border-violet-200 bg-violet-50 px-2 py-1 text-[10px] font-black uppercase text-violet-950">
                 <span className="h-3 w-3 rounded-[3px] border border-violet-500 bg-violet-300" />
                 Manual {activeManualSuggestionChangeCount > 0 ? `(${activeManualSuggestionChangeCount})` : ''}
+              </span>
+              <span className="inline-flex items-center gap-1.5 rounded-md border border-lime-300 bg-lime-50 px-2 py-1 text-[10px] font-black uppercase text-lime-950">
+                <span className="h-3 w-3 rounded-[3px] border border-lime-600 bg-lime-200" />
+                Estoque mínimo {visibleMinimumStockCount > 0 ? `(${visibleMinimumStockCount})` : ''}
               </span>
               <span className="inline-flex items-center gap-1.5 rounded-md border border-orange-200 bg-orange-50 px-2 py-1 text-[10px] font-black uppercase text-orange-950">
                 <span className="h-3 w-3 rounded-[3px] border border-orange-500 bg-orange-300" />

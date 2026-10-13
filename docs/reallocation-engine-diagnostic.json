@@ -1,0 +1,1554 @@
+{
+  "generatedAt": "2026-10-13T16:04:37.867Z",
+  "nodeVersion": "v24.15.0",
+  "pythonProcessWallMs": 406.1216999999999,
+  "method": "Synthetic offline inputs, one warmup, five timed samples per workload. Python compute excludes process startup, JSON transport and module imports. TypeScript calculator loaded from the production route in a VM. No database, network or browser render time included. Fixture numbers compared to 8 decimal places; tie IDs and text compared exactly. Workload parity covers allocations and totals only.",
+  "comparisons": {
+    "python_script": [
+      {
+        "scenario": "normal_demand",
+        "matches": true,
+        "differences": []
+      },
+      {
+        "scenario": "confirmed_stock_limits_origin",
+        "matches": true,
+        "differences": []
+      },
+      {
+        "scenario": "missing_confirmed_stock",
+        "matches": true,
+        "differences": []
+      },
+      {
+        "scenario": "days_safety",
+        "matches": true,
+        "differences": []
+      },
+      {
+        "scenario": "global_floor",
+        "matches": false,
+        "differences": [
+          {
+            "field": ".suggestions.0.maxQuantity",
+            "typescript": 2,
+            "python": 5
+          },
+          {
+            "field": ".suggestions.0.originAvailableStock",
+            "typescript": 2,
+            "python": 20
+          },
+          {
+            "field": ".suggestions.0.quantity",
+            "typescript": 2,
+            "python": 5
+          }
+        ]
+      },
+      {
+        "scenario": "minimum_without_sales",
+        "matches": false,
+        "differences": [
+          {
+            "field": ".eligibleDestinations",
+            "typescript": 1,
+            "python": 0
+          },
+          {
+            "field": ".suggestions.0",
+            "typescript": {
+              "decisionGroupKey": "",
+              "decisionReason": "",
+              "decisionRequired": false,
+              "decisionResolved": false,
+              "description": "Synthetic product",
+              "destinationCode": "02",
+              "destinationConfirmedPurchase": 0,
+              "destinationConfirmedStock": 7,
+              "destinationConfirmedTransfer": 0,
+              "destinationCurve": "A",
+              "destinationDailySales": 0,
+              "destinationMonthlyAvgSales": 0,
+              "destinationName": "Store 02",
+              "destinationNeed": 3,
+              "destinationStock": 7,
+              "destinationStockDays": 0,
+              "ean": "123",
+              "erpCode": "456",
+              "id": "123:01:02:0",
+              "maxQuantity": 3,
+              "originAvailableStock": 20,
+              "originCode": "01",
+              "originConfirmedPurchase": 0,
+              "originConfirmedStock": 20,
+              "originConfirmedTransfer": 0,
+              "originCurve": "A",
+              "originDailySales": 0,
+              "originMonthlyAvgSales": 0,
+              "originName": "Store 01",
+              "originStock": 20,
+              "originStockDays": 0,
+              "quantity": 3,
+              "routePriority": 1,
+              "tieCandidateCount": 0
+            },
+            "python": null
+          }
+        ]
+      },
+      {
+        "scenario": "normal_then_minimum",
+        "matches": false,
+        "differences": [
+          {
+            "field": ".eligibleDestinations",
+            "typescript": 2,
+            "python": 1
+          },
+          {
+            "field": ".suggestions.1",
+            "typescript": {
+              "decisionGroupKey": "",
+              "decisionReason": "",
+              "decisionRequired": false,
+              "decisionResolved": false,
+              "description": "Synthetic product",
+              "destinationCode": "03",
+              "destinationConfirmedPurchase": 0,
+              "destinationConfirmedStock": 0,
+              "destinationConfirmedTransfer": 0,
+              "destinationCurve": "A",
+              "destinationDailySales": 0,
+              "destinationMonthlyAvgSales": 0,
+              "destinationName": "Store 03",
+              "destinationNeed": 10,
+              "destinationStock": 0,
+              "destinationStockDays": 0,
+              "ean": "123",
+              "erpCode": "456",
+              "id": "123:01:03:1",
+              "maxQuantity": 1,
+              "originAvailableStock": 6,
+              "originCode": "01",
+              "originConfirmedPurchase": 0,
+              "originConfirmedStock": 6,
+              "originConfirmedTransfer": 0,
+              "originCurve": "A",
+              "originDailySales": 0,
+              "originMonthlyAvgSales": 0,
+              "originName": "Store 01",
+              "originStock": 6,
+              "originStockDays": 0,
+              "quantity": 1,
+              "routePriority": 1,
+              "tieCandidateCount": 0
+            },
+            "python": null
+          }
+        ]
+      },
+      {
+        "scenario": "minimum_same_route",
+        "matches": false,
+        "differences": [
+          {
+            "field": ".suggestions.0.destinationNeed",
+            "typescript": 10,
+            "python": 5
+          },
+          {
+            "field": ".suggestions.0.maxQuantity",
+            "typescript": 10,
+            "python": 5
+          },
+          {
+            "field": ".suggestions.0.quantity",
+            "typescript": 10,
+            "python": 5
+          }
+        ]
+      },
+      {
+        "scenario": "origin_curve_filter",
+        "matches": true,
+        "differences": []
+      },
+      {
+        "scenario": "destination_curve_filter",
+        "matches": true,
+        "differences": []
+      },
+      {
+        "scenario": "product_filter",
+        "matches": true,
+        "differences": []
+      },
+      {
+        "scenario": "store_permissions",
+        "matches": true,
+        "differences": []
+      },
+      {
+        "scenario": "different_states",
+        "matches": true,
+        "differences": []
+      },
+      {
+        "scenario": "same_city_route",
+        "matches": true,
+        "differences": []
+      },
+      {
+        "scenario": "tie_needs_manual_decision",
+        "matches": false,
+        "differences": [
+          {
+            "field": ".suggestions.0.decisionGroupKey",
+            "typescript": "123:01:1|202|0|5",
+            "python": "123:01:1|202|0.0|5"
+          },
+          {
+            "field": ".suggestions.1.decisionGroupKey",
+            "typescript": "123:01:1|202|0|5",
+            "python": "123:01:1|202|0.0|5"
+          }
+        ]
+      },
+      {
+        "scenario": "minimum_days_without_sale",
+        "matches": false,
+        "differences": [
+          {
+            "field": ".eligibleDestinations",
+            "typescript": 0,
+            "python": 1
+          },
+          {
+            "field": ".suggestions.0",
+            "typescript": null,
+            "python": {
+              "decisionGroupKey": "",
+              "decisionReason": "",
+              "decisionRequired": false,
+              "decisionResolved": false,
+              "description": "Synthetic product",
+              "destinationCode": "02",
+              "destinationConfirmedPurchase": 0,
+              "destinationConfirmedStock": 0,
+              "destinationConfirmedTransfer": 0,
+              "destinationCurve": "A",
+              "destinationDailySales": 1,
+              "destinationMonthlyAvgSales": 30,
+              "destinationName": "Store 02",
+              "destinationNeed": 5,
+              "destinationStock": 0,
+              "destinationStockDays": 0,
+              "ean": "123",
+              "erpCode": "456",
+              "id": "123:01:02:0",
+              "maxQuantity": 5,
+              "originAvailableStock": 20,
+              "originCode": "01",
+              "originConfirmedPurchase": 0,
+              "originConfirmedStock": 20,
+              "originConfirmedTransfer": 0,
+              "originCurve": "A",
+              "originDailySales": 0,
+              "originMonthlyAvgSales": 0,
+              "originName": "Store 01",
+              "originStock": 20,
+              "originStockDays": 0,
+              "quantity": 5,
+              "routePriority": 1,
+              "tieCandidateCount": 0
+            }
+          }
+        ]
+      },
+      {
+        "scenario": "minimum_days_without_purchase",
+        "matches": false,
+        "differences": [
+          {
+            "field": ".eligibleDestinations",
+            "typescript": 0,
+            "python": 1
+          },
+          {
+            "field": ".suggestions.0",
+            "typescript": null,
+            "python": {
+              "decisionGroupKey": "",
+              "decisionReason": "",
+              "decisionRequired": false,
+              "decisionResolved": false,
+              "description": "Synthetic product",
+              "destinationCode": "02",
+              "destinationConfirmedPurchase": 0,
+              "destinationConfirmedStock": 0,
+              "destinationConfirmedTransfer": 0,
+              "destinationCurve": "A",
+              "destinationDailySales": 1,
+              "destinationMonthlyAvgSales": 30,
+              "destinationName": "Store 02",
+              "destinationNeed": 5,
+              "destinationStock": 0,
+              "destinationStockDays": 0,
+              "ean": "123",
+              "erpCode": "456",
+              "id": "123:01:02:0",
+              "maxQuantity": 5,
+              "originAvailableStock": 20,
+              "originCode": "01",
+              "originConfirmedPurchase": 0,
+              "originConfirmedStock": 20,
+              "originConfirmedTransfer": 0,
+              "originCurve": "A",
+              "originDailySales": 0,
+              "originMonthlyAvgSales": 0,
+              "originName": "Store 01",
+              "originStock": 20,
+              "originStockDays": 0,
+              "quantity": 5,
+              "routePriority": 1,
+              "tieCandidateCount": 0
+            }
+          }
+        ]
+      },
+      {
+        "scenario": "need_type_filter",
+        "matches": false,
+        "differences": [
+          {
+            "field": ".eligibleDestinations",
+            "typescript": 0,
+            "python": 1
+          },
+          {
+            "field": ".suggestions.0",
+            "typescript": null,
+            "python": {
+              "decisionGroupKey": "",
+              "decisionReason": "",
+              "decisionRequired": false,
+              "decisionResolved": false,
+              "description": "Synthetic product",
+              "destinationCode": "02",
+              "destinationConfirmedPurchase": 0,
+              "destinationConfirmedStock": 0,
+              "destinationConfirmedTransfer": 0,
+              "destinationCurve": "A",
+              "destinationDailySales": 1,
+              "destinationMonthlyAvgSales": 30,
+              "destinationName": "Store 02",
+              "destinationNeed": 5,
+              "destinationStock": 0,
+              "destinationStockDays": 0,
+              "ean": "123",
+              "erpCode": "456",
+              "id": "123:01:02:0",
+              "maxQuantity": 5,
+              "originAvailableStock": 20,
+              "originCode": "01",
+              "originConfirmedPurchase": 0,
+              "originConfirmedStock": 20,
+              "originConfirmedTransfer": 0,
+              "originCurve": "A",
+              "originDailySales": 0,
+              "originMonthlyAvgSales": 0,
+              "originName": "Store 01",
+              "originStock": 20,
+              "originStockDays": 0,
+              "quantity": 5,
+              "routePriority": 1,
+              "tieCandidateCount": 0
+            }
+          }
+        ]
+      },
+      {
+        "scenario": "supplier_filter",
+        "matches": false,
+        "differences": [
+          {
+            "field": ".eligibleDestinations",
+            "typescript": 0,
+            "python": 1
+          },
+          {
+            "field": ".suggestions.0",
+            "typescript": null,
+            "python": {
+              "decisionGroupKey": "",
+              "decisionReason": "",
+              "decisionRequired": false,
+              "decisionResolved": false,
+              "description": "Synthetic product",
+              "destinationCode": "02",
+              "destinationConfirmedPurchase": 0,
+              "destinationConfirmedStock": 0,
+              "destinationConfirmedTransfer": 0,
+              "destinationCurve": "A",
+              "destinationDailySales": 1,
+              "destinationMonthlyAvgSales": 30,
+              "destinationName": "Store 02",
+              "destinationNeed": 5,
+              "destinationStock": 0,
+              "destinationStockDays": 0,
+              "ean": "123",
+              "erpCode": "456",
+              "id": "123:01:02:0",
+              "maxQuantity": 5,
+              "originAvailableStock": 20,
+              "originCode": "01",
+              "originConfirmedPurchase": 0,
+              "originConfirmedStock": 20,
+              "originConfirmedTransfer": 0,
+              "originCurve": "A",
+              "originDailySales": 0,
+              "originMonthlyAvgSales": 0,
+              "originName": "Store 01",
+              "originStock": 20,
+              "originStockDays": 0,
+              "quantity": 5,
+              "routePriority": 1,
+              "tieCandidateCount": 0
+            }
+          }
+        ]
+      },
+      {
+        "scenario": "rounding_half_step",
+        "matches": false,
+        "differences": [
+          {
+            "field": ".suggestions.0.destinationDailySales",
+            "typescript": 0.05555556,
+            "python": 0.04444444
+          },
+          {
+            "field": ".suggestions.0.destinationMonthlyAvgSales",
+            "typescript": 1.66666667,
+            "python": 1.33333333
+          },
+          {
+            "field": ".suggestions.0.destinationNeed",
+            "typescript": 5,
+            "python": 4
+          },
+          {
+            "field": ".suggestions.0.maxQuantity",
+            "typescript": 5,
+            "python": 4
+          },
+          {
+            "field": ".suggestions.0.quantity",
+            "typescript": 5,
+            "python": 4
+          }
+        ]
+      }
+    ],
+    "python_legacy_api": [
+      {
+        "scenario": "normal_demand",
+        "matches": false,
+        "differences": [
+          {
+            "field": ".suggestions.0.decisionGroupKey",
+            "typescript": "",
+            "python": null
+          },
+          {
+            "field": ".suggestions.0.decisionReason",
+            "typescript": "",
+            "python": null
+          },
+          {
+            "field": ".suggestions.0.decisionRequired",
+            "typescript": false,
+            "python": null
+          },
+          {
+            "field": ".suggestions.0.decisionResolved",
+            "typescript": false,
+            "python": null
+          },
+          {
+            "field": ".suggestions.0.originAvailableStock",
+            "typescript": 20,
+            "python": null
+          },
+          {
+            "field": ".suggestions.0.tieCandidateCount",
+            "typescript": 0,
+            "python": null
+          }
+        ]
+      },
+      {
+        "scenario": "confirmed_stock_limits_origin",
+        "matches": false,
+        "differences": [
+          {
+            "field": ".suggestions.0.decisionGroupKey",
+            "typescript": "",
+            "python": null
+          },
+          {
+            "field": ".suggestions.0.decisionReason",
+            "typescript": "",
+            "python": null
+          },
+          {
+            "field": ".suggestions.0.decisionRequired",
+            "typescript": false,
+            "python": null
+          },
+          {
+            "field": ".suggestions.0.decisionResolved",
+            "typescript": false,
+            "python": null
+          },
+          {
+            "field": ".suggestions.0.maxQuantity",
+            "typescript": 3,
+            "python": 5
+          },
+          {
+            "field": ".suggestions.0.originAvailableStock",
+            "typescript": 3,
+            "python": null
+          },
+          {
+            "field": ".suggestions.0.quantity",
+            "typescript": 3,
+            "python": 5
+          },
+          {
+            "field": ".suggestions.0.tieCandidateCount",
+            "typescript": 0,
+            "python": null
+          }
+        ]
+      },
+      {
+        "scenario": "missing_confirmed_stock",
+        "matches": false,
+        "differences": [
+          {
+            "field": ".suggestions.0.decisionGroupKey",
+            "typescript": "",
+            "python": null
+          },
+          {
+            "field": ".suggestions.0.decisionReason",
+            "typescript": "",
+            "python": null
+          },
+          {
+            "field": ".suggestions.0.decisionRequired",
+            "typescript": false,
+            "python": null
+          },
+          {
+            "field": ".suggestions.0.decisionResolved",
+            "typescript": false,
+            "python": null
+          },
+          {
+            "field": ".suggestions.0.originAvailableStock",
+            "typescript": 20,
+            "python": null
+          },
+          {
+            "field": ".suggestions.0.tieCandidateCount",
+            "typescript": 0,
+            "python": null
+          }
+        ]
+      },
+      {
+        "scenario": "days_safety",
+        "matches": false,
+        "differences": [
+          {
+            "field": ".suggestions.0.decisionGroupKey",
+            "typescript": "",
+            "python": null
+          },
+          {
+            "field": ".suggestions.0.decisionReason",
+            "typescript": "",
+            "python": null
+          },
+          {
+            "field": ".suggestions.0.decisionRequired",
+            "typescript": false,
+            "python": null
+          },
+          {
+            "field": ".suggestions.0.decisionResolved",
+            "typescript": false,
+            "python": null
+          },
+          {
+            "field": ".suggestions.0.originAvailableStock",
+            "typescript": 20,
+            "python": null
+          },
+          {
+            "field": ".suggestions.0.originStockDays",
+            "typescript": 20,
+            "python": 0
+          },
+          {
+            "field": ".suggestions.0.tieCandidateCount",
+            "typescript": 0,
+            "python": null
+          }
+        ]
+      },
+      {
+        "scenario": "global_floor",
+        "matches": false,
+        "differences": [
+          {
+            "field": ".suggestions.0.decisionGroupKey",
+            "typescript": "",
+            "python": null
+          },
+          {
+            "field": ".suggestions.0.decisionReason",
+            "typescript": "",
+            "python": null
+          },
+          {
+            "field": ".suggestions.0.decisionRequired",
+            "typescript": false,
+            "python": null
+          },
+          {
+            "field": ".suggestions.0.decisionResolved",
+            "typescript": false,
+            "python": null
+          },
+          {
+            "field": ".suggestions.0.maxQuantity",
+            "typescript": 2,
+            "python": 5
+          },
+          {
+            "field": ".suggestions.0.originAvailableStock",
+            "typescript": 2,
+            "python": null
+          },
+          {
+            "field": ".suggestions.0.quantity",
+            "typescript": 2,
+            "python": 5
+          },
+          {
+            "field": ".suggestions.0.tieCandidateCount",
+            "typescript": 0,
+            "python": null
+          }
+        ]
+      },
+      {
+        "scenario": "minimum_without_sales",
+        "matches": false,
+        "differences": [
+          {
+            "field": ".eligibleDestinations",
+            "typescript": 1,
+            "python": 0
+          },
+          {
+            "field": ".suggestions.0",
+            "typescript": {
+              "decisionGroupKey": "",
+              "decisionReason": "",
+              "decisionRequired": false,
+              "decisionResolved": false,
+              "description": "Synthetic product",
+              "destinationCode": "02",
+              "destinationConfirmedPurchase": 0,
+              "destinationConfirmedStock": 7,
+              "destinationConfirmedTransfer": 0,
+              "destinationCurve": "A",
+              "destinationDailySales": 0,
+              "destinationMonthlyAvgSales": 0,
+              "destinationName": "Store 02",
+              "destinationNeed": 3,
+              "destinationStock": 7,
+              "destinationStockDays": 0,
+              "ean": "123",
+              "erpCode": "456",
+              "id": "123:01:02:0",
+              "maxQuantity": 3,
+              "originAvailableStock": 20,
+              "originCode": "01",
+              "originConfirmedPurchase": 0,
+              "originConfirmedStock": 20,
+              "originConfirmedTransfer": 0,
+              "originCurve": "A",
+              "originDailySales": 0,
+              "originMonthlyAvgSales": 0,
+              "originName": "Store 01",
+              "originStock": 20,
+              "originStockDays": 0,
+              "quantity": 3,
+              "routePriority": 1,
+              "tieCandidateCount": 0
+            },
+            "python": null
+          }
+        ]
+      },
+      {
+        "scenario": "normal_then_minimum",
+        "matches": false,
+        "differences": [
+          {
+            "field": ".eligibleDestinations",
+            "typescript": 2,
+            "python": 1
+          },
+          {
+            "field": ".suggestions.0.decisionGroupKey",
+            "typescript": "",
+            "python": null
+          },
+          {
+            "field": ".suggestions.0.decisionReason",
+            "typescript": "",
+            "python": null
+          },
+          {
+            "field": ".suggestions.0.decisionRequired",
+            "typescript": false,
+            "python": null
+          },
+          {
+            "field": ".suggestions.0.decisionResolved",
+            "typescript": false,
+            "python": null
+          },
+          {
+            "field": ".suggestions.0.originAvailableStock",
+            "typescript": 6,
+            "python": null
+          },
+          {
+            "field": ".suggestions.0.tieCandidateCount",
+            "typescript": 0,
+            "python": null
+          },
+          {
+            "field": ".suggestions.1",
+            "typescript": {
+              "decisionGroupKey": "",
+              "decisionReason": "",
+              "decisionRequired": false,
+              "decisionResolved": false,
+              "description": "Synthetic product",
+              "destinationCode": "03",
+              "destinationConfirmedPurchase": 0,
+              "destinationConfirmedStock": 0,
+              "destinationConfirmedTransfer": 0,
+              "destinationCurve": "A",
+              "destinationDailySales": 0,
+              "destinationMonthlyAvgSales": 0,
+              "destinationName": "Store 03",
+              "destinationNeed": 10,
+              "destinationStock": 0,
+              "destinationStockDays": 0,
+              "ean": "123",
+              "erpCode": "456",
+              "id": "123:01:03:1",
+              "maxQuantity": 1,
+              "originAvailableStock": 6,
+              "originCode": "01",
+              "originConfirmedPurchase": 0,
+              "originConfirmedStock": 6,
+              "originConfirmedTransfer": 0,
+              "originCurve": "A",
+              "originDailySales": 0,
+              "originMonthlyAvgSales": 0,
+              "originName": "Store 01",
+              "originStock": 6,
+              "originStockDays": 0,
+              "quantity": 1,
+              "routePriority": 1,
+              "tieCandidateCount": 0
+            },
+            "python": null
+          }
+        ]
+      },
+      {
+        "scenario": "minimum_same_route",
+        "matches": false,
+        "differences": [
+          {
+            "field": ".suggestions.0.decisionGroupKey",
+            "typescript": "",
+            "python": null
+          },
+          {
+            "field": ".suggestions.0.decisionReason",
+            "typescript": "",
+            "python": null
+          },
+          {
+            "field": ".suggestions.0.decisionRequired",
+            "typescript": false,
+            "python": null
+          },
+          {
+            "field": ".suggestions.0.decisionResolved",
+            "typescript": false,
+            "python": null
+          },
+          {
+            "field": ".suggestions.0.destinationNeed",
+            "typescript": 10,
+            "python": 5
+          },
+          {
+            "field": ".suggestions.0.maxQuantity",
+            "typescript": 10,
+            "python": 5
+          },
+          {
+            "field": ".suggestions.0.originAvailableStock",
+            "typescript": 20,
+            "python": null
+          },
+          {
+            "field": ".suggestions.0.quantity",
+            "typescript": 10,
+            "python": 5
+          }
+        ]
+      },
+      {
+        "scenario": "origin_curve_filter",
+        "matches": false,
+        "differences": [
+          {
+            "field": ".eligibleOrigins",
+            "typescript": 0,
+            "python": 1
+          },
+          {
+            "field": ".suggestions.0",
+            "typescript": null,
+            "python": {
+              "description": "Synthetic product",
+              "destinationCode": "02",
+              "destinationConfirmedPurchase": 0,
+              "destinationConfirmedStock": 0,
+              "destinationConfirmedTransfer": 0,
+              "destinationCurve": "A",
+              "destinationDailySales": 1,
+              "destinationMonthlyAvgSales": 30,
+              "destinationName": "Store 02",
+              "destinationNeed": 5,
+              "destinationStock": 0,
+              "destinationStockDays": 0,
+              "ean": "123",
+              "erpCode": "456",
+              "id": "123:01:02:0",
+              "maxQuantity": 5,
+              "originCode": "01",
+              "originConfirmedPurchase": 0,
+              "originConfirmedStock": 20,
+              "originConfirmedTransfer": 0,
+              "originCurve": "E",
+              "originDailySales": 0,
+              "originMonthlyAvgSales": 0,
+              "originName": "Store 01",
+              "originStock": 20,
+              "originStockDays": 0,
+              "quantity": 5,
+              "routePriority": 1
+            }
+          }
+        ]
+      },
+      {
+        "scenario": "destination_curve_filter",
+        "matches": false,
+        "differences": [
+          {
+            "field": ".eligibleDestinations",
+            "typescript": 0,
+            "python": 1
+          },
+          {
+            "field": ".suggestions.0",
+            "typescript": null,
+            "python": {
+              "description": "Synthetic product",
+              "destinationCode": "02",
+              "destinationConfirmedPurchase": 0,
+              "destinationConfirmedStock": 0,
+              "destinationConfirmedTransfer": 0,
+              "destinationCurve": "E",
+              "destinationDailySales": 1,
+              "destinationMonthlyAvgSales": 30,
+              "destinationName": "Store 02",
+              "destinationNeed": 5,
+              "destinationStock": 0,
+              "destinationStockDays": 0,
+              "ean": "123",
+              "erpCode": "456",
+              "id": "123:01:02:0",
+              "maxQuantity": 5,
+              "originCode": "01",
+              "originConfirmedPurchase": 0,
+              "originConfirmedStock": 20,
+              "originConfirmedTransfer": 0,
+              "originCurve": "A",
+              "originDailySales": 0,
+              "originMonthlyAvgSales": 0,
+              "originName": "Store 01",
+              "originStock": 20,
+              "originStockDays": 0,
+              "quantity": 5,
+              "routePriority": 1
+            }
+          }
+        ]
+      },
+      {
+        "scenario": "product_filter",
+        "matches": true,
+        "differences": []
+      },
+      {
+        "scenario": "store_permissions",
+        "matches": false,
+        "differences": [
+          {
+            "field": ".eligibleDestinations",
+            "typescript": 0,
+            "python": 1
+          },
+          {
+            "field": ".eligibleOrigins",
+            "typescript": 0,
+            "python": 1
+          },
+          {
+            "field": ".suggestions.0",
+            "typescript": null,
+            "python": {
+              "description": "Synthetic product",
+              "destinationCode": "02",
+              "destinationConfirmedPurchase": 0,
+              "destinationConfirmedStock": 0,
+              "destinationConfirmedTransfer": 0,
+              "destinationCurve": "A",
+              "destinationDailySales": 1,
+              "destinationMonthlyAvgSales": 30,
+              "destinationName": "Store 02",
+              "destinationNeed": 5,
+              "destinationStock": 0,
+              "destinationStockDays": 0,
+              "ean": "123",
+              "erpCode": "456",
+              "id": "123:01:02:0",
+              "maxQuantity": 5,
+              "originCode": "01",
+              "originConfirmedPurchase": 0,
+              "originConfirmedStock": 20,
+              "originConfirmedTransfer": 0,
+              "originCurve": "A",
+              "originDailySales": 0,
+              "originMonthlyAvgSales": 0,
+              "originName": "Store 01",
+              "originStock": 20,
+              "originStockDays": 0,
+              "quantity": 5,
+              "routePriority": 1
+            }
+          }
+        ]
+      },
+      {
+        "scenario": "different_states",
+        "matches": true,
+        "differences": []
+      },
+      {
+        "scenario": "same_city_route",
+        "matches": false,
+        "differences": [
+          {
+            "field": ".blockedRoute",
+            "typescript": 0,
+            "python": 1
+          },
+          {
+            "field": ".suggestions.0",
+            "typescript": {
+              "decisionGroupKey": "",
+              "decisionReason": "",
+              "decisionRequired": false,
+              "decisionResolved": false,
+              "description": "Synthetic product",
+              "destinationCode": "02",
+              "destinationConfirmedPurchase": 0,
+              "destinationConfirmedStock": 0,
+              "destinationConfirmedTransfer": 0,
+              "destinationCurve": "A",
+              "destinationDailySales": 1,
+              "destinationMonthlyAvgSales": 30,
+              "destinationName": "Store 02",
+              "destinationNeed": 5,
+              "destinationStock": 0,
+              "destinationStockDays": 0,
+              "ean": "123",
+              "erpCode": "456",
+              "id": "123:01:02:0",
+              "maxQuantity": 5,
+              "originAvailableStock": 20,
+              "originCode": "01",
+              "originConfirmedPurchase": 0,
+              "originConfirmedStock": 20,
+              "originConfirmedTransfer": 0,
+              "originCurve": "A",
+              "originDailySales": 0,
+              "originMonthlyAvgSales": 0,
+              "originName": "Store 01",
+              "originStock": 20,
+              "originStockDays": 0,
+              "quantity": 5,
+              "routePriority": 1,
+              "tieCandidateCount": 0
+            },
+            "python": null
+          }
+        ]
+      },
+      {
+        "scenario": "tie_needs_manual_decision",
+        "matches": false,
+        "differences": [
+          {
+            "field": ".suggestions.0.decisionGroupKey",
+            "typescript": "123:01:1|202|0|5",
+            "python": null
+          },
+          {
+            "field": ".suggestions.0.decisionReason",
+            "typescript": "Empate de calculo: 2 destinos disputam 10 un. da origem Store 01, que tem 3 un. disponivel. Ajuste as quantidades ou aceite a sugestao antes de confirmar.",
+            "python": null
+          },
+          {
+            "field": ".suggestions.0.decisionRequired",
+            "typescript": true,
+            "python": null
+          },
+          {
+            "field": ".suggestions.0.decisionResolved",
+            "typescript": false,
+            "python": null
+          },
+          {
+            "field": ".suggestions.0.originAvailableStock",
+            "typescript": 3,
+            "python": null
+          },
+          {
+            "field": ".suggestions.0.tieCandidateCount",
+            "typescript": 2,
+            "python": null
+          },
+          {
+            "field": ".suggestions.1",
+            "typescript": {
+              "decisionGroupKey": "123:01:1|202|0|5",
+              "decisionReason": "Empate de calculo: 2 destinos disputam 10 un. da origem Store 01, que tem 3 un. disponivel. Ajuste as quantidades ou aceite a sugestao antes de confirmar.",
+              "decisionRequired": true,
+              "decisionResolved": false,
+              "description": "Synthetic product",
+              "destinationCode": "03",
+              "destinationConfirmedPurchase": 0,
+              "destinationConfirmedStock": 0,
+              "destinationConfirmedTransfer": 0,
+              "destinationCurve": "A",
+              "destinationDailySales": 1,
+              "destinationMonthlyAvgSales": 30,
+              "destinationName": "Store 03",
+              "destinationNeed": 5,
+              "destinationStock": 0,
+              "destinationStockDays": 0,
+              "ean": "123",
+              "erpCode": "456",
+              "id": "123:01:03:1",
+              "maxQuantity": 0,
+              "originAvailableStock": 3,
+              "originCode": "01",
+              "originConfirmedPurchase": 0,
+              "originConfirmedStock": 3,
+              "originConfirmedTransfer": 0,
+              "originCurve": "A",
+              "originDailySales": 0,
+              "originMonthlyAvgSales": 0,
+              "originName": "Store 01",
+              "originStock": 3,
+              "originStockDays": 0,
+              "quantity": 0,
+              "routePriority": 1,
+              "tieCandidateCount": 2
+            },
+            "python": null
+          }
+        ]
+      },
+      {
+        "scenario": "minimum_days_without_sale",
+        "matches": false,
+        "differences": [
+          {
+            "field": ".eligibleDestinations",
+            "typescript": 0,
+            "python": 1
+          },
+          {
+            "field": ".suggestions.0",
+            "typescript": null,
+            "python": {
+              "description": "Synthetic product",
+              "destinationCode": "02",
+              "destinationConfirmedPurchase": 0,
+              "destinationConfirmedStock": 0,
+              "destinationConfirmedTransfer": 0,
+              "destinationCurve": "A",
+              "destinationDailySales": 1,
+              "destinationMonthlyAvgSales": 30,
+              "destinationName": "Store 02",
+              "destinationNeed": 5,
+              "destinationStock": 0,
+              "destinationStockDays": 0,
+              "ean": "123",
+              "erpCode": "456",
+              "id": "123:01:02:0",
+              "maxQuantity": 5,
+              "originCode": "01",
+              "originConfirmedPurchase": 0,
+              "originConfirmedStock": 20,
+              "originConfirmedTransfer": 0,
+              "originCurve": "A",
+              "originDailySales": 0,
+              "originMonthlyAvgSales": 0,
+              "originName": "Store 01",
+              "originStock": 20,
+              "originStockDays": 0,
+              "quantity": 5,
+              "routePriority": 1
+            }
+          }
+        ]
+      },
+      {
+        "scenario": "minimum_days_without_purchase",
+        "matches": false,
+        "differences": [
+          {
+            "field": ".eligibleDestinations",
+            "typescript": 0,
+            "python": 1
+          },
+          {
+            "field": ".suggestions.0",
+            "typescript": null,
+            "python": {
+              "description": "Synthetic product",
+              "destinationCode": "02",
+              "destinationConfirmedPurchase": 0,
+              "destinationConfirmedStock": 0,
+              "destinationConfirmedTransfer": 0,
+              "destinationCurve": "A",
+              "destinationDailySales": 1,
+              "destinationMonthlyAvgSales": 30,
+              "destinationName": "Store 02",
+              "destinationNeed": 5,
+              "destinationStock": 0,
+              "destinationStockDays": 0,
+              "ean": "123",
+              "erpCode": "456",
+              "id": "123:01:02:0",
+              "maxQuantity": 5,
+              "originCode": "01",
+              "originConfirmedPurchase": 0,
+              "originConfirmedStock": 20,
+              "originConfirmedTransfer": 0,
+              "originCurve": "A",
+              "originDailySales": 0,
+              "originMonthlyAvgSales": 0,
+              "originName": "Store 01",
+              "originStock": 20,
+              "originStockDays": 0,
+              "quantity": 5,
+              "routePriority": 1
+            }
+          }
+        ]
+      },
+      {
+        "scenario": "need_type_filter",
+        "matches": false,
+        "differences": [
+          {
+            "field": ".eligibleDestinations",
+            "typescript": 0,
+            "python": 1
+          },
+          {
+            "field": ".suggestions.0",
+            "typescript": null,
+            "python": {
+              "description": "Synthetic product",
+              "destinationCode": "02",
+              "destinationConfirmedPurchase": 0,
+              "destinationConfirmedStock": 0,
+              "destinationConfirmedTransfer": 0,
+              "destinationCurve": "A",
+              "destinationDailySales": 1,
+              "destinationMonthlyAvgSales": 30,
+              "destinationName": "Store 02",
+              "destinationNeed": 5,
+              "destinationStock": 0,
+              "destinationStockDays": 0,
+              "ean": "123",
+              "erpCode": "456",
+              "id": "123:01:02:0",
+              "maxQuantity": 5,
+              "originCode": "01",
+              "originConfirmedPurchase": 0,
+              "originConfirmedStock": 20,
+              "originConfirmedTransfer": 0,
+              "originCurve": "A",
+              "originDailySales": 0,
+              "originMonthlyAvgSales": 0,
+              "originName": "Store 01",
+              "originStock": 20,
+              "originStockDays": 0,
+              "quantity": 5,
+              "routePriority": 1
+            }
+          }
+        ]
+      },
+      {
+        "scenario": "supplier_filter",
+        "matches": false,
+        "differences": [
+          {
+            "field": ".eligibleDestinations",
+            "typescript": 0,
+            "python": 1
+          },
+          {
+            "field": ".suggestions.0",
+            "typescript": null,
+            "python": {
+              "description": "Synthetic product",
+              "destinationCode": "02",
+              "destinationConfirmedPurchase": 0,
+              "destinationConfirmedStock": 0,
+              "destinationConfirmedTransfer": 0,
+              "destinationCurve": "A",
+              "destinationDailySales": 1,
+              "destinationMonthlyAvgSales": 30,
+              "destinationName": "Store 02",
+              "destinationNeed": 5,
+              "destinationStock": 0,
+              "destinationStockDays": 0,
+              "ean": "123",
+              "erpCode": "456",
+              "id": "123:01:02:0",
+              "maxQuantity": 5,
+              "originCode": "01",
+              "originConfirmedPurchase": 0,
+              "originConfirmedStock": 20,
+              "originConfirmedTransfer": 0,
+              "originCurve": "A",
+              "originDailySales": 0,
+              "originMonthlyAvgSales": 0,
+              "originName": "Store 01",
+              "originStock": 20,
+              "originStockDays": 0,
+              "quantity": 5,
+              "routePriority": 1
+            }
+          }
+        ]
+      },
+      {
+        "scenario": "rounding_half_step",
+        "matches": false,
+        "differences": [
+          {
+            "field": ".suggestions.0.decisionGroupKey",
+            "typescript": "",
+            "python": null
+          },
+          {
+            "field": ".suggestions.0.decisionReason",
+            "typescript": "",
+            "python": null
+          },
+          {
+            "field": ".suggestions.0.decisionRequired",
+            "typescript": false,
+            "python": null
+          },
+          {
+            "field": ".suggestions.0.decisionResolved",
+            "typescript": false,
+            "python": null
+          },
+          {
+            "field": ".suggestions.0.destinationDailySales",
+            "typescript": 0.05555556,
+            "python": 0.05
+          },
+          {
+            "field": ".suggestions.0.destinationMonthlyAvgSales",
+            "typescript": 1.66666667,
+            "python": 1.5
+          },
+          {
+            "field": ".suggestions.0.originAvailableStock",
+            "typescript": 20,
+            "python": null
+          },
+          {
+            "field": ".suggestions.0.tieCandidateCount",
+            "typescript": 0,
+            "python": null
+          }
+        ]
+      }
+    ]
+  },
+  "benchmarks": [
+    {
+      "scenario": "synthetic_5000",
+      "pythonEngine": "python_script",
+      "rows": 5000,
+      "typescriptMedianMs": 141.92520000000013,
+      "pythonMedianMs": 116.89090001164004,
+      "typescriptSamplesMs": [
+        126.29759999999999,
+        162.1671,
+        139.29319999999996,
+        172.83090000000004,
+        141.92520000000013
+      ],
+      "pythonSamplesMs": [
+        119.04580000555143,
+        111.89749999903142,
+        110.21929996786639,
+        116.89090001164004,
+        120.26449997210875
+      ],
+      "sameAllocations": true,
+      "typescriptSuggestions": 1355,
+      "pythonSuggestions": 1355,
+      "typescriptUnits": 21333,
+      "pythonUnits": 21333
+    },
+    {
+      "scenario": "synthetic_25000",
+      "pythonEngine": "python_script",
+      "rows": 25000,
+      "typescriptMedianMs": 1266.6709,
+      "pythonMedianMs": 1421.2803999544121,
+      "typescriptSamplesMs": [
+        810.1937999999998,
+        1266.6709,
+        1250.0124,
+        1796.1606000000002,
+        1621.5055999999995
+      ],
+      "pythonSamplesMs": [
+        583.6217000032775,
+        972.6976999663748,
+        1618.9708999590948,
+        1421.5635999571532,
+        1421.2803999544121
+      ],
+      "sameAllocations": true,
+      "typescriptSuggestions": 6753,
+      "pythonSuggestions": 6753,
+      "typescriptUnits": 106706,
+      "pythonUnits": 106706
+    },
+    {
+      "scenario": "synthetic_100000",
+      "pythonEngine": "python_script",
+      "rows": 100000,
+      "typescriptMedianMs": 5600.427800000005,
+      "pythonMedianMs": 5979.869000031613,
+      "typescriptSamplesMs": [
+        5742.169499999998,
+        5207.0064999999995,
+        5285.440599999998,
+        5752.911699999997,
+        5600.427800000005
+      ],
+      "pythonSamplesMs": [
+        5979.869000031613,
+        6006.838699977379,
+        5884.675799985416,
+        6668.815699988045,
+        5832.3460999527015
+      ],
+      "sameAllocations": true,
+      "typescriptSuggestions": 27003,
+      "pythonSuggestions": 27003,
+      "typescriptUnits": 426831,
+      "pythonUnits": 426831
+    },
+    {
+      "scenario": "synthetic_100000_floor",
+      "pythonEngine": "python_script",
+      "rows": 100000,
+      "typescriptMedianMs": 5580.913100000005,
+      "pythonMedianMs": 6949.055000033695,
+      "typescriptSamplesMs": [
+        5782.509100000003,
+        5497.420099999996,
+        5855.363100000002,
+        5387.233299999993,
+        5580.913100000005
+      ],
+      "pythonSamplesMs": [
+        5938.825500023086,
+        6399.505799985491,
+        6949.055000033695,
+        7293.0161000113,
+        6993.002699979115
+      ],
+      "sameAllocations": false,
+      "typescriptSuggestions": 27504,
+      "pythonSuggestions": 27003,
+      "typescriptUnits": 426831,
+      "pythonUnits": 426831
+    },
+    {
+      "scenario": "synthetic_5000",
+      "pythonEngine": "python_legacy_api",
+      "rows": 5000,
+      "typescriptMedianMs": 141.92520000000013,
+      "pythonMedianMs": 14.441600011195987,
+      "typescriptSamplesMs": [
+        126.29759999999999,
+        162.1671,
+        139.29319999999996,
+        172.83090000000004,
+        141.92520000000013
+      ],
+      "pythonSamplesMs": [
+        14.441600011195987,
+        14.240099990274757,
+        16.756199998781085,
+        17.878799990285188,
+        13.663999969139695
+      ],
+      "sameAllocations": false,
+      "typescriptSuggestions": 1355,
+      "pythonSuggestions": 0,
+      "typescriptUnits": 21333,
+      "pythonUnits": 0
+    },
+    {
+      "scenario": "synthetic_25000",
+      "pythonEngine": "python_legacy_api",
+      "rows": 25000,
+      "typescriptMedianMs": 1266.6709,
+      "pythonMedianMs": 79.30819998728111,
+      "typescriptSamplesMs": [
+        810.1937999999998,
+        1266.6709,
+        1250.0124,
+        1796.1606000000002,
+        1621.5055999999995
+      ],
+      "pythonSamplesMs": [
+        68.33199999528006,
+        79.30819998728111,
+        80.93899994855747,
+        74.83210001373664,
+        94.5549999596551
+      ],
+      "sameAllocations": false,
+      "typescriptSuggestions": 6753,
+      "pythonSuggestions": 0,
+      "typescriptUnits": 106706,
+      "pythonUnits": 0
+    },
+    {
+      "scenario": "synthetic_100000",
+      "pythonEngine": "python_legacy_api",
+      "rows": 100000,
+      "typescriptMedianMs": 5600.427800000005,
+      "pythonMedianMs": 162.78310003690422,
+      "typescriptSamplesMs": [
+        5742.169499999998,
+        5207.0064999999995,
+        5285.440599999998,
+        5752.911699999997,
+        5600.427800000005
+      ],
+      "pythonSamplesMs": [
+        182.1879000053741,
+        190.02580002415925,
+        162.78310003690422,
+        162.37739997450262,
+        158.0116000259295
+      ],
+      "sameAllocations": false,
+      "typescriptSuggestions": 27003,
+      "pythonSuggestions": 0,
+      "typescriptUnits": 426831,
+      "pythonUnits": 0
+    },
+    {
+      "scenario": "synthetic_100000_floor",
+      "pythonEngine": "python_legacy_api",
+      "rows": 100000,
+      "typescriptMedianMs": 5580.913100000005,
+      "pythonMedianMs": 160.40649998467416,
+      "typescriptSamplesMs": [
+        5782.509100000003,
+        5497.420099999996,
+        5855.363100000002,
+        5387.233299999993,
+        5580.913100000005
+      ],
+      "pythonSamplesMs": [
+        160.40649998467416,
+        156.87060001073405,
+        161.43839998403564,
+        158.31259998958558,
+        171.58500000368804
+      ],
+      "sameAllocations": false,
+      "typescriptSuggestions": 27504,
+      "pythonSuggestions": 0,
+      "typescriptUnits": 426831,
+      "pythonUnits": 0
+    }
+  ],
+  "benchmarkGeneratedAt": "2026-10-13T15:56:40.151Z"
+}

@@ -48,6 +48,7 @@ test('fills only the deficit, even without sales, using confirmed stock', () => 
   const rows = run([origin(), destination({ stock: 9 })]);
   assert.equal(rows.length, 1);
   assert.equal(rows[0].quantity, 3);
+  assert.equal(rows[0].minimumStockQuantity, 3);
   assert.equal(rows[0].destinationConfirmedStock, 7);
 });
 
@@ -63,8 +64,10 @@ test('normal demand gets surplus before minimum stock demand', () => {
   ]);
   assert.equal(rows[0].destinationCode, '03');
   assert.equal(rows[0].quantity, 5);
+  assert.equal(rows[0].minimumStockQuantity, 0);
   assert.equal(rows[1].destinationCode, '02');
   assert.equal(rows[1].quantity, 1);
+  assert.equal(rows[1].minimumStockQuantity, 1);
 });
 
 test('normal allocations count toward minimum and same route is merged', () => {
@@ -73,12 +76,14 @@ test('normal allocations count toward minimum and same route is merged', () => {
   assert.equal(rows[0].quantity, 8);
   assert.equal(rows[0].maxQuantity, 8);
   assert.equal(rows[0].destinationNeed, 8);
+  assert.equal(rows[0].minimumStockQuantity, 5);
 });
 
 test('does not replenish when already at minimum or normal allocation covers it', () => {
   assert.equal(run([origin(), destination({ confirmed_stock: 10 })]).length, 0);
   const rows = [origin(), destination({ stock: 0, confirmed_stock: 0, min_stock: 2, monthly_avg_sales: 30 })];
   assert.equal(run(rows)[0].quantity, run(rows, { rules: { considerMinimumStock: false } })[0].quantity);
+  assert.equal(run(rows)[0].minimumStockQuantity, 0);
 });
 
 test('preserves donor minimum and normal safety reserve', () => {

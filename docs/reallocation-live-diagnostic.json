@@ -1,0 +1,25 @@
+{
+  "generatedAt": "2026-10-13T15:58:03.223Z",
+  "scope": "Read-only latest snapshot, production stock-pagination and logistics helpers. Historical snapshot accepted for timing only. Unfiltered representative rules, not the browser current selection. Excludes user authentication, attribute filtering, browser transfer and rendering. No products or credentials stored.",
+  "provenance": "Aggregate measurements preserved from the completed full-snapshot diagnostic console output.",
+  "fullSnapshotRows": 121411,
+  "sampleOnly": false,
+  "stockRows": 121411,
+  "stockReadRequests": 122,
+  "requestCount": 124,
+  "snapshotLookupMs": 962.9714,
+  "stockReadMs": 101355.5334,
+  "logisticsReadMs": 314.8953000000038,
+  "calculationSamplesMs": [1457.6674000000057, 1039.0096000000049, 1157.6858000000066],
+  "calculationMedianMs": 1157.6858000000066,
+  "serializationMs": 7.083800000007614,
+  "responseBytes": 2586883,
+  "suggestions": 2835,
+  "rules": {
+    "originMinimumDays": 20,
+    "destinationTargetDays": 30,
+    "maxRoutePriority": 3,
+    "stockFloor": 0,
+    "considerMinimumStock": false
+  }
+}

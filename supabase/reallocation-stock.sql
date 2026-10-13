@@ -76,6 +76,9 @@ on public.reallocation_stock_snapshots (sector, imported_at desc);
 create index if not exists reallocation_stock_items_snapshot_idx
 on public.reallocation_stock_items (snapshot_id);
 
+create index if not exists reallocation_stock_items_snapshot_id_cursor_idx
+on public.reallocation_stock_items (snapshot_id, id);
+
 create index if not exists reallocation_stock_items_store_idx
 on public.reallocation_stock_items (store_code);
 

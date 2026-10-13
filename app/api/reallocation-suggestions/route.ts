@@ -343,6 +343,7 @@ function buildSuggestion(
     originStockDays: numberValue(originItem.stock_days),
     destinationStockDays: numberValue(destinationItem.stock_days),
     destinationNeed: need,
+    minimumStockQuantity: 0,
     routePriority: priority,
     decisionRequired: tieCandidateCount > 1,
     decisionResolved: false,
@@ -679,8 +680,10 @@ function calculate(payload: {
             existing.quantity += quantity;
             existing.maxQuantity += quantity;
             existing.destinationNeed = Math.max(existing.destinationNeed, destination.need);
+            existing.minimumStockQuantity += quantity;
           } else {
             const suggestion = buildSuggestion(ean, origin, destination, quantity, destination.need, priority, suggestions.length);
+            suggestion.minimumStockQuantity = quantity;
             suggestions.push(suggestion);
             suggestionsByRoute.set(routeKey, suggestion);
           }
@@ -702,38 +705,90 @@ function calculate(payload: {
   };
 }
 
-async function fetchSnapshotStockItems(snapshotId: string) {
-  const supabase = getSupabaseAdmin();
-  const rows: StockItem[] = [];
-  const chunkSize = 1000;
-  let lastId = "";
+type ReadPage = {
+  eans?: string[];
+  lower?: string;
+  upper?: string;
+  after: string;
+  signal: AbortSignal;
+};
+const READ_PAGE_SIZE = 1000;
+const READ_CONCURRENCY = 4;
+const EAN_BATCH_SIZE = 200;
+const UUID_READ_BOUNDARIES = [
+  "00000000-0000-0000-0000-000000000000",
+  "40000000-0000-0000-0000-000000000000",
+  "80000000-0000-0000-0000-000000000000",
+  "c0000000-0000-0000-0000-000000000000",
+];
 
-  for (;;) {
-    let query = supabase
-      .from("reallocation_stock_items")
-      .select("*")
-      .eq("snapshot_id", snapshotId)
-      .order("id", { ascending: true })
-      .limit(chunkSize);
-
-    if (lastId) {
-      query = query.gt("id", lastId);
-    }
-
-    const { data, error } = await query;
-
-    if (error) throw error;
-
-    const chunk = (data || []) as Array<StockItem & { id?: string | null }>;
-    rows.push(...chunk);
-    if (chunk.length < chunkSize) break;
-
-    const nextLastId = chunk[chunk.length - 1]?.id;
-    if (!nextLastId || nextLastId === lastId) break;
-    lastId = nextLastId;
+async function fetchOrderedRows<T extends { id?: string | null }>(fetchPage: (page: ReadPage) => Promise<{ data: unknown; error: unknown }>, productEans: string[] = []) {
+  const eans = Array.from(new Set(productEans));
+  const tasks: Array<{ eans?: string[]; lower?: string; upper?: string }> = [];
+  if (eans.length > 0) {
+    for (let index = 0; index < eans.length; index += EAN_BATCH_SIZE) tasks.push({ eans: eans.slice(index, index + EAN_BATCH_SIZE) });
+  } else {
+    UUID_READ_BOUNDARIES.forEach((lower, index) => tasks.push({ lower, upper: UUID_READ_BOUNDARIES[index + 1] }));
   }
+  const results: T[][] = new Array(tasks.length);
+  const controller = new AbortController();
+  let nextTask = 0;
+  const worker = async () => {
+    while (nextTask < tasks.length) {
+      controller.signal.throwIfAborted();
+      const taskIndex = nextTask++;
+      const task = tasks[taskIndex];
+      const rows: T[] = [];
+      let lastId = "";
+      for (;;) {
+        controller.signal.throwIfAborted();
+        const { data, error } = await fetchPage({ ...task, after: lastId, signal: controller.signal });
+        if (error) throw error;
+        const chunk = (data || []) as unknown as T[];
+        if (chunk.length === 0) break;
+        const nextId = chunk[chunk.length - 1]?.id;
+        if (!nextId || nextId <= lastId) throw new Error("A leitura do remanejamento retornou uma pagina sem cursor valido.");
+        rows.push(...chunk);
+        if (chunk.length < READ_PAGE_SIZE) break;
+        lastId = nextId;
+      }
+      results[taskIndex] = rows;
+    }
+  };
+  const workers = Array.from({ length: Math.min(READ_CONCURRENCY, tasks.length) }, worker);
+  try {
+    await Promise.all(workers);
+  } catch (error) {
+    controller.abort();
+    await Promise.allSettled(workers);
+    throw error;
+  }
+  // Completion order must never change the engine's allocation and tie order.
+  return results.flat().sort((left, right) => String(left.id) < String(right.id) ? -1 : String(left.id) > String(right.id) ? 1 : 0);
+}
 
-  return rows;
+async function fetchSnapshotStockItems(snapshotId: string, filters: { products?: string[]; origins?: string[]; destinations?: string[] } = {}) {
+  const products = Array.from(new Set((filters.products || []).filter(Boolean).map(String)));
+  if (products.length === 1 && products[0] === "__NO_PRODUCT_MATCH__") return [];
+  const supabase = getSupabaseAdmin();
+  const origins = (filters.origins || []).map(storeCode);
+  const destinations = (filters.destinations || []).map(storeCode);
+  // An empty side means ALL stores on that side, so it cannot restrict the read.
+  const stores = origins.length > 0 && destinations.length > 0
+    ? Array.from(new Set([...origins, ...destinations].flatMap((code) => code === "00" ? [code, "0", ""] : /^0\d$/.test(code) ? [code, code.slice(1)] : [code])))
+    : [];
+  return fetchOrderedRows<StockItem & { id: string }>(async (page) => {
+    let query = supabase.from("reallocation_stock_items")
+      .select("id,store_code,store_name,ean,erp_code,product_description,stock,confirmed_stock,monthly_avg_sales,stock_days,curve,confirmed_purchase,confirmed_transfer,last_sale_days,last_purchase_days,last_purchase_supplier,need_type,rupture_sales,supplied_percent,min_stock")
+      .eq("snapshot_id", snapshotId)
+      .order("id", { ascending: true }).limit(READ_PAGE_SIZE).abortSignal(page.signal);
+    if (stores.length > 0) query = query.in("store_code", stores);
+    if (page.eans) query = query.in("ean", page.eans);
+    if (page.lower) query = query.gte("id", page.lower);
+    if (page.upper) query = query.lt("id", page.upper);
+    if (page.after) query = query.gt("id", page.after);
+    return await query;
+  }, products);
 }
 
 async function fetchServerBranchLogistics() {
@@ -905,6 +960,7 @@ function mergeProductFilters(filters: {
 }
 
 async function fetchProductEansByAttributes(filters: {
+  products?: string[];
   classifications?: string[];
   classificationLines?: string[];
   classificationDepartments?: string[];
@@ -926,33 +982,18 @@ async function fetchProductEansByAttributes(filters: {
   ) return [];
 
   const supabase = getSupabaseAdmin();
-  const rows: Array<{ id: string | null; ean: string | null; manufacturer: string | null; classification: string | null }> = [];
-  const chunkSize = 1000;
-  let lastId = "";
-
-  for (;;) {
+  const rows = await fetchOrderedRows<{ id: string; ean: string | null; manufacturer: string | null; classification: string | null }>(async (page) => {
     let query = supabase
       .from("reallocation_products")
       .select("id,ean,manufacturer,classification")
       .not("ean", "is", null)
-      .order("id", { ascending: true })
-      .limit(chunkSize);
-
-    if (lastId) {
-      query = query.gt("id", lastId);
-    }
-
-    const { data, error } = await query;
-    if (error) throw error;
-
-    const chunk = (data || []) as Array<{ id: string | null; ean: string | null; manufacturer: string | null; classification: string | null }>;
-    rows.push(...chunk);
-    if (chunk.length < chunkSize) break;
-
-    const nextLastId = chunk[chunk.length - 1]?.id;
-    if (!nextLastId || nextLastId === lastId) break;
-    lastId = nextLastId;
-  }
+      .order("id", { ascending: true }).limit(READ_PAGE_SIZE).abortSignal(page.signal);
+    if (page.eans) query = query.in("ean", page.eans);
+    if (page.lower) query = query.gte("id", page.lower);
+    if (page.upper) query = query.lt("id", page.upper);
+    if (page.after) query = query.gt("id", page.after);
+    return await query;
+  }, (filters.products || []).filter(Boolean).map(String));
 
   return Array.from(new Set(rows
     .filter((row) => manufacturers.length === 0 || manufacturers.some((manufacturer) => normalizedIncludes(row.manufacturer, manufacturer)))
@@ -976,14 +1017,22 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const requestStartedAt = performance.now();
   const auth = await requireAuthenticatedProfile(request);
+  const timings: Record<string, number> = {
+    authMs: performance.now() - requestStartedAt,
+  };
   if (!auth.ok) return auth.response;
 
   try {
+    let phaseStartedAt = performance.now();
     const payload = await request.json();
+    timings.requestReadMs = performance.now() - phaseStartedAt;
     const snapshotId = payload?.snapshotId ? String(payload.snapshotId) : "";
     const activeSector = normalizeReallocationSector(auth.profile.sector);
+    phaseStartedAt = performance.now();
     const snapshotFreshnessError = snapshotId ? await getSnapshotFreshnessError(snapshotId, activeSector) : "";
+    timings.snapshotValidationMs = performance.now() - phaseStartedAt;
 
     if (snapshotFreshnessError) {
       return reallocationJson({
@@ -994,17 +1043,24 @@ export async function POST(request: Request) {
       }, { status: 409 });
     }
 
-    const stockItems = snapshotId
-      ? await fetchSnapshotStockItems(snapshotId)
-      : payload?.stockItems;
     const filters = payload?.filters || {};
-    const attributeProducts = await fetchProductEansByAttributes(filters);
-    const serverBranchLogistics = await fetchServerBranchLogistics();
+    const attributeStartedAt = performance.now();
+    const logisticsStartedAt = performance.now();
+    const [attributeProducts, serverBranchLogistics] = await Promise.all([
+      fetchProductEansByAttributes(filters).then((result) => { timings.attributeReadMs = performance.now() - attributeStartedAt; return result; }),
+      fetchServerBranchLogistics().then((result) => { timings.logisticsReadMs = performance.now() - logisticsStartedAt; return result; }),
+    ]);
+    const mergedProducts = mergeProductFilters(filters, attributeProducts);
+    phaseStartedAt = performance.now();
+    const stockItems = snapshotId
+      ? await fetchSnapshotStockItems(snapshotId, { ...filters, products: mergedProducts })
+      : payload?.stockItems;
+    timings.stockReadMs = performance.now() - phaseStartedAt;
     const calculationPayload = {
       ...payload,
       filters: {
         ...filters,
-        products: mergeProductFilters(filters, attributeProducts),
+        products: mergedProducts,
       },
       branchLogistics: {
         ...(payload?.branchLogistics || {}),
@@ -1019,11 +1075,24 @@ export async function POST(request: Request) {
       branchLogistics: Object.keys(calculationPayload.branchLogistics).length,
     };
 
-    return reallocationJson({
-      ...calculate(calculationPayload),
+    phaseStartedAt = performance.now();
+    const result = calculate(calculationPayload);
+    timings.calculationMs = performance.now() - phaseStartedAt;
+    timings.preResponseMs = performance.now() - requestStartedAt;
+    phaseStartedAt = performance.now();
+    const response = reallocationJson({
+      ...result,
       ...diagnostics,
+      timings,
       engineNote: "Motor TypeScript unico no ambiente hospedado.",
     });
+    const serializationMs = performance.now() - phaseStartedAt;
+    response.headers.set("Server-Timing", [
+      ...Object.entries(timings).map(([name, duration]) => `${name};dur=${duration.toFixed(2)}`),
+      `serializationMs;dur=${serializationMs.toFixed(2)}`,
+      `totalMs;dur=${(performance.now() - requestStartedAt).toFixed(2)}`,
+    ].join(", "));
+    return response;
   } catch (error) {
     const message = error instanceof Error ? error.message : "Erro ao gerar sugestoes.";
     return reallocationJson({ error: message, suggestions: [] }, { status: 400 });
