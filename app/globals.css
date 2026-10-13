@@ -734,3 +734,38 @@ html[data-theme="dark"] [data-section-theme]:not([data-section-theme="INICIO"]) 
 html[data-theme="dark"] [data-section-theme]:not([data-section-theme="INICIO"]) .hover\:bg-blue-100:hover {
   background-color: color-mix(in srgb, var(--section-accent) 18%, black) !important;
 }
+
+/* Global active row/cell focus for data tables. */
+:root {
+  --table-focus-color: var(--section-accent, #2563eb);
+}
+
+:where(table tbody tr.wally-table-focused-row) {
+  position: relative;
+  outline: 2px solid var(--table-focus-color);
+  outline-offset: -2px;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--table-focus-color) 18%, transparent), 0 0 0 4px color-mix(in srgb, var(--table-focus-color) 8%, transparent);
+  z-index: 5;
+}
+
+:where(table tbody tr.wally-table-focused-row > td) {
+  transition: box-shadow 120ms ease, outline-color 120ms ease;
+}
+
+:where(table tbody tr.wally-table-focused-row > td:first-child:not(.wally-table-focused-cell)) {
+  box-shadow: inset 3px 0 0 var(--table-focus-color);
+}
+
+:where(table tbody tr.wally-table-focused-row > td.wally-table-focused-cell) {
+  position: relative;
+  box-shadow: inset 0 0 0 2px var(--table-focus-color);
+}
+
+:where(table tbody tr.wally-table-focused-row > td:first-child.wally-table-focused-cell) {
+  box-shadow: inset 0 0 0 2px var(--table-focus-color), inset 3px 0 0 var(--table-focus-color);
+}
+
+html[data-theme="dark"] :where(table tbody tr.wally-table-focused-row) {
+  outline-color: color-mix(in srgb, var(--table-focus-color) 86%, white);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--table-focus-color) 26%, transparent), 0 0 0 4px color-mix(in srgb, var(--table-focus-color) 14%, transparent);
+}

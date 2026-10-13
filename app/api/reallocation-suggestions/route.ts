@@ -55,6 +55,7 @@ type BranchLogistics = Record<string, {
 type SuggestionOrigin = {
   item: StockItem;
   availableStock: number;
+  stockFloor: number;
   remaining: number;
 };
 
@@ -325,7 +326,7 @@ function buildSuggestion(
     quantity,
     maxQuantity: quantity,
     originStock: numberValue(originItem.stock),
-    originAvailableStock: origin.availableStock,
+    originAvailableStock: Math.max(0, Math.floor(origin.availableStock - origin.stockFloor)),
     originConfirmedStock: numberValue(originItem.confirmed_stock),
     originMonthlyAvgSales: normalizeMonthlyAvgSales(numberValue(originItem.monthly_avg_sales)),
     originCurve: originItem.curve || "",
@@ -410,6 +411,8 @@ function calculate(payload: {
     lastPurchaseSuppliers?: string[];
   };
   rules?: {
+    considerMinimumStock?: boolean;
+    stockFloor?: number;
     originMinimumDays?: number;
     destinationTargetDays?: number;
     maxRoutePriority?: number;
@@ -432,6 +435,7 @@ function calculate(payload: {
   const selectedNeedTypes = new Set((filters.needTypes || []).map(normalizeRouteText).filter(Boolean));
   const selectedLastPurchaseSuppliers = new Set((filters.lastPurchaseSuppliers || []).map(normalizeRouteText).filter(Boolean));
   const originMinimumDays = numberValue(rules.originMinimumDays);
+  const stockFloor = Math.max(0, Math.ceil(numberValue(rules.stockFloor)));
   const destinationTargetDays = numberValue(rules.destinationTargetDays);
   const maxRoutePriority = numberValue(rules.maxRoutePriority);
   const lastSaleMaxDays = numberValue(rules.lastSaleMaxDays);
@@ -464,6 +468,7 @@ function calculate(payload: {
   let blockedRoute = 0;
 
   for (const [ean, items] of grouped) {
+    const productSuggestionStart = suggestions.length;
     const origins: SuggestionOrigin[] = [];
 
     for (const item of items) {
@@ -477,7 +482,7 @@ function calculate(payload: {
 
       const dailySales = ownDailySales(item);
       const stockDays = dailySales > 0 ? stock / dailySales : numberValue(item.stock_days);
-      const protectedStock = dailySales > 0 ? dailySales * originMinimumDays : 0;
+      const protectedStock = Math.max(stockFloor, dailySales > 0 ? dailySales * originMinimumDays : 0);
       const remaining = Math.max(0, Math.floor(stock - protectedStock));
       if (remaining > 0) {
         origins.push({
@@ -487,6 +492,7 @@ function calculate(payload: {
             stock_days: stockDays,
           },
           availableStock: stock,
+          stockFloor,
           remaining,
         });
       }
@@ -605,6 +611,80 @@ function calculate(payload: {
         remainingNeed -= quantity;
         allocatedByDestination.set(destinationAllocationKey(destination), (allocatedByDestination.get(destinationAllocationKey(destination)) || 0) + quantity);
         suggestions.push(buildSuggestion(ean, origin, destination, quantity, destination.need, priority, suggestions.length));
+      }
+    }
+
+    // Minimum stock only uses surplus left after every normal allocation for this product.
+    if (rules.considerMinimumStock === true) {
+      const sentByOrigin = new Map<string, number>();
+      const suggestionsByRoute = new Map<string, (typeof suggestions)[number]>();
+      for (const suggestion of suggestions.slice(productSuggestionStart)) {
+        sentByOrigin.set(suggestion.originCode, (sentByOrigin.get(suggestion.originCode) || 0) + suggestion.quantity);
+        suggestionsByRoute.set(`${suggestion.originCode}:${suggestion.destinationCode}`, suggestion);
+      }
+
+      const minimumDestinations: SuggestionDestination[] = [];
+      for (const item of items) {
+        const code = storeCode(item.store_code);
+        if (selectedDestinations.size > 0 && !selectedDestinations.has(code)) continue;
+        if (!branchCanReceive(code, branchLogistics)) continue;
+        if (selectedDestinationCurves.size > 0 && !selectedDestinationCurves.has(stockCurve(item.curve))) continue;
+        const minimum = Math.max(0, numberValue(item.min_stock));
+        const confirmed = item.confirmed_stock;
+        const currentStock = confirmed === null || confirmed === undefined || String(confirmed).trim() === ""
+          ? realStock(item)
+          : Math.max(0, numberValue(confirmed));
+        const need = Math.max(0, Math.ceil(minimum - currentStock + (sentByOrigin.get(code) || 0)));
+        const destination = { item, need };
+        if (destinationOpenNeed(destination, allocatedByDestination) <= 0) continue;
+        minimumDestinations.push(destination);
+      }
+
+      minimumDestinations.sort((left, right) => (
+        bestRoutePriorityForDestination(left, origins, branchLogistics) - bestRoutePriorityForDestination(right, origins, branchLogistics)
+        || bestCurveMovePriorityForDestination(left, origins) - bestCurveMovePriorityForDestination(right, origins)
+        || right.need - left.need
+        || storeCode(left.item.store_code).localeCompare(storeCode(right.item.store_code))
+      ));
+      const normalDestinationCodes = new Set(destinations.map(destinationAllocationKey));
+      eligibleDestinations += minimumDestinations.filter((destination) => !normalDestinationCodes.has(destinationAllocationKey(destination))).length;
+
+      for (const destination of minimumDestinations) {
+        const destinationCode = destinationAllocationKey(destination);
+        const rankedOrigins = origins
+          .filter((origin) => storeCode(origin.item.store_code) !== destinationCode && origin.remaining > 0)
+          .map((origin) => ({ origin, priority: routePriority(origin.item, destination.item, branchLogistics) }))
+          .filter(({ priority }) => priority <= maxRoutePriority)
+          .sort((left, right) => (
+            left.priority - right.priority
+            || curveMovePriority(left.origin.item, destination.item) - curveMovePriority(right.origin.item, destination.item)
+            || numberValue(right.origin.item.stock_days) - numberValue(left.origin.item.stock_days)
+          ));
+
+        for (const { origin, priority } of rankedOrigins) {
+          const openNeed = destinationOpenNeed(destination, allocatedByDestination);
+          if (openNeed <= 0) break;
+          const originCode = storeCode(origin.item.store_code);
+          const sent = sentByOrigin.get(originCode) || 0;
+          const surplusAboveMinimum = Math.max(0, Math.floor(origin.availableStock - sent - Math.max(0, numberValue(origin.item.min_stock))));
+          const quantity = Math.min(origin.remaining, surplusAboveMinimum, openNeed);
+          if (quantity <= 0) continue;
+
+          origin.remaining -= quantity;
+          sentByOrigin.set(originCode, sent + quantity);
+          allocatedByDestination.set(destinationCode, (allocatedByDestination.get(destinationCode) || 0) + quantity);
+          const routeKey = `${originCode}:${destinationCode}`;
+          const existing = suggestionsByRoute.get(routeKey);
+          if (existing) {
+            existing.quantity += quantity;
+            existing.maxQuantity += quantity;
+            existing.destinationNeed = Math.max(existing.destinationNeed, destination.need);
+          } else {
+            const suggestion = buildSuggestion(ean, origin, destination, quantity, destination.need, priority, suggestions.length);
+            suggestions.push(suggestion);
+            suggestionsByRoute.set(routeKey, suggestion);
+          }
+        }
       }
     }
   }

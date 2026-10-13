@@ -359,7 +359,7 @@ export async function POST(request: Request) {
 
     const { data: masterRows } = await getSupabaseAdmin()
       .from("reallocation_products")
-      .select("ean,description,manufacturer")
+      .select("ean,description,manufacturer,classification")
       .in("ean", products.map((product) => product.ean));
     const masterByEan = new Map((masterRows || []).map((product) => [String(product.ean || ""), product]));
     const enrichedProducts = products.map((product) => {
@@ -369,6 +369,7 @@ export async function POST(request: Request) {
           ...product,
           description: String(master.description || product.description),
           brand: String(master.manufacturer || product.brand),
+          classification_path: String(master.classification || ''),
         }
         : product;
     });

@@ -74,6 +74,11 @@ function formatTxtNumber(value: number) {
   return String(Number(Number(value || 0).toFixed(2)));
 }
 
+function formatTxtPrice(value: number) {
+  const fixed = Number(value || 0).toFixed(2);
+  return fixed.endsWith('.00') ? fixed.slice(0, -3) : fixed;
+}
+
 
 function safeFilePart(value: string) {
   return normalize(value).replace(/[^A-Z0-9]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'loja';
@@ -167,13 +172,15 @@ function bestRuleForItem(item: ExpiringInventoryItem, rules: ExpiringDiscountRul
 }
 
 function basePriceForItem(item: ExpiringInventoryItem, pricingByEan: Map<string, PricingProduct>) {
+  if (Number(item.sale_price || 0) > 0) return Number(item.sale_price || 0);
   const product = pricingByEan.get(item.ean);
   if (!product) return 0;
   return Number(product.store_prices?.[item.branch_code] || product.sale_price || 0);
 }
 
-function offerPrice(basePrice: number, rule: ExpiringDiscountRule | null) {
+function offerPrice(item: ExpiringInventoryItem, basePrice: number, rule: ExpiringDiscountRule | null) {
   if (!rule) return 0;
+  if (rule.discount_type === 'half_cost_price') return Number(item.cost_price || 0) / 2;
   if (rule.discount_type === 'fixed_price') return Number(rule.discount_value || 0);
   if (!basePrice) return 0;
   return Math.max(0, basePrice * (1 - Number(rule.discount_value || 0) / 100));
@@ -182,8 +189,26 @@ function offerPrice(basePrice: number, rule: ExpiringDiscountRule | null) {
 function discountPercent(basePrice: number, rule: ExpiringDiscountRule | null) {
   if (!rule) return 0;
   if (rule.discount_type === 'percent') return Number(rule.discount_value || 0);
-  if (!basePrice) return 0;
+  if (!basePrice || !rule.discount_value) return 0;
   return Math.max(0, ((basePrice - Number(rule.discount_value || 0)) / basePrice) * 100);
+}
+
+function exportKindForRule(rule: ExpiringDiscountRule | null) {
+  return rule?.discount_type === 'fixed_price' || rule?.discount_type === 'half_cost_price' ? 'A' : 'B';
+}
+
+function exportValueForRow(row: { item: ExpiringInventoryItem; rule: ExpiringDiscountRule | null; price: number; discount: number }) {
+  return exportKindForRule(row.rule) === 'A' ? row.price : row.discount;
+}
+
+function formatExportValueForRow(row: { item: ExpiringInventoryItem; rule: ExpiringDiscountRule | null; price: number; discount: number }) {
+  return exportKindForRule(row.rule) === 'A' ? formatTxtPrice(row.price) : formatTxtNumber(row.discount);
+}
+
+function discountLabel(rule: ExpiringDiscountRule) {
+  if (rule.discount_type === 'half_cost_price') return 'A - 50% do custo';
+  if (rule.discount_type === 'fixed_price') return `A - ${money(Number(rule.discount_value || 0))}`;
+  return `B - ${formatTxtNumber(Number(rule.discount_value || 0))}%`;
 }
 
 function productScopeLabel(product: ReallocationProduct) {
@@ -404,8 +429,9 @@ export function ExpiringProductsManager() {
   }, [branches]);
   const scopeTypeOptions = useMemo<RuleSelectOption[]>(() => Object.entries(SCOPE_LABELS).map(([value, label]) => ({ value, label })), []);
   const discountTypeOptions = useMemo<RuleSelectOption[]>(() => [
-    { value: 'percent', label: 'Desconto %' },
-    { value: 'fixed_price', label: 'Preco fixo' },
+    { value: 'percent', label: 'B - Desconto %' },
+    { value: 'fixed_price', label: 'A - Preco fixo' },
+    { value: 'half_cost_price', label: 'A - Metade do custo' },
   ], []);
 
   const masterClassificationPaths = useMemo(() => Array.from(new Set([
@@ -435,12 +461,12 @@ export function ExpiringProductsManager() {
   const classifiedRows = useMemo(() => items.map((item) => {
     const rule = bestRuleForItem(item, activeProcessRules);
     const basePrice = basePriceForItem(item, pricingByEan);
-    const price = offerPrice(basePrice, rule);
+    const price = offerPrice(item, basePrice, rule);
     const discount = discountPercent(basePrice, rule);
     return { item, rule, basePrice, price, discount };
   }), [activeProcessRules, items, pricingByEan]);
 
-  const eligibleRows = useMemo(() => classifiedRows.filter((row) => row.rule), [classifiedRows]);
+  const eligibleRows = useMemo(() => classifiedRows.filter((row) => row.rule && exportValueForRow(row) > 0), [classifiedRows]);
   const calculatedSet = useMemo(() => new Set(calculatedItemIds), [calculatedItemIds]);
   const reportRows = useMemo(() => calculatedAt ? eligibleRows.filter(({ item }) => calculatedSet.has(item.id)) : [], [calculatedAt, calculatedSet, eligibleRows]);
 
@@ -467,7 +493,7 @@ export function ExpiringProductsManager() {
 
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
   const rowsForExport = selectedIds.length ? visibleRows.filter(({ item }) => selectedSet.has(item.id)) : visibleRows;
-  const exportableRows = rowsForExport.filter((row) => row.discount > 0);
+  const exportableRows = rowsForExport.filter((row) => exportValueForRow(row) > 0);
   const exportBranchCount = useMemo(() => new Set(exportableRows.map(({ item }) => normalizeBranchCode(item.branch_code))).size, [exportableRows]);
 
   const branchOptions = useMemo(() => {
@@ -649,12 +675,16 @@ export function ExpiringProductsManager() {
   };
 
   const exportTxt = () => {
-    const lineForRow = ({ item, discount }: (typeof exportableRows)[number]) => `B|${item.ean}|||${formatTxtNumber(discount)}`;
+    const lineForRow = (row: (typeof exportableRows)[number]) => `${exportKindForRule(row.rule)}|${row.item.ean}|||${formatExportValueForRow(row)}`;
     const ruleFilePart = (rows: typeof exportableRows) => {
       const names = Array.from(new Set(rows.map(({ rule }) => rule?.name || '').filter(Boolean)));
       if (names.length > 1) return 'multiplas-regras';
       if (names.length === 0) return 'sem-regra';
       return safeFilePart(names[0]).slice(0, 70).replace(/-+$/g, '') || 'regra';
+    };
+    const kindFilePart = (rows: typeof exportableRows) => {
+      const kinds = Array.from(new Set(rows.map((row) => exportKindForRule(row.rule))));
+      return kinds.length === 1 ? kinds[0] : 'misto';
     };
 
     if (!exportableRows.length) {
@@ -666,7 +696,7 @@ export function ExpiringProductsManager() {
     const exportedRule = ruleFilePart(exportableRows);
 
     if (exportMode === 'single') {
-      downloadTextFile(`pre-vencidos-B-${exportedRule}-${date}.txt`, exportableRows.map(lineForRow).join('\r\n'));
+      downloadTextFile(`pre-vencidos-${kindFilePart(exportableRows)}-${exportedRule}-${date}.txt`, exportableRows.map(lineForRow).join('\r\n'));
       clearImportedProcess();
       return;
     }
@@ -680,12 +710,12 @@ export function ExpiringProductsManager() {
     const zipEntries: Record<string, Uint8Array> = {};
     rowsByBranch.forEach((rows, code) => {
       const branchName = branchByCode.get(code)?.name || rows[0]?.item.branch_name || code;
-      const filename = `pre-vencidos-B-${code}-${safeFilePart(branchName)}-${ruleFilePart(rows)}-${date}.txt`;
+      const filename = `pre-vencidos-${kindFilePart(rows)}-${code}-${safeFilePart(branchName)}-${ruleFilePart(rows)}-${date}.txt`;
       zipEntries[filename] = strToU8(rows.map(lineForRow).join('\r\n'));
     });
 
     const zip = zipSync(zipEntries, { level: 6 });
-    downloadBinaryFile(`pre-vencidos-B-por-loja-${exportedRule}-${date}.zip`, zip, 'application/zip');
+    downloadBinaryFile(`pre-vencidos-por-loja-${exportedRule}-${date}.zip`, zip, 'application/zip');
     clearImportedProcess();
   };
 
@@ -721,7 +751,7 @@ export function ExpiringProductsManager() {
               { id: 'import', step: '02', title: 'Importar', detail: `${summary.imported.toLocaleString('pt-BR')} lotes` },
               { id: 'calculate', step: '03', title: 'Calcular', detail: `${eligibleRows.length.toLocaleString('pt-BR')} batem regra` },
               { id: 'report', step: '04', title: 'Relatorio', detail: `${summary.visible.toLocaleString('pt-BR')} na lista` },
-              { id: 'export', step: '05', title: 'Exportar', detail: `${exportableRows.length.toLocaleString('pt-BR')} linhas B` },
+              { id: 'export', step: '05', title: 'Exportar', detail: `${exportableRows.length.toLocaleString('pt-BR')} linhas` },
             ] satisfies Array<{ id: ExpiringTab; step: string; title: string; detail: string }>).map((tab) => {
               const isActive = activeTab === tab.id;
               return (
@@ -887,7 +917,7 @@ export function ExpiringProductsManager() {
                           <p className="mt-1 truncate text-xs font-black uppercase text-slate-700" title={rule.scope_type === 'validity' ? 'Todos os produtos dentro do periodo' : rule.scope_value}>{rule.scope_type === 'validity' ? 'Todos os produtos dentro do periodo' : rule.scope_value}</p>
                         </div>
                         <span className="text-xs font-black uppercase text-slate-700 md:text-right">{monthsRangeLabel(rule.min_days_to_expire, rule.max_days_to_expire)}</span>
-                        <span className="rounded-2xl bg-[color-mix(in_srgb,var(--section-accent)_10%,white)] px-3 py-2 text-center text-sm font-black text-[var(--section-accent)]">{rule.discount_type === 'percent' ? String(rule.discount_value) + '%' : money(rule.discount_value)}</span>
+                        <span className="rounded-2xl bg-[color-mix(in_srgb,var(--section-accent)_10%,white)] px-3 py-2 text-center text-sm font-black text-[var(--section-accent)]">{discountLabel(rule)}</span>
                         <button
                           type="button"
                           disabled={!rule.is_active}
@@ -965,7 +995,7 @@ export function ExpiringProductsManager() {
                   <p className="mb-3 text-[10px] font-black uppercase tracking-widest text-slate-400">Desconto aplicado</p>
                   <div className="grid grid-cols-[minmax(150px,1fr)_120px] gap-3">
                     <RuleSearchableSelect value={ruleDraft.discount_type} options={discountTypeOptions} placeholder="Desconto" onChange={(value) => setRuleDraft({ ...ruleDraft, discount_type: (value || 'percent') as ExpiringDiscountType })} />
-                    <input value={editableNumber(ruleDraft.discount_value)} onChange={(event) => setRuleDraft({ ...ruleDraft, discount_value: numericValue(event.target.value) })} placeholder="Valor" className="h-11 w-full min-w-0 rounded-2xl border-0 bg-white px-4 text-xs font-black uppercase text-slate-900 outline-none ring-1 ring-slate-100 transition placeholder:text-slate-400 hover:ring-blue-100 focus:ring-2 focus:ring-blue-200" />
+                    <input value={ruleDraft.discount_type === 'half_cost_price' ? '50%' : editableNumber(ruleDraft.discount_value)} onChange={(event) => setRuleDraft({ ...ruleDraft, discount_value: numericValue(event.target.value) })} disabled={ruleDraft.discount_type === 'half_cost_price'} placeholder={ruleDraft.discount_type === 'half_cost_price' ? '50% do custo' : 'Valor'} className="h-11 w-full min-w-0 rounded-2xl border-0 bg-white px-4 text-xs font-black uppercase text-slate-900 outline-none ring-1 ring-slate-100 transition placeholder:text-slate-400 hover:ring-blue-100 focus:ring-2 focus:ring-blue-200 disabled:text-slate-400" />
                   </div>
                 </div>
               </div>
@@ -997,7 +1027,7 @@ export function ExpiringProductsManager() {
                     <span className="rounded-full bg-blue-50 px-3 py-1.5 text-[10px] font-black uppercase text-blue-700">{exportableRows.length} linhas prontas</span>
                   </div>
                   <p className="mt-1 text-xs font-bold text-slate-500">A exportacao considera itens selecionados; sem selecao, usa os filtros atuais.</p>
-                  <p className="mt-2 text-[11px] font-bold leading-relaxed text-slate-500">Modelo: B|EAN|||desconto. {exportMode === 'byBranch' ? `Sera gerado 1 ZIP com ${exportBranchCount} TXT${exportBranchCount === 1 ? '' : 's'}, um por loja.` : 'Todas as lojas filtradas saem em um TXT.'}</p>
+                  <p className="mt-2 text-[11px] font-bold leading-relaxed text-slate-500">Modelo: B|EAN|||desconto ou A|EAN|||preco fixo. {exportMode === 'byBranch' ? `Sera gerado 1 ZIP com ${exportBranchCount} TXT${exportBranchCount === 1 ? '' : 's'}, um por loja.` : 'Todas as lojas filtradas saem em um TXT.'}</p>
                 </div>
                 <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-[minmax(320px,520px)_220px] xl:w-auto xl:shrink-0">
                   <div className="grid grid-cols-2 gap-2 rounded-3xl bg-slate-100 p-1.5">
@@ -1018,7 +1048,7 @@ export function ExpiringProductsManager() {
                     <th className="px-3 py-3 text-left">Loja</th>
                     <th className="px-3 py-3 text-left">Regra</th>
                     <th className="px-3 py-3 text-right">Preco</th>
-                    <th className="px-3 py-3 text-right">Desconto</th>
+                    <th className="px-3 py-3 text-right">Tipo / valor</th>
                     <th className="px-3 py-3 text-left">Linha TXT</th>
                   </tr>
                 </thead>
@@ -1032,8 +1062,8 @@ export function ExpiringProductsManager() {
                         <td className="px-3 py-3 font-bold text-slate-500">{normalizeBranchCode(item.branch_code)} - {branchByCode.get(normalizeBranchCode(item.branch_code))?.name || item.branch_name || 'LOJA NAO CADASTRADA'}</td>
                         <td className="px-3 py-3 font-bold uppercase text-slate-500">{rule?.name}</td>
                         <td className="px-3 py-3 text-right font-black text-blue-700">{price ? money(price) : '-'}</td>
-                        <td className="px-3 py-3 text-right font-black text-[var(--section-accent)]">{discount ? formatTxtNumber(discount) + '%' : '-'}</td>
-                        <td className="px-3 py-3 font-mono text-[11px] text-slate-500">B|{item.ean}|||{formatTxtNumber(discount)}</td>
+                        <td className="px-3 py-3 text-right font-black text-[var(--section-accent)]">{exportKindForRule(rule) === 'A' ? `A ${money(price)}` : `B ${formatTxtNumber(discount)}%`}</td>
+                        <td className="px-3 py-3 font-mono text-[11px] text-slate-500">{exportKindForRule(rule)}|{item.ean}|||{exportKindForRule(rule) === 'A' ? formatTxtPrice(price) : formatTxtNumber(discount)}</td>
                       </tr>
                     ))}
                 </tbody>

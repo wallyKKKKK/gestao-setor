@@ -2,7 +2,7 @@ import { supabase } from "@/lib/supabase";
 import { getAuthHeaders } from "@/lib/auth-headers";
 import { normalizeReallocationSector } from "@/lib/reallocation-sector";
 import { DEFAULT_TASK_PRIORITY, normalizeTaskPriority } from "@/lib/task-priority";
-import type { AccountStatus, Announcement, AppDbNotification, AuditLog, ExpiringDiscountRule, ExpiringDiscountType, ExpiringInventoryItem, ExpiringRuleScopeType, PricingBranch, PricingMarginRule, PricingProduct, Profile, ReallocationProduct, ReallocationStockItem, ReallocationStockSnapshot, Subtask, SupplierPaymentTerm, Task, TaskHistory, TaskPriority, TaskWorkflowStatus, TradeTaskNote, UserRole } from "@/lib/types";
+import type { AccountStatus, Announcement, AppDbNotification, AuditLog, ExpiringDiscountRule, ExpiringDiscountType, ExpiringInventoryItem, ExpiringRuleScopeType, PricingBranch, PricingMarginRule, PricingProduct, PricingRule, Profile, ReallocationProduct, ReallocationStockItem, ReallocationStockSnapshot, Subtask, SupplierPaymentTerm, Task, TaskHistory, TaskPriority, TaskWorkflowStatus, TradeTaskNote, UserRole } from "@/lib/types";
 
 interface CreateAnnouncementInput {
   title: string;
@@ -112,6 +112,10 @@ export type SupplierPaymentTermInput = Omit<SupplierPaymentTerm, "id" | "created
 };
 
 export type PricingMarginRuleInput = Omit<PricingMarginRule, "id" | "created_at" | "updated_at"> & {
+  id?: string;
+};
+
+export type PricingRuleInput = Omit<PricingRule, "id" | "created_at" | "updated_at" | "created_by"> & {
   id?: string;
 };
 
@@ -321,6 +325,43 @@ export async function fetchPricingMarginRules() {
   }
 
   return (data || []) as PricingMarginRule[];
+}
+
+export async function fetchPricingRules() {
+  const response = await fetch("/api/pricing/rules", { headers: await getAuthHeaders() });
+  const data = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(data?.error || "Erro ao carregar regras de preco.");
+  return {
+    rules: (data?.rules || []) as PricingRule[],
+    missingTable: Boolean(data?.missingTable),
+  };
+}
+
+export async function savePricingRule(input: PricingRuleInput) {
+  const response = await fetch("/api/pricing/rules", {
+    method: "POST",
+    headers: {
+      ...(await getAuthHeaders()),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(data?.error || "Erro ao salvar regra de preco.");
+  return data.rule as PricingRule;
+}
+
+export async function deletePricingRule(ruleId: string) {
+  const response = await fetch("/api/pricing/rules", {
+    method: "DELETE",
+    headers: {
+      ...(await getAuthHeaders()),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ id: ruleId }),
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(data?.error || "Erro ao excluir regra de preco.");
 }
 
 export async function savePricingMarginRule(input: PricingMarginRuleInput) {

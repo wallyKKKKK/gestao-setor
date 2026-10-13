@@ -16,6 +16,7 @@ interface DailyOverview {
   nextMeetingTime: string;
   unreadNotifications: number;
   focusItems: Array<{
+    id: string;
     title: string;
     detail: string;
     tab: string;
@@ -116,7 +117,7 @@ export function DashboardView({ filter, onFilterChange, stats, sectorStats, dail
             <div className="grid gap-2 md:grid-cols-2">
               {dailyOverview.focusItems.map((item) => (
                 <button
-                  key={`${item.tab}-${item.title}`}
+                  key={item.id}
                   type="button"
                   onClick={() => onOpenTab(item.tab)}
                   className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-left transition hover:border-blue-300 hover:shadow-sm"

@@ -36,6 +36,8 @@ interface ParsedExpiringInventoryItem {
   included_at: string | null;
   monthly_average: number;
   purchase_demand_30d: number;
+  cost_price: number;
+  sale_price: number;
   source_file: string;
   imported_by: string;
   imported_at: string;
@@ -248,6 +250,8 @@ export async function POST(request: Request) {
         included_at: timestampValue(cell(row, ["Data Hora Inclusao", "Data Hora Inclusão", "Data Inclusao", "Inclusao"])),
         monthly_average: numberValue(cell(row, ["Media Venda Mensal", "Média Venda Mensal", "Media Mensal", "Media Venda"])),
         purchase_demand_30d: numberValue(cell(row, ["Demanda de Compra (Ult. 30 Dias)", "Demanda de Compra (Últ. 30 Dias)", "Demanda Compra 30 Dias", "Demanda Compra"])),
+        cost_price: numberValue(cell(row, ["Custo", "Preco Custo", "Custo Unitario", "Custo Medio", "Custo Real", "Valor Custo", "Custo Produto"])),
+        sale_price: numberValue(cell(row, ["Preco Venda", "Preco de Venda", "Venda", "Valor Venda", "Preco Atual", "Preco Loja", "Preco Produto", "Preco Base"])),
         source_file: file.name,
         imported_by: auth.userId,
         imported_at: new Date().toISOString(),

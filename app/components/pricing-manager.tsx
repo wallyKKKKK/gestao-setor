@@ -1,39 +1,43 @@
-'use client';
+﻿'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { AlertTriangle, BarChart3, Building2, Check, Download, Edit3, Eye, EyeOff, FileSpreadsheet, Filter, FilterX, PackagePlus, RefreshCw, Save, Search, Tags, Trash2, X } from 'lucide-react';
 import {
   deletePricingBranch,
+  deletePricingRule,
   fetchPricingBranches,
   fetchPricingProducts,
+  fetchPricingRules,
   fetchReallocationAttributeOptions,
   fetchReallocationAttributeSummary,
   fetchReallocationProducts,
   savePricingBranch,
   savePricingProduct,
+  savePricingRule,
   type PricingBranchInput,
   type PricingProductInput,
 } from '@/lib/api';
 import { MultiCheckboxFilter } from '@/app/components/multi-checkbox-filter';
 import { getAuthHeaders } from '@/lib/auth-headers';
-import type { DiscountMode, PricingBranch, PricingProduct, ReallocationProduct } from '@/lib/types';
+import type { DiscountMode, PricingBranch, PricingProduct, PricingRule, PricingRuleBasis, PricingRuleScope, ReallocationProduct } from '@/lib/types';
 
 const COMPETITORS = ['TEM TUDO', 'BEM POPULAR', 'EXTRAFARMA', 'DROGASIL', 'AMERICANAS'];
 const PRICING_HIDDEN_GROUPS_STORAGE_KEY = 'wally-pricing-hidden-groups';
+const LEGACY_PRICING_RULES_STORAGE_KEY = 'wally-pricing-rules';
 const EXPORT_OPTIONS = [
   { id: 'full_table', label: 'Tabela completa' },
-  { id: 'branch_prices', label: 'Preços por filial' },
-  { id: 'month_end_price', label: 'Fecha mês' },
+  { id: 'branch_prices', label: 'PreÃ§os por filial' },
+  { id: 'month_end_price', label: 'Fecha mÃªs' },
   { id: 'baby_wednesday_price', label: 'Quarta da Fralda' },
-  { id: 'sale_price', label: 'Novo Preço' },
-  { id: 'purchase_price', label: 'Preço' },
-  { id: 'final_price', label: 'Custo Lançado (calculado)' },
+  { id: 'sale_price', label: 'Novo PreÃ§o' },
+  { id: 'purchase_price', label: 'PreÃ§o' },
+  { id: 'final_price', label: 'Custo LanÃ§ado (calculado)' },
 ] as const;
 
 const COLUMN_OPTIONS = [
-  { value: 'select', label: 'Seleção' },
+  { value: 'select', label: 'SeleÃ§Ã£o' },
   { value: 'index', label: '#' },
-  { value: 'product', label: 'Descrição' },
+  { value: 'product', label: 'DescriÃ§Ã£o' },
   { value: 'competitors', label: 'Concorrentes' },
   { value: 'purchase_price', label: 'Preco' },
   { value: 'sell_in', label: 'Sell-in' },
@@ -47,7 +51,7 @@ const COLUMN_OPTIONS = [
   { value: 'month_end_price', label: 'Fecha mes' },
   { value: 'branches', label: 'Filiais' },
   { value: 'markup', label: 'Markup' },
-  { value: 'actions', label: 'Ações' },
+  { value: 'actions', label: 'AÃ§Ãµes' },
 ];
 
 const DEFAULT_VISIBLE_COLUMNS = COLUMN_OPTIONS
@@ -156,6 +160,18 @@ function serializeCsv(rows: string[][]) {
 type PriceExportType = 'A' | 'B';
 type TxtPriceSource = 'sale_price' | 'baby_wednesday_price' | 'month_end_price' | 'branch_price';
 
+interface PricingCityCluster {
+  id: string;
+  code: string;
+  name: string;
+  branchCodes: string[];
+  branchNames: string[];
+}
+
+
+type PricingRuleDraft = Omit<PricingRule, 'id' | 'created_at' | 'updated_at' | 'created_by'> & { id?: string };
+type ImportedPricingProductInput = PricingProductInput & { classification_path?: string };
+
 interface PricingProductGroup {
   id: string;
   description: string;
@@ -187,7 +203,7 @@ const PRODUCT_VARIANT_SUFFIXES = new Set([
   'FRUTAS',
   'LARANJA',
   'LIMAO',
-  'LIMÃO',
+  'LIMÃƒO',
   'MANGA',
   'MENTA',
   'MORANGO',
@@ -337,6 +353,88 @@ function formatTxtNumber(value: number) {
   return Number(value || 0).toFixed(2);
 }
 
+function blankPricingRuleDraft(): PricingRuleDraft {
+  return {
+    name: '',
+    scope: 'all',
+    scopeValue: '',
+    targetMarkup: 25,
+    minMarkup: 15,
+    competitorBuffer: 2,
+    basis: 'cost',
+    active: true,
+  };
+}
+
+function loadLegacyPricingRules() {
+  if (typeof window === 'undefined') return [] as PricingRule[];
+
+  try {
+    const stored = window.localStorage.getItem(LEGACY_PRICING_RULES_STORAGE_KEY);
+    const parsed = stored ? JSON.parse(stored) : [];
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed
+      .filter((rule): rule is PricingRule => Boolean(rule && typeof rule === 'object' && typeof rule.name === 'string'))
+      .map((rule) => ({
+        id: String(rule.id || ('pricing-rule-' + Date.now() + '-' + Math.random().toString(36).slice(2))),
+        name: String(rule.name || '').toUpperCase(),
+        scope: (['all', 'brand', 'line', 'department', 'category', 'quote_group'] as PricingRuleScope[]).includes(rule.scope) ? rule.scope : 'all',
+        scopeValue: String(rule.scopeValue || '').toUpperCase(),
+        targetMarkup: Number(rule.targetMarkup || 0),
+        minMarkup: Number(rule.minMarkup || 0),
+        competitorBuffer: Number(rule.competitorBuffer || 0),
+        basis: (['cost', 'lowest_competitor', 'average_competitor'] as PricingRuleBasis[]).includes(rule.basis) ? rule.basis : 'cost',
+        active: rule.active !== false,
+      }));
+  } catch {
+    return [];
+  }
+}
+
+function normalizeCityCode(value: string) {
+  return normalizeKey(value || 'SEM CIDADE');
+}
+
+function cityPriceForProduct(product: Pick<PricingProduct, 'sale_price' | 'store_prices'> | Pick<PricingProductInput, 'sale_price' | 'store_prices'>, city: PricingCityCluster | null) {
+  if (!city) return Number(product.sale_price || 0);
+
+  const cityValues = city.branchCodes
+    .map((code) => Number(product.store_prices?.[code] || 0))
+    .filter((value) => value > 0);
+
+  return cityValues[0] || Number(product.sale_price || 0);
+}
+
+function roundPrice(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return Math.round(value * 100) / 100;
+}
+
+function competitorValues(product: Pick<PricingProductInput, 'competitor_prices'> | Pick<PricingProduct, 'competitor_prices'>) {
+  return Object.values(product.competitor_prices || {})
+    .map((value) => Number(value || 0))
+    .filter((value) => value > 0);
+}
+
+function suggestedPriceByRule(product: PricingProductInput, rule: PricingRule) {
+  const cost = finalPrice(product);
+  const competitors = competitorValues(product);
+  const costPrice = cost * (1 + Number(rule.targetMarkup || 0) / 100);
+  const minPrice = cost * (1 + Number(rule.minMarkup || 0) / 100);
+  let referencePrice = costPrice;
+
+  if (rule.basis === 'lowest_competitor' && competitors.length > 0) {
+    referencePrice = Math.min(...competitors) * (1 - Number(rule.competitorBuffer || 0) / 100);
+  }
+
+  if (rule.basis === 'average_competitor' && competitors.length > 0) {
+    referencePrice = (competitors.reduce((sum, value) => sum + value, 0) / competitors.length) * (1 - Number(rule.competitorBuffer || 0) / 100);
+  }
+
+  return roundPrice(Math.max(referencePrice, minPrice));
+}
+
 export function PricingManager() {
   const [products, setProducts] = useState<PricingProduct[]>([]);
   const [catalogProducts, setCatalogProducts] = useState<ReallocationProduct[]>([]);
@@ -365,6 +463,12 @@ export function PricingManager() {
   const [categoryFilters, setCategoryFilters] = useState<string[]>([]);
   const [branchFilters, setBranchFilters] = useState<string[]>([]);
   const [promotionGroupFilters, setPromotionGroupFilters] = useState<string[]>([]);
+  const [pricingRules, setPricingRules] = useState<PricingRule[]>([]);
+  const [pricingRulesLoading, setPricingRulesLoading] = useState(false);
+  const [pricingRulesMissingTable, setPricingRulesMissingTable] = useState(false);
+  const [pricingRulesError, setPricingRulesError] = useState('');
+  const [showPricingRules, setShowPricingRules] = useState(false);
+  const [editingPricingRule, setEditingPricingRule] = useState<PricingRuleDraft>(() => blankPricingRuleDraft());
   const [activeBranchCode, setActiveBranchCode] = useState('');
   const [visibleColumns, setVisibleColumns] = useState<string[]>(DEFAULT_VISIBLE_COLUMNS);
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
@@ -420,7 +524,7 @@ export function PricingManager() {
       setErrorMessage('');
     } catch {
       setProducts([]);
-      setErrorMessage('Tabela de precificação não encontrada. Rode o SQL enviado para ativar esta área.');
+      setErrorMessage('Tabela de precificaÃ§Ã£o nÃ£o encontrada. Rode o SQL enviado para ativar esta Ã¡rea.');
     } finally {
       setLoading(false);
     }
@@ -469,13 +573,46 @@ export function PricingManager() {
     }
   }, []);
 
+  const loadPricingRulesFromApi = useCallback(async () => {
+    setPricingRulesLoading(true);
+    try {
+      const data = await fetchPricingRules();
+      setPricingRulesMissingTable(data.missingTable);
+      setPricingRulesError('');
+
+      if (!data.missingTable && data.rules.length === 0) {
+        const legacyRules = loadLegacyPricingRules();
+        if (legacyRules.length > 0) {
+          const migratedRules: PricingRule[] = [];
+          for (const legacyRule of legacyRules) {
+            const { id: _legacyId, ...ruleInput } = legacyRule;
+            void _legacyId;
+            migratedRules.push(await savePricingRule(ruleInput));
+          }
+          window.localStorage.removeItem(LEGACY_PRICING_RULES_STORAGE_KEY);
+          setPricingRules(migratedRules);
+          return;
+        }
+      }
+
+      setPricingRules(data.rules);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Nao foi possivel carregar regras de preco.';
+      setPricingRulesError(message);
+      setPricingRules([]);
+    } finally {
+      setPricingRulesLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     queueMicrotask(() => {
       void loadProducts();
       void loadBranches();
       void loadCatalogProducts();
+      void loadPricingRulesFromApi();
     });
-  }, [loadBranches, loadCatalogProducts, loadProducts]);
+  }, [loadBranches, loadCatalogProducts, loadPricingRulesFromApi, loadProducts]);
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -489,11 +626,12 @@ export function PricingManager() {
       void loadBranches();
       void loadCatalogProducts();
       void loadCatalogAttributes();
+      void loadPricingRulesFromApi();
     };
 
     window.addEventListener('wally:app-refresh', handleRefresh);
     return () => window.removeEventListener('wally:app-refresh', handleRefresh);
-  }, [loadBranches, loadCatalogAttributes, loadCatalogProducts, loadProducts]);
+  }, [loadBranches, loadCatalogAttributes, loadCatalogProducts, loadPricingRulesFromApi, loadProducts]);
 
   useEffect(() => {
     const handleEscape = (event: KeyboardEvent) => {
@@ -620,8 +758,22 @@ export function PricingManager() {
   }, [mergeCatalogProducts, productFilterInput, productLaunchSearch]);
 
   const activeBranches = useMemo(() => branches.filter((branch) => branch.is_active), [branches]);
-  const selectedBranch = useMemo(() => activeBranches.find((branch) => branch.code === activeBranchCode) || null, [activeBranchCode, activeBranches]);
-  const displayPrice = useCallback((product: PricingProduct) => (activeBranchCode ? Number(product.store_prices?.[activeBranchCode] || 0) : product.sale_price), [activeBranchCode]);
+  const activeCityClusters = useMemo<PricingCityCluster[]>(() => {
+    const cityMap = new Map<string, PricingCityCluster>();
+
+    activeBranches.forEach((branch) => {
+      const cityName = (branch.city || 'SEM CIDADE').trim().toUpperCase();
+      const code = normalizeCityCode(cityName);
+      const current = cityMap.get(code) || { id: code, code, name: cityName, branchCodes: [], branchNames: [] };
+      current.branchCodes.push(branch.code);
+      current.branchNames.push(branch.name);
+      cityMap.set(code, current);
+    });
+
+    return Array.from(cityMap.values()).sort((left, right) => left.name.localeCompare(right.name));
+  }, [activeBranches]);
+  const selectedBranch = useMemo(() => activeCityClusters.find((city) => city.code === activeBranchCode) || null, [activeBranchCode, activeCityClusters]);
+  const displayPrice = useCallback((product: PricingProduct) => (activeBranchCode ? cityPriceForProduct(product, selectedBranch) : product.sale_price), [activeBranchCode, selectedBranch]);
   const catalogByEan = useMemo(() => new Map(catalogProducts.filter((item) => item.ean).map((item) => [item.ean, item])), [catalogProducts]);
   const catalogByDescription = useMemo(() => new Map(catalogProducts.map((item) => [normalizeKey(item.description), item])), [catalogProducts]);
   const catalogItemsByDescription = useMemo(() => {
@@ -755,10 +907,10 @@ export function PricingManager() {
     return Array.from(groups.values()).sort((left, right) => left.description.localeCompare(right.description));
   }, [brands, catalogItemsByDescription, masterProductInfo, tableProducts]);
   const tableBranches = useMemo(() => {
-    if (branchFilters.length === 0) return activeBranches;
+    if (branchFilters.length === 0) return activeCityClusters;
     const selected = new Set(branchFilters);
-    return activeBranches.filter((branch) => selected.has(branch.code));
-  }, [activeBranches, branchFilters]);
+    return activeCityClusters.filter((city) => selected.has(city.code));
+  }, [activeCityClusters, branchFilters]);
   const isColumnVisible = useCallback((column: string) => visibleColumns.includes(column), [visibleColumns]);
   const showCompetitors = isColumnVisible('competitors');
   const showBranchColumns = isColumnVisible('branches') || branchFilters.length > 0;
@@ -897,6 +1049,33 @@ export function PricingManager() {
       `;
 
     return `
+      .price-input-shell {
+        display: flex;
+        min-height: 3rem;
+        flex-direction: column;
+        justify-content: center;
+        border-radius: 1rem;
+        border: 1px solid #e2e8f0;
+        background: #f8fafc;
+        padding: 0.45rem 0.75rem;
+      }
+      .price-input-shell span {
+        margin-bottom: 0.18rem;
+        font-size: 0.56rem;
+        font-weight: 900;
+        text-transform: uppercase;
+        color: #94a3b8;
+      }
+      .price-input-shell select {
+        width: 100%;
+        border: 0;
+        background: transparent;
+        font-size: 0.72rem;
+        font-weight: 900;
+        text-transform: uppercase;
+        color: #0f172a;
+        outline: none;
+      }
       #pricing-products-table {
         table-layout: fixed;
         width: max(100%, ${tableWidth}px);
@@ -1041,7 +1220,7 @@ export function PricingManager() {
       if (selectedProductFilterSet.size > 0 && !selectedProductFilterSet.has(group.id)) return false;
       if (!includesNormalized(group.brands.length ? group.brands : [group.brand], brandFilters)) return false;
       if (!includesNormalized(group.promotionGroups.length ? group.promotionGroups : [group.promotionGroup], promotionGroupFilters)) return false;
-      if (branchFilters.length > 0 && !matchingStatusProducts.some((item) => branchFilters.some((code) => Number(item.store_prices?.[code] || 0) > 0))) return false;
+      if (branchFilters.length > 0 && !matchingStatusProducts.some((item) => tableBranches.some((city) => city.branchCodes.some((code) => Number(item.store_prices?.[code] || 0) > 0)))) return false;
       if (!classificationMatchesFilters(
         group.classifications.length ? group.classifications : [group.classification],
         lineFilters,
@@ -1053,7 +1232,7 @@ export function PricingManager() {
       if (priceStatusFilter === 'negative' && markup(product) >= 0) return false;
       return true;
     });
-  }, [brandFilters, branchFilters, categoryFilters, departmentFilters, lineFilters, priceStatusFilter, productGroups, productsForActiveFilter, promotionGroupFilters, selectedProductFilterSet]);
+  }, [brandFilters, branchFilters, categoryFilters, departmentFilters, lineFilters, priceStatusFilter, productGroups, productsForActiveFilter, promotionGroupFilters, selectedProductFilterSet, tableBranches]);
   const hasPriceFilters = productFilterIds.length > 0 || brandFilters.length > 0 || promotionGroupFilters.length > 0 || lineFilters.length > 0 || departmentFilters.length > 0 || categoryFilters.length > 0 || branchFilters.length > 0 || priceStatusFilter !== 'all' || activeStatusFilter !== 'active';
   const visibleProductGroups = useMemo(() => (hasPriceFilters || showPriceResults ? filteredProductGroups : []), [filteredProductGroups, hasPriceFilters, showPriceResults]);
   const visibleProducts = useMemo(() => visibleProductGroups.flatMap(productsForActiveFilter), [productsForActiveFilter, visibleProductGroups]);
@@ -1064,6 +1243,17 @@ export function PricingManager() {
   const visibleGroupIds = useMemo(() => visibleProductGroups.map((group) => group.id), [visibleProductGroups]);
   const allVisibleSelected = visibleGroupIds.length > 0 && visibleGroupIds.every((id) => selectedGroupIds.includes(id));
   const selectedLaunchBranches = useMemo(() => new Set(selectedLaunchBranchCodes), [selectedLaunchBranchCodes]);
+  const cityCodesWithStorePrice = useCallback((storePrices: Record<string, number>) => (
+    activeCityClusters
+      .filter((city) => city.branchCodes.some((code) => Number(storePrices?.[code] || 0) > 0))
+      .map((city) => city.code)
+  ), [activeCityClusters]);
+  const branchCodesForSelectedCities = useCallback((cityCodes: string[]) => {
+    const selected = new Set(cityCodes);
+    return activeCityClusters
+      .filter((city) => selected.has(city.code))
+      .flatMap((city) => city.branchCodes);
+  }, [activeCityClusters]);
   const productLaunchOptions = useMemo(() => {
     const normalizedSearch = productLaunchSearch.trim().toLowerCase();
 
@@ -1082,6 +1272,52 @@ export function PricingManager() {
       })
       .slice(0, 80);
   }, [productGroups, productLaunchSearch]);
+
+  const pricingRuleTargetOptions = useMemo(() => {
+    if (editingPricingRule.scope === 'brand') return brands;
+    if (editingPricingRule.scope === 'line') return lineOptions;
+    if (editingPricingRule.scope === 'department') return departmentOptions;
+    if (editingPricingRule.scope === 'category') return categoryOptions;
+    if (editingPricingRule.scope === 'quote_group') return promotionGroups;
+    return [];
+  }, [brands, categoryOptions, departmentOptions, editingPricingRule.scope, lineOptions, promotionGroups]);
+
+  const classificationForProductInput = useCallback((product: PricingProductInput | ImportedPricingProductInput) => {
+    const transientClassification = (product as ImportedPricingProductInput).classification_path;
+    if (transientClassification) return transientClassification;
+    return catalogByEan.get(product.ean)?.classification || catalogByDescription.get(normalizeKey(product.description))?.classification || '';
+  }, [catalogByDescription, catalogByEan]);
+
+  const ruleMatchesProduct = useCallback((rule: PricingRule, product: PricingProductInput | ImportedPricingProductInput) => {
+    if (!rule.active) return false;
+    if (rule.scope === 'all') return true;
+
+    const expected = rule.scopeValue;
+    if (!expected) return false;
+    if (rule.scope === 'brand') return includesNormalized([product.brand], [expected]);
+    if (rule.scope === 'quote_group') return includesNormalized([product.promotion_group || ''], [expected]);
+
+    const parts = splitClassificationPath(classificationForProductInput(product));
+    if (rule.scope === 'line') return includesNormalized([parts.line], [expected]);
+    if (rule.scope === 'department') return includesNormalized([parts.department], [expected]);
+    if (rule.scope === 'category') return includesNormalized([parts.category], [expected]);
+    return false;
+  }, [classificationForProductInput]);
+
+  const activePricingRules = useMemo(() => pricingRules.filter((rule) => rule.active), [pricingRules]);
+
+  const bestPricingRule = useCallback((product: PricingProductInput | ImportedPricingProductInput) => (
+    activePricingRules.find((rule) => ruleMatchesProduct(rule, product)) || null
+  ), [activePricingRules, ruleMatchesProduct]);
+
+  const applyBestPricingRule = useCallback((product: PricingProductInput | ImportedPricingProductInput) => {
+    const rule = bestPricingRule(product);
+    if (!rule) return { product, rule: null };
+
+    const suggestedPrice = suggestedPriceByRule(product, rule);
+    if (!suggestedPrice) return { product, rule };
+    return { product: { ...product, sale_price: suggestedPrice }, rule };
+  }, [bestPricingRule]);
 
   const toggleGroupSelection = (groupId: string) => {
     setSelectedGroupIds((current) => (
@@ -1106,15 +1342,13 @@ export function PricingManager() {
   const openPriceLaunchForSelection = () => {
     const firstGroup = selectedGroups[0];
     if (!firstGroup) {
-      alert('Selecione ao menos uma descrição para lançar preço.');
+      alert('Selecione ao menos uma descriÃ§Ã£o para lanÃ§ar preÃ§o.');
       return;
     }
     const product = firstGroup.primaryProduct;
     setProductLaunchSearch('');
     setEditingProduct(editableProduct(product));
-    setSelectedLaunchBranchCodes(Object.entries(product.store_prices || {})
-      .filter(([, value]) => Number(value || 0) > 0)
-      .map(([code]) => code));
+    setSelectedLaunchBranchCodes(cityCodesWithStorePrice(product.store_prices || {}));
   };
 
   const editableProduct = (product: PricingProduct): PricingProductInput => {
@@ -1136,9 +1370,7 @@ export function PricingManager() {
   const applyProductGroupToLaunch = (group: PricingProductGroup) => {
     setEditingProduct(editableProduct(group.primaryProduct));
     setProductLaunchSearch('');
-    setSelectedLaunchBranchCodes(Object.entries(group.primaryProduct.store_prices || {})
-      .filter(([, value]) => Number(value || 0) > 0)
-      .map(([code]) => code));
+    setSelectedLaunchBranchCodes(cityCodesWithStorePrice(group.primaryProduct.store_prices || {}));
   };
 
   const summary = useMemo(() => {
@@ -1217,9 +1449,159 @@ export function PricingManager() {
     } : current);
   };
 
+  const updateCityPrice = (cityCode: string, value: number) => {
+    const city = activeCityClusters.find((item) => item.code === cityCode);
+    if (!city) return;
+    setEditingProduct((current) => {
+      if (!current) return current;
+      const nextStorePrices = { ...current.store_prices };
+      city.branchCodes.forEach((code) => {
+        nextStorePrices[code] = value;
+      });
+      return { ...current, store_prices: nextStorePrices };
+    });
+  };
+
+  const savePricingRuleDefinition = async () => {
+    const name = editingPricingRule.name.trim().toUpperCase();
+    if (!name) {
+      alert('Informe o nome da regra.');
+      return;
+    }
+    if (editingPricingRule.scope !== 'all' && !editingPricingRule.scopeValue.trim()) {
+      alert('Escolha o alvo da regra.');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const savedRule = await savePricingRule({
+        id: editingPricingRule.id,
+        name,
+        scope: editingPricingRule.scope,
+        scopeValue: editingPricingRule.scope === 'all' ? '' : editingPricingRule.scopeValue.trim().toUpperCase(),
+        targetMarkup: Number(editingPricingRule.targetMarkup || 0),
+        minMarkup: Number(editingPricingRule.minMarkup || 0),
+        competitorBuffer: Number(editingPricingRule.competitorBuffer || 0),
+        basis: editingPricingRule.basis,
+        active: editingPricingRule.active !== false,
+      });
+
+      setPricingRules((current) => {
+        const exists = current.some((rule) => rule.id === savedRule.id);
+        return exists ? current.map((rule) => rule.id === savedRule.id ? savedRule : rule) : [savedRule, ...current];
+      });
+      setEditingPricingRule(blankPricingRuleDraft());
+      setPricingRulesError('');
+      setPricingRulesMissingTable(false);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Erro desconhecido';
+      setPricingRulesError(message);
+      alert('Erro ao salvar regra de preco: ' + message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const editPricingRuleDefinition = (rule: PricingRule) => {
+    setEditingPricingRule(rule);
+    setShowPricingRules(true);
+  };
+
+  const removePricingRuleDefinition = async (ruleId: string) => {
+    const previousRules = pricingRules;
+    setPricingRules((current) => current.filter((rule) => rule.id !== ruleId));
+    setEditingPricingRule((current) => current.id === ruleId ? blankPricingRuleDraft() : current);
+    try {
+      await deletePricingRule(ruleId);
+      setPricingRulesError('');
+    } catch (error) {
+      setPricingRules(previousRules);
+      const message = error instanceof Error ? error.message : 'Erro desconhecido';
+      setPricingRulesError(message);
+      alert('Erro ao excluir regra de preco: ' + message);
+    }
+  };
+
+  const togglePricingRuleDefinition = async (ruleId: string) => {
+    const rule = pricingRules.find((item) => item.id === ruleId);
+    if (!rule) return;
+    const nextRule = { ...rule, active: !rule.active };
+    setPricingRules((current) => current.map((item) => item.id === ruleId ? nextRule : item));
+    try {
+      const savedRule = await savePricingRule(nextRule);
+      setPricingRules((current) => current.map((item) => item.id === ruleId ? savedRule : item));
+      setPricingRulesError('');
+    } catch (error) {
+      setPricingRules((current) => current.map((item) => item.id === ruleId ? rule : item));
+      const message = error instanceof Error ? error.message : 'Erro desconhecido';
+      setPricingRulesError(message);
+      alert('Erro ao atualizar regra de preco: ' + message);
+    }
+  };
+
+  const applyRulesToCurrentSelection = async () => {
+    const targetProducts = selectedGroups.length > 0 ? selectedGroups.flatMap((group) => group.products) : visibleProducts;
+    if (targetProducts.length === 0) {
+      alert('Filtre ou selecione itens antes de aplicar regras.');
+      return;
+    }
+
+    let applied = 0;
+    setSaving(true);
+    try {
+      for (const product of targetProducts) {
+        const editable = editableProduct(product);
+        const result = applyBestPricingRule(editable);
+        if (!result.rule) continue;
+        applied += 1;
+        await savePricingProduct(result.product);
+      }
+      await loadProducts();
+      alert(applied ? applied + ' precos recalculados pelas regras.' : 'Nenhuma regra ativa bateu com os itens atuais.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Erro desconhecido';
+      alert('Erro ao aplicar regras: ' + message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const assignSelectedGroupsToQuoteGroup = async () => {
+    if (selectedGroups.length === 0) {
+      alert('Selecione ao menos uma descricao para criar o grupo de cotacao.');
+      return;
+    }
+
+    const rawName = window.prompt('Nome do grupo de cotacao');
+    const quoteGroup = rawName?.trim().toUpperCase();
+    if (!quoteGroup) return;
+
+    setSaving(true);
+    try {
+      for (const group of selectedGroups) {
+        for (const product of group.products) {
+          await savePricingProduct({
+            ...editableProduct(product),
+            promotion_group: quoteGroup,
+          });
+        }
+      }
+      await loadProducts();
+      setPromotionGroupFilters([quoteGroup]);
+      setShowPriceResults(true);
+      setSelectedGroupIds([]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Erro desconhecido';
+      alert('Erro ao criar grupo de cotacao: ' + message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const saveProduct = async () => {
     if (!editingProduct?.ean || !editingProduct.description) {
-      alert('Preencha EAN e descrição.');
+      alert('Preencha EAN e descriÃ§Ã£o.');
       return;
     }
 
@@ -1232,7 +1614,7 @@ export function PricingManager() {
       setEditingProduct(null);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Erro desconhecido';
-      alert('Erro ao salvar lançamento de preço: ' + message);
+      alert('Erro ao salvar lanÃ§amento de preÃ§o: ' + message);
     } finally {
       setSaving(false);
     }
@@ -1251,7 +1633,7 @@ export function PricingManager() {
       const applyBranchPrices = (storePrices: Record<string, number>) => {
         if (selectedLaunchBranchCodes.length === 0) return storePrices;
         const next = { ...storePrices };
-        selectedLaunchBranchCodes.forEach((code) => {
+        branchCodesForSelectedCities(selectedLaunchBranchCodes).forEach((code) => {
           next[code] = editingProduct.sale_price;
         });
         return next;
@@ -1287,7 +1669,7 @@ export function PricingManager() {
       setSelectedLaunchBranchCodes([]);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Erro desconhecido';
-      alert('Erro ao salvar lançamento de preço: ' + message);
+      alert('Erro ao salvar lanÃ§amento de preÃ§o: ' + message);
     } finally {
       setSaving(false);
     }
@@ -1295,7 +1677,7 @@ export function PricingManager() {
 
   const saveBranch = async () => {
     if (!editingBranch?.name || !editingBranch.code) {
-      alert('Preencha nome e código da filial.');
+      alert('Preencha nome e cÃ³digo da filial.');
       return;
     }
 
@@ -1340,18 +1722,21 @@ export function PricingManager() {
       const data = await response.json().catch(() => null);
 
       if (!response.ok || !data?.products?.length) {
-        alert(data?.error || 'Nenhum lançamento de preço encontrado na planilha.');
+        alert(data?.error || 'Nenhum lanÃ§amento de preÃ§o encontrado na planilha.');
         return;
       }
 
-      for (const product of data.products as PricingProductInput[]) {
-        await savePricingProduct(product);
+      let rulesApplied = 0;
+      for (const rawProduct of data.products as ImportedPricingProductInput[]) {
+        const result = applyBestPricingRule(rawProduct);
+        if (result.rule) rulesApplied += 1;
+        await savePricingProduct(result.product);
       }
 
       await loadProducts();
       void loadCatalogProducts();
       void loadCatalogAttributes();
-      alert(`${data.products.length} lançamentos de preço importados com sucesso.`);
+      alert(`${data.products.length} lancamentos de preco importados com sucesso.${rulesApplied ? ` ${rulesApplied} precos sugeridos por regra.` : ''}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Erro desconhecido';
       alert('Erro ao importar planilha: ' + message);
@@ -1363,7 +1748,7 @@ export function PricingManager() {
 
   const exportCsv = () => {
     const option = EXPORT_OPTIONS.find((item) => item.id === exportPrice);
-    const selectedLabel = option?.label || 'Exportação';
+    const selectedLabel = option?.label || 'ExportaÃ§Ã£o';
     const selectedValue = (product: PricingProduct) => {
       if (exportPrice === 'full_table') return null;
       if (exportPrice === 'branch_prices') return null;
@@ -1371,7 +1756,7 @@ export function PricingManager() {
     };
     const rows = [
       exportPrice === 'full_table'
-        ? ['BARRAS', 'PRODUTO', 'GRUPO PROMOCAO', ...COMPETITORS, 'Preço', 'Sell in', 'Cálculo', 'Sell out', 'Trade', 'Custo Real', 'Custo Lançado', 'Novo Preço', 'Quarta da Fralda', 'Fecha mês', 'Margem (%)']
+        ? ['BARRAS', 'PRODUTO', 'GRUPO PROMOCAO', ...COMPETITORS, 'PreÃ§o', 'Sell in', 'CÃ¡lculo', 'Sell out', 'Trade', 'Custo Real', 'Custo LanÃ§ado', 'Novo PreÃ§o', 'Quarta da Fralda', 'Fecha mÃªs', 'Margem (%)']
         : exportPrice === 'branch_prices'
           ? ['BARRAS', 'PRODUTO', 'MARCA', 'GRUPO PROMOCAO', ...tableBranches.map((branch) => branch.name)]
         : ['BARRAS', 'PRODUTO', 'MARCA', 'GRUPO PROMOCAO', selectedLabel],
@@ -1382,7 +1767,7 @@ export function PricingManager() {
             masterProductInfo(product).description,
             masterProductInfo(product).brand,
             product.promotion_group || '',
-            ...tableBranches.map((branch) => String(product.store_prices?.[branch.code] || product.sale_price || 0).replace('.', ',')),
+            ...tableBranches.map((city) => String(cityPriceForProduct(product, city) || product.sale_price || 0).replace('.', ',')),
           ];
         }
 
@@ -1426,14 +1811,15 @@ export function PricingManager() {
     if (txtPriceSource === 'baby_wednesday_price') return product.baby_wednesday_price;
     if (txtPriceSource === 'month_end_price') return product.month_end_price;
     if (txtPriceSource === 'branch_price') {
-      return txtBranchCode ? Number(product.store_prices?.[txtBranchCode] || product.sale_price || 0) : product.sale_price;
+      const city = activeCityClusters.find((item) => item.code === txtBranchCode) || null;
+      return txtBranchCode ? cityPriceForProduct(product, city) || product.sale_price || 0 : product.sale_price;
     }
     return product.sale_price;
   };
 
   const exportTxt = () => {
     if (visibleProductGroups.length === 0) {
-      alert('Use a busca ou um filtro para selecionar os lançamentos antes de exportar.');
+      alert('Use a busca ou um filtro para selecionar os lanÃ§amentos antes de exportar.');
       return;
     }
 
@@ -1454,7 +1840,7 @@ export function PricingManager() {
       return;
     }
 
-    const branch = activeBranches.find((item) => item.code === txtBranchCode);
+    const branch = activeCityClusters.find((item) => item.code === txtBranchCode);
     const branchLabel = branch ? branch.code : 'todas';
     downloadTextFile(`price-${txtExportType}-${branchLabel}.txt`, lines.join('\r\n'));
     setShowExportModal(false);
@@ -1557,6 +1943,9 @@ export function PricingManager() {
           <button onClick={() => setShowExportModal(true)} className="h-10 px-3 rounded-2xl bg-white border-2 border-slate-100 font-black uppercase text-[10px] flex items-center gap-2">
             <Download size={16} /> Exportar
           </button>
+          <button onClick={() => setShowPricingRules((value) => !value)} className={`h-10 px-3 rounded-2xl border-2 font-black uppercase text-[10px] flex items-center gap-2 ${showPricingRules ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-slate-100 bg-white text-slate-700'}`}>
+            <Filter size={16} /> Regras
+          </button>
           <button
             onClick={async () => {
               await loadProducts();
@@ -1592,18 +1981,103 @@ export function PricingManager() {
             <Eye size={16} /> Concorrentes
           </button>
           {selectedGroupIds.length > 0 && (
-            <button onClick={openPriceLaunchForSelection} className="h-10 px-3 rounded-2xl bg-emerald-600 text-white font-black uppercase text-[10px] flex items-center gap-2 shadow-sm">
-              <Tags size={16} /> Lançar preço ({selectedGroupIds.length})
-            </button>
+            <>
+              <button onClick={assignSelectedGroupsToQuoteGroup} className="h-10 px-3 rounded-2xl bg-slate-900 text-white font-black uppercase text-[10px] flex items-center gap-2 shadow-sm">
+                <Tags size={16} /> Grupo cotacao
+              </button>
+              <button onClick={openPriceLaunchForSelection} className="h-10 px-3 rounded-2xl bg-emerald-600 text-white font-black uppercase text-[10px] flex items-center gap-2 shadow-sm">
+                <Tags size={16} /> Lancar preco ({selectedGroupIds.length})
+              </button>
+            </>
           )}
           <button onClick={() => { setSelectedGroupIds([]); setSelectedLaunchBranchCodes([]); setProductLaunchSearch(''); setEditingProduct({ ...blankProduct }); }} className="h-10 px-3 rounded-2xl bg-blue-600 text-white font-black uppercase text-[10px] flex items-center gap-2 shadow-sm">
-            <PackagePlus size={16} /> Novo Preço
+            <PackagePlus size={16} /> Novo PreÃ§o
           </button>
           </div>
         </div>
       </section>
 
-      {activeBranches.length > 0 && (
+      {showPricingRules && (
+        <section className="mb-3 rounded-[22px] border border-blue-100 bg-white p-3 shadow-sm">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-black uppercase italic tracking-tight text-slate-900">Regras de preco</h2>
+              <p className="text-[10px] font-bold text-slate-500">Use custo interno e concorrentes para sugerir markup e preco de venda. As regras ficam salvas no banco.</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button type="button" onClick={loadPricingRulesFromApi} disabled={pricingRulesLoading} className="h-9 rounded-2xl bg-slate-100 px-4 text-[10px] font-black uppercase text-slate-600 disabled:opacity-45">
+                {pricingRulesLoading ? 'Carregando...' : 'Atualizar regras'}
+              </button>
+              <button type="button" onClick={applyRulesToCurrentSelection} disabled={saving || activePricingRules.length === 0 || pricingRulesMissingTable} className="h-9 rounded-2xl bg-blue-600 px-4 text-[10px] font-black uppercase text-white disabled:opacity-45">
+                Aplicar regras nos itens
+              </button>
+            </div>
+          </div>
+          {pricingRulesMissingTable && (
+            <div className="mb-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-[10px] font-black uppercase text-amber-700">
+              Rode o SQL supabase/pricing-rules.sql no Supabase para ativar regras compartilhadas.
+            </div>
+          )}
+          {pricingRulesError && !pricingRulesMissingTable && (
+            <div className="mb-3 rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-[10px] font-black uppercase text-red-600">{pricingRulesError}</div>
+          )}
+          <div className="grid grid-cols-1 gap-2 lg:grid-cols-[1.1fr_0.8fr_1.2fr_0.7fr_0.7fr_0.8fr_0.7fr_auto]">
+            <PriceInput label="Nome" value={editingPricingRule.name} onChange={(value) => setEditingPricingRule((current) => ({ ...current, name: value }))} text />
+            <label className="price-input-shell">
+              <span>Escopo</span>
+              <select value={editingPricingRule.scope} onChange={(event) => setEditingPricingRule((current) => ({ ...current, scope: event.target.value as PricingRuleScope, scopeValue: '' }))}>
+                <option value="all">Todos</option>
+                <option value="brand">Fabricante</option>
+                <option value="line">Linha</option>
+                <option value="department">Departamento</option>
+                <option value="category">Categoria</option>
+                <option value="quote_group">Grupo cotacao</option>
+              </select>
+            </label>
+            <label className="price-input-shell">
+              <span>Alvo</span>
+              <select value={editingPricingRule.scopeValue} onChange={(event) => setEditingPricingRule((current) => ({ ...current, scopeValue: event.target.value }))} disabled={editingPricingRule.scope === 'all'}>
+                <option value="">{editingPricingRule.scope === 'all' ? 'Todos os itens' : 'Escolha o alvo'}</option>
+                {pricingRuleTargetOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+              </select>
+            </label>
+            <PriceInput label="Markup alvo %" value={editingPricingRule.targetMarkup} onChange={(value) => setEditingPricingRule((current) => ({ ...current, targetMarkup: numericValue(value) }))} />
+            <PriceInput label="Markup min. %" value={editingPricingRule.minMarkup} onChange={(value) => setEditingPricingRule((current) => ({ ...current, minMarkup: numericValue(value) }))} />
+            <label className="price-input-shell">
+              <span>Referencia</span>
+              <select value={editingPricingRule.basis} onChange={(event) => setEditingPricingRule((current) => ({ ...current, basis: event.target.value as PricingRuleBasis }))}>
+                <option value="cost">Custo</option>
+                <option value="lowest_competitor">Menor concorrente</option>
+                <option value="average_competitor">Media concorrentes</option>
+              </select>
+            </label>
+            <PriceInput label="Ajuste %" value={editingPricingRule.competitorBuffer} onChange={(value) => setEditingPricingRule((current) => ({ ...current, competitorBuffer: numericValue(value) }))} />
+            <button type="button" onClick={savePricingRuleDefinition} disabled={saving || pricingRulesMissingTable} className="h-12 rounded-2xl bg-slate-900 px-4 text-[10px] font-black uppercase text-white disabled:opacity-45">
+              {saving ? 'Salvando...' : 'Salvar regra'}
+            </button>
+          </div>
+          <div className="mt-3 grid grid-cols-1 gap-2 xl:grid-cols-2">
+            {pricingRules.map((rule) => (
+              <div key={rule.id} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-slate-50 px-3 py-2">
+                <div className="min-w-0">
+                  <p className="truncate text-xs font-black uppercase text-slate-900">{rule.name}</p>
+                  <p className="text-[10px] font-bold uppercase text-slate-500">{rule.scope === 'all' ? 'Todos os itens' : rule.scope.replace('_', ' ') + ': ' + rule.scopeValue} | markup {rule.targetMarkup}% | min. {rule.minMarkup}%</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button type="button" onClick={() => togglePricingRuleDefinition(rule.id)} className={rule.active ? 'rounded-full bg-emerald-50 px-3 py-1 text-[9px] font-black uppercase text-emerald-700' : 'rounded-full bg-slate-200 px-3 py-1 text-[9px] font-black uppercase text-slate-500'}>
+                    {rule.active ? 'Ativa' : 'Inativa'}
+                  </button>
+                  <button type="button" onClick={() => editPricingRuleDefinition(rule)} className="p-2 text-slate-300 transition hover:text-blue-600" title="Editar regra"><Edit3 size={17} /></button>
+                  <button type="button" onClick={() => removePricingRuleDefinition(rule.id)} className="p-2 text-slate-300 transition hover:text-red-600" title="Excluir regra"><Trash2 size={17} /></button>
+                </div>
+              </div>
+            ))}
+            {pricingRules.length === 0 && <div className="rounded-2xl border border-dashed border-slate-200 p-5 text-center text-[10px] font-black uppercase text-slate-300">Nenhuma regra cadastrada</div>}
+          </div>
+        </section>
+      )}
+
+      {activeCityClusters.length > 0 && (
         <div className="mb-3 overflow-hidden rounded-[18px] border border-slate-200 bg-white shadow-sm">
           <div className="flex items-center gap-2 overflow-x-auto px-3 pt-2">
             <button
@@ -1617,37 +2091,37 @@ export function PricingManager() {
             >
               Geral
             </button>
-            {activeBranches.map((branch) => {
-              const active = activeBranchCode === branch.code;
+            {activeCityClusters.map((city) => {
+              const active = activeBranchCode === city.code;
               return (
                 <button
-                  key={branch.id}
+                  key={city.id}
                   type="button"
                   onClick={() => {
-                    setActiveBranchCode(branch.code);
-                    setBranchFilters([branch.code]);
+                    setActiveBranchCode(city.code);
+                    setBranchFilters([city.code]);
                     setShowPriceResults(true);
                   }}
                   className={`relative h-9 max-w-[190px] shrink-0 truncate rounded-t-xl border px-4 text-[10px] font-black uppercase transition ${active ? 'border-blue-300 bg-blue-600 text-white shadow-sm' : 'border-slate-200 bg-slate-50 text-slate-500 hover:bg-blue-50 hover:text-blue-700'}`}
-                  title={`${branch.code} - ${branch.name}`}
+                  title={city.branchNames.join(', ')}
                 >
-                  {branch.code} - {branch.name}
+                  {city.name}
                 </button>
               );
             })}
           </div>
           <div className="border-t border-slate-200 bg-slate-50 px-3 py-2 text-[10px] font-black uppercase text-slate-500">
-            {selectedBranch ? `Visualizando preco da loja ${selectedBranch.code} - ${selectedBranch.name}` : 'Visualizando preco geral. Escolha uma aba para trabalhar preco por loja.'}
+            {selectedBranch ? `Visualizando preco da cidade ${selectedBranch.name} (${selectedBranch.branchNames.length} lojas)` : 'Visualizando preco geral. Escolha uma cidade para trabalhar preco por cluster.'}
           </div>
         </div>
       )}
       <div className="hidden">
         <div className="bg-white border-2 border-slate-100 rounded-2xl p-5">
-          <p className="text-[10px] font-black uppercase text-slate-400">Lançamentos exibidos</p>
+          <p className="text-[10px] font-black uppercase text-slate-400">LanÃ§amentos exibidos</p>
           <p className="text-2xl font-black">{visibleProducts.length}</p>
         </div>
         <div className="bg-white border-2 border-slate-100 rounded-2xl p-5">
-          <p className="text-[10px] font-black uppercase text-slate-400">Markup Médio</p>
+          <p className="text-[10px] font-black uppercase text-slate-400">Markup MÃ©dio</p>
           <p className="text-2xl font-black">{summary.averageMarkup.toFixed(1).replace('.', ',')}%</p>
         </div>
         <div className="bg-white border-2 border-slate-100 rounded-2xl p-5">
@@ -1679,7 +2153,7 @@ export function PricingManager() {
           options={brands.map((brand) => ({ value: brand, label: brand }))}
         />
         <MultiCheckboxFilter
-          label="Grupo promo"
+          label="Grupo cotacao"
           allLabel="Todos os grupos"
           selectedValues={promotionGroupFilters}
           onChange={setPromotionGroupFilters}
@@ -1707,11 +2181,11 @@ export function PricingManager() {
           options={categoryOptions.map((category) => ({ value: category, label: category }))}
         />
         <MultiCheckboxFilter
-          label="Filial"
-          allLabel="Todas as filiais"
+          label="Cidade"
+          allLabel="Todas as cidades"
           selectedValues={branchFilters}
           onChange={setBranchFilters}
-          options={activeBranches.map((branch) => ({ value: branch.code, label: `${branch.code} - ${branch.name}` }))}
+          options={activeCityClusters.map((city) => ({ value: city.code, label: city.name }))}
         />
         <MultiCheckboxFilter
           label="Colunas"
@@ -1735,7 +2209,7 @@ export function PricingManager() {
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
             <div>
               <h2 className="font-black uppercase text-xl">Filiais</h2>
-              <p className="text-xs font-bold text-slate-500">Cadastre as lojas que terão preço próprio por item.</p>
+              <p className="text-xs font-bold text-slate-500">Cadastre as lojas que terÃ£o preÃ§o prÃ³prio por item.</p>
             </div>
             <button onClick={() => setEditingBranch({ ...blankBranch })} className="h-10 px-4 rounded-2xl bg-blue-600 text-white font-black uppercase text-[10px] flex items-center gap-2">
               <Building2 size={15} /> Nova filial
@@ -1747,7 +2221,7 @@ export function PricingManager() {
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="font-black uppercase text-slate-900">{branch.name}</p>
-                    <p className="text-[10px] font-black uppercase text-slate-400">{branch.code} {branch.uf ? `â€¢ ${branch.uf}` : ''}</p>
+                    <p className="text-[10px] font-black uppercase text-slate-400">{branch.code} {branch.uf ? `Ã¢â‚¬Â¢ ${branch.uf}` : ''}</p>
                     {branch.cnpj && <p className="text-[10px] font-bold text-slate-400 mt-1">{branch.cnpj}</p>}
                     {branch.logistics_group && <p className="text-[10px] font-black text-blue-600 mt-1">Grupo: {branch.logistics_group}</p>}
                     <div className="mt-2 flex flex-wrap gap-1">
@@ -1788,11 +2262,11 @@ export function PricingManager() {
                   checked={allVisibleSelected}
                   onChange={toggleVisibleSelection}
                   className="h-4 w-4 accent-blue-600"
-                  aria-label="Selecionar lançamentos visíveis"
+                  aria-label="Selecionar lanÃ§amentos visÃ­veis"
                 />
               </th>
               {renderHeader('#', 'index', 'index', 'center')}
-              {renderHeader('Descrição', 'product', 'product', 'left')}
+              {renderHeader('DescriÃ§Ã£o', 'product', 'product', 'left')}
               {showCompetitors && COMPETITORS.map((competitor) => renderHeader(competitor, `competitor:${competitor}`, 'competitors'))}
               {renderHeader('Preco', 'purchase_price')}
               {renderHeader('Sell-in', 'sell_in')}
@@ -1801,12 +2275,12 @@ export function PricingManager() {
               {renderHeader('Trade', 'trade')}
               {renderHeader('Custo Real', 'real_cost')}
               {renderHeader('Custo Lancado', 'launched_cost')}
-              {renderHeader(selectedBranch ? `Novo Preco ${selectedBranch.code}` : 'Novo Preco', 'sale_price')}
+              {renderHeader(selectedBranch ? `Novo Preco ${selectedBranch.name}` : 'Novo Preco', 'sale_price')}
               {renderHeader('Quarta da Fralda', 'baby_wednesday_price')}
               {renderHeader('Fecha mes', 'month_end_price')}
               {showBranchColumns && tableBranches.map((branch) => renderHeader(branch.name, `branch:${branch.code}`, 'branches'))}
               {renderHeader('Markup', 'markup')}
-              {renderHeader('Ações', 'actions')}
+              {renderHeader('AÃ§Ãµes', 'actions')}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -1850,13 +2324,13 @@ export function PricingManager() {
                   <td className="px-4 py-4 text-right excel-sale">{rowSalePrice > 0 ? money(rowSalePrice) : '-'}</td>
                   <td className="px-4 py-4 text-right excel-offer">{money(product.baby_wednesday_price)}</td>
                   <td className="px-4 py-4 text-right excel-offer">{money(product.month_end_price)}</td>
-                  {showBranchColumns && tableBranches.map((branch) => (
-                    <td key={branch.id} className="px-4 py-4 text-right">{money(product.store_prices?.[branch.code] || product.sale_price || 0)}</td>
+                  {showBranchColumns && tableBranches.map((city) => (
+                    <td key={city.id} className="px-4 py-4 text-right">{money(cityPriceForProduct(product, city) || product.sale_price || 0)}</td>
                   ))}
                   <td className={`px-4 py-4 text-right ${currentMarkup < 0 ? 'excel-markup-negative' : 'excel-markup-positive'}`}>{currentMarkup.toFixed(2).replace('.', ',')}%</td>
                   <td className="px-4 py-4">
                     <div className="flex justify-end gap-2">
-                      <button onClick={() => { setSelectedGroupIds([group.id]); setProductLaunchSearch(''); setSelectedLaunchBranchCodes(Object.entries(product.store_prices || {}).filter(([, value]) => Number(value || 0) > 0).map(([code]) => code)); setEditingProduct(editableProduct(product)); }} className="p-2 text-slate-300 transition hover:text-blue-600" title="Editar lançamento"><Edit3 size={20} /></button>
+                      <button onClick={() => { setSelectedGroupIds([group.id]); setProductLaunchSearch(''); setSelectedLaunchBranchCodes(cityCodesWithStorePrice(product.store_prices || {})); setEditingProduct(editableProduct(product)); }} className="p-2 text-slate-300 transition hover:text-blue-600" title="Editar lanÃ§amento"><Edit3 size={20} /></button>
                       <button
                         onClick={() => setProductGroupVisible(group, !displayedActive)}
                         className={`p-2 transition ${displayedActive ? 'text-slate-200 hover:text-red-600' : 'text-slate-300 hover:text-emerald-600'}`}
@@ -1872,7 +2346,7 @@ export function PricingManager() {
             {!loading && visibleProductGroups.length === 0 && (
               <tr>
                 <td colSpan={Math.max(1, visibleTableColumnCount)} className="px-4 py-16 text-center text-[10px] font-black uppercase tracking-widest text-slate-300">
-                  {hasPriceFilters ? 'Nenhum lançamento encontrado' : 'Use a busca, escolha um filtro rápido ou clique em atualizar para mostrar a tabela'}
+                  {hasPriceFilters ? 'Nenhum lanÃ§amento encontrado' : 'Use a busca, escolha um filtro rÃ¡pido ou clique em atualizar para mostrar a tabela'}
                 </td>
               </tr>
             )}
@@ -1885,7 +2359,7 @@ export function PricingManager() {
           {COMPETITORS.map((competitor) => (
             <div key={competitor} className="bg-white border-2 border-slate-100 rounded-2xl p-4">
               <p className="text-[10px] font-black uppercase text-slate-400">{competitor}</p>
-              <p className="text-sm font-bold text-slate-700 mt-1">{visibleProducts.filter((product) => (product.competitor_prices?.[competitor] || 0) > 0).length} preços cadastrados</p>
+              <p className="text-sm font-bold text-slate-700 mt-1">{visibleProducts.filter((product) => (product.competitor_prices?.[competitor] || 0) > 0).length} preÃ§os cadastrados</p>
             </div>
           ))}
         </div>
@@ -1896,21 +2370,21 @@ export function PricingManager() {
           <div className="app-modal-card flex w-full max-w-[min(900px,calc(100vw-1rem))] flex-col overflow-hidden rounded-[22px] border border-slate-200 bg-white shadow-[0_24px_70px_rgba(15,23,42,0.22)]">
             <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-5 py-3">
               <div>
-                <h2 className="text-lg font-black uppercase italic tracking-tighter">{editingProduct.id ? 'Editar Lançamento' : 'Lançar Preço'}</h2>
-                <p className="text-[10px] font-black uppercase tracking-widest text-blue-600">Item, custo, oferta e preço para exportação</p>
+                <h2 className="text-lg font-black uppercase italic tracking-tighter">{editingProduct.id ? 'Editar LanÃ§amento' : 'LanÃ§ar PreÃ§o'}</h2>
+                <p className="text-[10px] font-black uppercase tracking-widest text-blue-600">Item, custo, oferta e preÃ§o para exportaÃ§Ã£o</p>
               </div>
               <button onClick={() => setEditingProduct(null)} className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100 text-slate-700 transition hover:bg-slate-200"><X size={19} /></button>
             </div>
             <div className="flex-1 overflow-y-auto px-3 py-3 sm:px-5">
               <div className="mb-3 rounded-2xl border border-slate-100 bg-slate-50 p-3">
-                <h3 className="mb-3 text-[10px] font-black uppercase tracking-widest text-slate-500">Item do lançamento</h3>
+                <h3 className="mb-3 text-[10px] font-black uppercase tracking-widest text-slate-500">Item do lanÃ§amento</h3>
                 {selectedGroups.length > 0 ? (
                   <div className="rounded-2xl border border-blue-100 bg-white p-3">
                     <div className="mb-2 flex flex-wrap items-center gap-2">
                       <span className="rounded-full bg-blue-600 px-3 py-1 text-[9px] font-black uppercase text-white">
-                        {selectedGroups.length} descrições selecionadas
+                        {selectedGroups.length} descriÃ§Ãµes selecionadas
                       </span>
-                      <span className="text-[10px] font-bold uppercase text-slate-400">Lançamento em lote</span>
+                      <span className="text-[10px] font-bold uppercase text-slate-400">LanÃ§amento em lote</span>
                     </div>
                     <div className="flex max-h-24 flex-col gap-1 overflow-y-auto pr-1">
                       {selectedGroups.slice(0, 8).map((group) => (
@@ -1928,7 +2402,7 @@ export function PricingManager() {
                       <p className="truncate text-[11px] font-black text-slate-800">{editingProduct.ean || '-'}</p>
                     </div>
                     <div className="rounded-xl border border-slate-100 bg-white px-3 py-2">
-                      <p className="text-[9px] font-black uppercase text-slate-400">Descrição</p>
+                      <p className="text-[9px] font-black uppercase text-slate-400">DescriÃ§Ã£o</p>
                       <p className="text-[11px] font-black leading-snug text-slate-800">{editingProduct.description || '-'}</p>
                     </div>
                     <div className="rounded-xl border border-slate-100 bg-white px-3 py-2">
@@ -1943,7 +2417,7 @@ export function PricingManager() {
                       <input
                         value={productLaunchSearch}
                         onChange={(event) => setProductLaunchSearch(event.target.value)}
-                        placeholder="Buscar por descrição, EAN, fabricante ou código..."
+                        placeholder="Buscar por descriÃ§Ã£o, EAN, fabricante ou cÃ³digo..."
                         className="h-12 w-full rounded-2xl border border-slate-200 bg-white pl-11 pr-4 text-xs font-black uppercase text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-50"
                       />
                     </div>
@@ -1979,7 +2453,7 @@ export function PricingManager() {
                         <p className="truncate text-[11px] font-black text-slate-800">{editingProduct.ean || '-'}</p>
                       </div>
                       <div className="rounded-xl border border-slate-100 bg-white px-3 py-2">
-                        <p className="text-[9px] font-black uppercase text-slate-400">Descrição</p>
+                        <p className="text-[9px] font-black uppercase text-slate-400">DescriÃ§Ã£o</p>
                         <p className="text-[11px] font-black leading-snug text-slate-800">{editingProduct.description || '-'}</p>
                       </div>
                       <div className="rounded-xl border border-slate-100 bg-white px-3 py-2">
@@ -1991,7 +2465,7 @@ export function PricingManager() {
                 )}
               </div>
               <div className="mb-3 grid grid-cols-1 gap-3 md:grid-cols-[minmax(180px,0.7fr)_1fr]">
-                <PriceInput label="Grupo de promocao" value={editingProduct.promotion_group || ''} onChange={(value) => updateEditing('promotion_group', value.toUpperCase())} text />
+                <PriceInput label="Grupo de cotacao" value={editingProduct.promotion_group || ''} onChange={(value) => updateEditing('promotion_group', value.toUpperCase())} text />
                 <div className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
                   <p className="text-[9px] font-black uppercase text-slate-400">Uso</p>
                   <p className="text-[11px] font-bold text-slate-500">Use grupos como FRALDAS TESTE PA, FECHA MES ou CAMPANHA JULHO para filtrar e exportar lotes.</p>
@@ -2002,22 +2476,22 @@ export function PricingManager() {
               <DiscountInput label="Sell-in" value={editingProduct.sell_in_value} mode={editingProduct.sell_in_mode} onValue={(value) => updateEditing('sell_in_value', numericValue(value))} onMode={(mode) => updateEditing('sell_in_mode', mode)} />
               <DiscountInput label="Sell-out" value={editingProduct.sell_out_value} mode={editingProduct.sell_out_mode} onValue={(value) => updateEditing('sell_out_value', numericValue(value))} onMode={(mode) => updateEditing('sell_out_mode', mode)} />
               <DiscountInput label="Trade" value={editingProduct.trade_value} mode={editingProduct.trade_mode} onValue={(value) => updateEditing('trade_value', numericValue(value))} onMode={(mode) => updateEditing('trade_mode', mode)} />
-              <PriceInput label="Novo Preço" value={editingProduct.sale_price} onChange={(value) => updateEditing('sale_price', numericValue(value))} />
+              <PriceInput label="Novo PreÃ§o" value={editingProduct.sale_price} onChange={(value) => updateEditing('sale_price', numericValue(value))} />
               <div className="rounded-2xl border border-green-100 bg-green-50 p-3">
-                <p className="text-[10px] font-black uppercase text-green-700">Custo Lançado</p>
+                <p className="text-[10px] font-black uppercase text-green-700">Custo LanÃ§ado</p>
                 <p className="text-xl font-black text-green-800">{money(finalPrice(editingProduct))}</p>
               </div>
               <PriceInput label="Quarta da Fralda" value={editingProduct.baby_wednesday_price} onChange={(value) => updateEditing('baby_wednesday_price', numericValue(value))} />
-              <PriceInput label="Fecha mês" value={editingProduct.month_end_price} onChange={(value) => updateEditing('month_end_price', numericValue(value))} />
+              <PriceInput label="Fecha mÃªs" value={editingProduct.month_end_price} onChange={(value) => updateEditing('month_end_price', numericValue(value))} />
             </div>
             <div className="mt-3 rounded-2xl border border-blue-100 bg-blue-50/40 p-3">
               <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                 <div>
-                  <p className="text-[10px] font-black uppercase tracking-widest text-blue-700">Lojas desse preço</p>
-                  <p className="text-[10px] font-bold text-slate-500">Marque as lojas onde o novo preço deve entrar.</p>
+                  <p className="text-[10px] font-black uppercase tracking-widest text-blue-700">Lojas desse preÃ§o</p>
+                  <p className="text-[10px] font-bold text-slate-500">Marque as lojas onde o novo preÃ§o deve entrar.</p>
                 </div>
                 <div className="flex gap-2">
-                  <button type="button" onClick={() => setSelectedLaunchBranchCodes(activeBranches.map((branch) => branch.code))} className="rounded-xl bg-white px-3 py-2 text-[9px] font-black uppercase text-blue-700">
+                  <button type="button" onClick={() => setSelectedLaunchBranchCodes(activeCityClusters.map((city) => city.code))} className="rounded-xl bg-white px-3 py-2 text-[9px] font-black uppercase text-blue-700">
                     Todas
                   </button>
                   <button type="button" onClick={() => setSelectedLaunchBranchCodes([])} className="rounded-xl bg-white px-3 py-2 text-[9px] font-black uppercase text-slate-500">
@@ -2026,28 +2500,28 @@ export function PricingManager() {
                 </div>
               </div>
               <div className="grid max-h-32 grid-cols-2 gap-2 overflow-y-auto pr-1 md:grid-cols-3">
-                {activeBranches.map((branch) => (
-                  <label key={branch.id} className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-[9px] font-black uppercase ${selectedLaunchBranches.has(branch.code) ? 'border-blue-300 bg-white text-blue-700' : 'border-white bg-white/70 text-slate-500'}`}>
+                {activeCityClusters.map((city) => (
+                  <label key={city.id} className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-[9px] font-black uppercase ${selectedLaunchBranches.has(city.code) ? 'border-blue-300 bg-white text-blue-700' : 'border-white bg-white/70 text-slate-500'}`}>
                     <input
                       type="checkbox"
-                      checked={selectedLaunchBranches.has(branch.code)}
+                      checked={selectedLaunchBranches.has(city.code)}
                       onChange={(event) => {
                         setSelectedLaunchBranchCodes((current) => (
                           event.target.checked
-                            ? Array.from(new Set([...current, branch.code]))
-                            : current.filter((code) => code !== branch.code)
+                            ? Array.from(new Set([...current, city.code]))
+                            : current.filter((code) => code !== city.code)
                         ));
                       }}
                       className="h-3.5 w-3.5 accent-blue-600"
                     />
-                    <span className="truncate">{branch.name}</span>
+                    <span className="truncate" title={city.branchNames.join(', ')}>{city.name}</span>
                   </label>
                 ))}
               </div>
             </div>
             <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
-              <PriceGroup title="Preços Concorrentes" items={COMPETITORS} values={editingProduct.competitor_prices} onChange={(key, value) => updateNestedPrice('competitor_prices', key, value)} />
-              <PriceGroup title="Preços por Filial" items={activeBranches.map((branch) => branch.code)} labels={Object.fromEntries(activeBranches.map((branch) => [branch.code, branch.name]))} values={editingProduct.store_prices} onChange={(key, value) => updateNestedPrice('store_prices', key, value)} />
+              <PriceGroup title="PreÃ§os Concorrentes" items={COMPETITORS} values={editingProduct.competitor_prices} onChange={(key, value) => updateNestedPrice('competitor_prices', key, value)} />
+              <PriceGroup title="PreÃ§os por Cidade" items={activeCityClusters.map((city) => city.code)} labels={Object.fromEntries(activeCityClusters.map((city) => [city.code, city.name]))} values={Object.fromEntries(activeCityClusters.map((city) => [city.code, cityPriceForProduct(editingProduct, city)]))} onChange={updateCityPrice} />
             </div>
             </div>
             <div className="flex shrink-0 justify-end gap-3 border-t border-slate-100 bg-white px-5 py-3">
@@ -2072,12 +2546,12 @@ export function PricingManager() {
             </div>
             <div className="grid flex-1 grid-cols-1 gap-3 overflow-y-auto px-5 py-4 md:grid-cols-2">
               <PriceInput label="Nome da filial" value={editingBranch.name} onChange={(value) => setEditingBranch((current) => current ? { ...current, name: value } : current)} text />
-              <PriceInput label="Código" value={editingBranch.code} onChange={(value) => setEditingBranch((current) => current ? { ...current, code: value } : current)} text />
+              <PriceInput label="CÃ³digo" value={editingBranch.code} onChange={(value) => setEditingBranch((current) => current ? { ...current, code: value } : current)} text />
               <PriceInput label="Cidade" value={editingBranch.city} onChange={(value) => setEditingBranch((current) => current ? { ...current, city: value } : current)} text />
               <PriceInput label="UF" value={editingBranch.uf} onChange={(value) => setEditingBranch((current) => current ? { ...current, uf: value } : current)} text />
               <PriceInput label="Grupo logistico" value={editingBranch.logistics_group || ''} onChange={(value) => setEditingBranch((current) => current ? { ...current, logistics_group: value } : current)} text />
               <PriceInput label="CNPJ" value={editingBranch.cnpj} onChange={(value) => setEditingBranch((current) => current ? { ...current, cnpj: value } : current)} text />
-              <PriceInput label="Razão Social" value={editingBranch.legal_name} onChange={(value) => setEditingBranch((current) => current ? { ...current, legal_name: value } : current)} text />
+              <PriceInput label="RazÃ£o Social" value={editingBranch.legal_name} onChange={(value) => setEditingBranch((current) => current ? { ...current, legal_name: value } : current)} text />
               <label className="flex items-center gap-3 rounded-2xl bg-slate-50 border-2 border-slate-100 p-4">
                 <input
                   type="checkbox"
@@ -2128,35 +2602,35 @@ export function PricingManager() {
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <div>
                     <p className="text-[10px] font-black uppercase tracking-widest text-blue-700">TXT de oferta</p>
-                    <p className="text-xs font-bold text-slate-500">Modelo: A|EAN|||preço ou B|EAN|||desconto</p>
+                    <p className="text-xs font-bold text-slate-500">Modelo: A|EAN|||preÃ§o ou B|EAN|||desconto</p>
                   </div>
-                  <span className="rounded-full bg-white px-3 py-1 text-[10px] font-black uppercase text-slate-500">{visibleProductGroups.length} descrições</span>
+                  <span className="rounded-full bg-white px-3 py-1 text-[10px] font-black uppercase text-slate-500">{visibleProductGroups.length} descriÃ§Ãµes</span>
                 </div>
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                   <label className="space-y-1">
                     <span className="text-[9px] font-black uppercase text-slate-400">Tipo</span>
                     <select value={txtExportType} onChange={(event) => setTxtExportType(event.target.value as PriceExportType)} className="h-11 w-full rounded-2xl border-2 border-white bg-white px-4 text-xs font-black uppercase outline-none focus:border-blue-600">
-                      <option value="A">A - Preço</option>
+                      <option value="A">A - PreÃ§o</option>
                       <option value="B">B - Desconto</option>
                     </select>
                   </label>
                   <label className="space-y-1">
-                    <span className="text-[9px] font-black uppercase text-slate-400">Loja</span>
+                    <span className="text-[9px] font-black uppercase text-slate-400">Cidade</span>
                     <select value={txtBranchCode} onChange={(event) => setTxtBranchCode(event.target.value)} className="h-11 w-full rounded-2xl border-2 border-white bg-white px-4 text-xs font-black uppercase outline-none focus:border-blue-600">
-                      <option value="">Preço geral</option>
-                      {activeBranches.map((branch) => (
-                        <option key={branch.id} value={branch.code}>{branch.code} - {branch.name}</option>
+                      <option value="">PreÃ§o geral</option>
+                      {activeCityClusters.map((city) => (
+                        <option key={city.id} value={city.code}>{city.name}</option>
                       ))}
                     </select>
                   </label>
                   {txtExportType === 'A' ? (
                     <label className="space-y-1 md:col-span-2">
-                      <span className="text-[9px] font-black uppercase text-slate-400">Preço para exportar</span>
+                      <span className="text-[9px] font-black uppercase text-slate-400">PreÃ§o para exportar</span>
                       <select value={txtPriceSource} onChange={(event) => setTxtPriceSource(event.target.value as TxtPriceSource)} className="h-11 w-full rounded-2xl border-2 border-white bg-white px-4 text-xs font-black uppercase outline-none focus:border-blue-600">
-                        <option value="branch_price">Preço da loja selecionada</option>
-                        <option value="sale_price">Novo preço</option>
+                        <option value="branch_price">Preco da cidade selecionada</option>
+                        <option value="sale_price">Novo preÃ§o</option>
                         <option value="baby_wednesday_price">Quarta da Fralda</option>
-                        <option value="month_end_price">Fecha mês</option>
+                        <option value="month_end_price">Fecha mÃªs</option>
                       </select>
                     </label>
                   ) : (
@@ -2168,7 +2642,7 @@ export function PricingManager() {
                 </button>
               </div>
               <p className="mb-3 text-xs font-bold text-slate-500">
-                A planilha seguirá o modelo escolhido, incluindo preços por filial quando selecionado.
+                A planilha seguirÃ¡ o modelo escolhido, incluindo preÃ§os por filial quando selecionado.
               </p>
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {EXPORT_OPTIONS.map((option) => (
@@ -2179,7 +2653,7 @@ export function PricingManager() {
               </div>
             </div>
             <div className="flex shrink-0 items-center justify-between gap-3 border-t border-slate-100 bg-white px-4 py-3">
-              <p className="text-xs font-bold text-slate-500">{visibleProductGroups.length} descrições - {visibleProducts.length} itens</p>
+              <p className="text-xs font-bold text-slate-500">{visibleProductGroups.length} descriÃ§Ãµes - {visibleProducts.length} itens</p>
               <button onClick={exportCsv} className="flex rounded-2xl bg-green-600 px-5 py-3 text-xs font-black uppercase text-white items-center gap-2">
                 <Download size={16} /> Baixar CSV
               </button>
@@ -2308,11 +2782,11 @@ function PriceProductFilterBox({
           <div className="max-h-56 min-h-36 overflow-auto border-b border-slate-100 bg-white">
             <div className="sticky top-0 z-10 grid grid-cols-[36px_1.4fr_0.7fr_0.9fr_1fr_1fr] border-b border-slate-200 bg-slate-50 text-[9px] font-black uppercase text-slate-500">
               <span className="border-r border-slate-100 px-2 py-2" />
-              <span className="border-r border-slate-100 px-2 py-2">Descrição</span>
-              <span className="border-r border-slate-100 px-2 py-2">Código ERP</span>
+              <span className="border-r border-slate-100 px-2 py-2">DescriÃ§Ã£o</span>
+              <span className="border-r border-slate-100 px-2 py-2">CÃ³digo ERP</span>
               <span className="border-r border-slate-100 px-2 py-2">EAN</span>
               <span className="border-r border-slate-100 px-2 py-2">Fabricante</span>
-              <span className="px-2 py-2">Classificação</span>
+              <span className="px-2 py-2">ClassificaÃ§Ã£o</span>
             </div>
             {selectedGroups.map((group) => (
               <button
@@ -2342,7 +2816,7 @@ function PriceProductFilterBox({
 
           <div className="relative border-b border-slate-100 bg-slate-50 p-3">
             <div className="grid grid-cols-1 items-center gap-2 md:grid-cols-[110px_1fr_40px]">
-              <span className="text-[10px] font-black uppercase text-slate-500">Inclusão rápida</span>
+              <span className="text-[10px] font-black uppercase text-slate-500">InclusÃ£o rÃ¡pida</span>
               <div className="relative">
                 <Search size={14} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input
@@ -2360,7 +2834,7 @@ function PriceProductFilterBox({
                     event.preventDefault();
                     onAddFromText(text);
                   }}
-                  placeholder="Informe Cod. de Barras, código ERP ou descrição"
+                  placeholder="Informe Cod. de Barras, cÃ³digo ERP ou descriÃ§Ã£o"
                   className="h-10 w-full rounded-xl border border-slate-200 bg-white pl-8 pr-9 text-xs font-bold outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-50"
                 />
                 {inputValue && (
@@ -2383,14 +2857,14 @@ function PriceProductFilterBox({
                         className="mb-1 grid w-full grid-cols-[1.4fr_0.55fr_0.9fr] items-center gap-2 rounded-xl px-3 py-2 text-left text-[10px] font-bold uppercase last:mb-0 hover:bg-blue-50"
                       >
                         <span className="min-w-0 truncate text-slate-500">
-                          Descrição: <strong className="text-slate-900">{group.description}</strong>
+                          DescriÃ§Ã£o: <strong className="text-slate-900">{group.description}</strong>
                         </span>
                         <span className="truncate text-slate-400">{group.erpCodes[0] || '-'}</span>
                         <span className="truncate text-slate-400">{group.eans[0] || '-'}</span>
                       </button>
                     )) : (
                       <div className="rounded-xl border border-dashed border-slate-200 px-3 py-6 text-center text-[10px] font-black uppercase tracking-widest text-slate-300">
-                        Nenhuma opção encontrada
+                        Nenhuma opÃ§Ã£o encontrada
                       </div>
                     )}
                   </div>
@@ -2540,6 +3014,8 @@ function PriceGroup({ title, items, labels, values, onChange }: {
     </div>
   );
 }
+
+
 
 
 

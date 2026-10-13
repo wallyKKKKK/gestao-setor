@@ -31,7 +31,7 @@ interface DailyOverview {
   nextMeetingTitle: string;
   nextMeetingTime: string;
   unreadNotifications: number;
-  focusItems: Array<{ title: string; detail: string; tab: string }>;
+  focusItems: Array<{ id: string; title: string; detail: string; tab: string }>;
 }
 
 interface ModuleMeta {
@@ -136,7 +136,7 @@ export function ModuleHome({ availableSections, dailyOverview, userName, userSec
             <div className="mt-3 space-y-2">
               {dailyOverview.focusItems.length > 0 ? dailyOverview.focusItems.slice(0, 2).map((item) => (
                 <button
-                  key={`${item.title}-${item.tab}`}
+                  key={item.id}
                   type="button"
                   onClick={() => onOpenSection('TAREFAS', item.tab)}
                   className="w-full rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-left transition hover:border-blue-200 hover:bg-blue-50 dark:border-white/10 dark:bg-white/5 dark:hover:bg-blue-500/10"

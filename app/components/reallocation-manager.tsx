@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
-import { Check, Clock, Database, Download, FileSpreadsheet, Filter, Loader2, Plus, RefreshCcw, RotateCcw, Search, Shuffle, SlidersHorizontal, Trash2, X } from 'lucide-react';
+import { Check, ChevronDown, Clock, Database, Download, FileSpreadsheet, Filter, Loader2, Plus, RefreshCcw, RotateCcw, Search, Shuffle, SlidersHorizontal, Trash2, X } from 'lucide-react';
 import { countReallocationProducts, fetchLatestReallocationStockSnapshot, fetchPricingBranches, fetchReallocationAttributeOptions, fetchReallocationAttributeSummary, fetchReallocationProducts, fetchReallocationStockItems } from '@/lib/api';
 import { getAuthHeaders } from '@/lib/auth-headers';
 import { getPermissionDeniedMessage } from '@/lib/permissions';
@@ -101,6 +101,11 @@ interface QuickFilterItem {
 type SuggestionProfile = 'safe' | 'balanced' | 'strong';
 const DEFAULT_SUGGESTION_PROFILE: SuggestionProfile = 'balanced';
 const STOCK_CURVES = ['A', 'B', 'C', 'D', 'E'] as const;
+const CURVE_FILTER_OPTIONS: QuickFilterItem[] = STOCK_CURVES.map((curve) => ({
+  id: curve,
+  columns: [curve],
+  searchText: curve,
+}));
 const STOCK_SNAPSHOT_MAX_AGE_MINUTES = 30;
 const STOCK_SNAPSHOT_MAX_AGE_MS = STOCK_SNAPSHOT_MAX_AGE_MINUTES * 60 * 1000;
 
@@ -325,14 +330,14 @@ interface ReallocationPreferences {
   needTypeFilters: QuickFilterItem[];
   lastPurchaseSupplierFilters: QuickFilterItem[];
   suggestionProfile: SuggestionProfile;
+  considerMinimumStock: boolean;
+  stockFloor: number;
   showAdvancedRules: boolean;
   originMinimumDays: number;
   destinationTargetDays: number;
   maxRoutePriority: number;
   lastSaleMaxDays: number;
   lastPurchaseMaxDays: number;
-  minRuptureSales: number;
-  maxSuppliedPercent: number;
   originCurvePriority: string[];
   destinationCurvePriority: string[];
   showOnlyProblemSuggestions: boolean;
@@ -468,14 +473,14 @@ function defaultReallocationPreferences(): ReallocationPreferences {
     needTypeFilters: [],
     lastPurchaseSupplierFilters: [],
     suggestionProfile: DEFAULT_SUGGESTION_PROFILE,
+    considerMinimumStock: false,
+    stockFloor: 0,
     showAdvancedRules: false,
     originMinimumDays: preset.originMinimumDays,
     destinationTargetDays: preset.destinationTargetDays,
     maxRoutePriority: preset.maxRoutePriority,
     lastSaleMaxDays: 0,
     lastPurchaseMaxDays: 0,
-    minRuptureSales: 0,
-    maxSuppliedPercent: 0,
     originCurvePriority: [],
     destinationCurvePriority: [],
     showOnlyProblemSuggestions: false,
@@ -532,14 +537,14 @@ function loadReallocationPreferences() {
       needTypeFilters: readQuickFilterItems(parsed.needTypeFilters),
       lastPurchaseSupplierFilters: readQuickFilterItems(parsed.lastPurchaseSupplierFilters),
       suggestionProfile: profile,
+      considerMinimumStock: parsed.considerMinimumStock === true,
+      stockFloor: clampPreferenceNumber(parsed.stockFloor, defaults.stockFloor),
       showAdvancedRules: Boolean(parsed.showAdvancedRules),
       originMinimumDays: clampPreferenceNumber(parsed.originMinimumDays, defaults.originMinimumDays),
       destinationTargetDays: clampPreferenceNumber(parsed.destinationTargetDays, defaults.destinationTargetDays),
       maxRoutePriority: Math.max(1, Math.min(5, clampPreferenceNumber(parsed.maxRoutePriority, defaults.maxRoutePriority))),
       lastSaleMaxDays: clampPreferenceNumber(parsed.lastSaleMaxDays, defaults.lastSaleMaxDays),
       lastPurchaseMaxDays: clampPreferenceNumber(parsed.lastPurchaseMaxDays, defaults.lastPurchaseMaxDays),
-      minRuptureSales: clampPreferenceNumber(parsed.minRuptureSales, defaults.minRuptureSales),
-      maxSuppliedPercent: clampPreferenceNumber(parsed.maxSuppliedPercent, defaults.maxSuppliedPercent),
       originCurvePriority: readCurveList(parsed.originCurvePriority),
       destinationCurvePriority: readCurveList(parsed.destinationCurvePriority),
       showOnlyProblemSuggestions: Boolean(parsed.showOnlyProblemSuggestions),
@@ -771,14 +776,14 @@ export function ReallocationManager({
   const [suggestionGenerationContext, setSuggestionGenerationContext] = useState<SuggestionGenerationContext | null>(null);
   const [suggestionDraftReady, setSuggestionDraftReady] = useState(false);
   const [suggestionProfile, setSuggestionProfile] = useState<SuggestionProfile>(initialPreferences.suggestionProfile);
+  const [considerMinimumStock, setConsiderMinimumStock] = useState(initialPreferences.considerMinimumStock);
+  const [stockFloor, setStockFloor] = useState(initialPreferences.stockFloor);
   const [showAdvancedRules, setShowAdvancedRules] = useState(initialPreferences.showAdvancedRules);
   const [originMinimumDays, setOriginMinimumDays] = useState(initialPreferences.originMinimumDays);
   const [destinationTargetDays, setDestinationTargetDays] = useState(initialPreferences.destinationTargetDays);
   const [maxRoutePriority, setMaxRoutePriority] = useState(initialPreferences.maxRoutePriority);
   const [lastSaleMaxDays, setLastSaleMaxDays] = useState(initialPreferences.lastSaleMaxDays);
   const [lastPurchaseMaxDays, setLastPurchaseMaxDays] = useState(initialPreferences.lastPurchaseMaxDays);
-  const [minRuptureSales, setMinRuptureSales] = useState(initialPreferences.minRuptureSales);
-  const [maxSuppliedPercent, setMaxSuppliedPercent] = useState(initialPreferences.maxSuppliedPercent);
   const [originCurvePriority, setOriginCurvePriority] = useState<string[]>(initialPreferences.originCurvePriority);
   const [destinationCurvePriority, setDestinationCurvePriority] = useState<string[]>(initialPreferences.destinationCurvePriority);
   const [stockLoading, setStockLoading] = useState(true);
@@ -791,6 +796,26 @@ export function ReallocationManager({
   const [showReallocationHistory, setShowReallocationHistory] = useState(false);
   const [showDataActions, setShowDataActions] = useState(false);
   const [showTopPanel, setShowTopPanel] = useState(true);
+  const [showMetricDetails, setShowMetricDetails] = useState(false);
+  const summaryRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!showMetricDetails) return;
+    const closeOutside = (event: PointerEvent) => {
+      if (event.target instanceof Node && !summaryRef.current?.contains(event.target)) setShowMetricDetails(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setShowMetricDetails(false);
+        summaryRef.current?.querySelector('button')?.focus();
+      }
+    };
+    document.addEventListener('pointerdown', closeOutside);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOutside);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [showMetricDetails]);
   const [reallocationAuditLog, setReallocationAuditLog] = useState<ReallocationAuditLog[]>(loadReallocationAuditLog);
   const [suggestionTableSearch, setSuggestionTableSearch] = useState(initialPreferences.suggestionTableSearch);
   const [suggestionColumnOrder, setSuggestionColumnOrder] = useState<SuggestionColumnKey[]>(initialPreferences.suggestionColumnOrder);
@@ -918,14 +943,14 @@ export function ReallocationManager({
       needTypeFilters,
       lastPurchaseSupplierFilters,
       suggestionProfile,
+      considerMinimumStock,
+      stockFloor,
       showAdvancedRules,
       originMinimumDays,
       destinationTargetDays,
       maxRoutePriority,
       lastSaleMaxDays,
       lastPurchaseMaxDays,
-      minRuptureSales,
-      maxSuppliedPercent,
       originCurvePriority,
       destinationCurvePriority,
       showOnlyProblemSuggestions,
@@ -949,8 +974,6 @@ export function ReallocationManager({
     lastPurchaseSupplierFilters,
     manufacturerFilters,
     maxRoutePriority,
-    maxSuppliedPercent,
-    minRuptureSales,
     needTypeFilters,
     originCurvePriority,
     originFilters,
@@ -961,6 +984,8 @@ export function ReallocationManager({
     suggestionColumnOrder,
     suggestionColumnWidths,
     suggestionProfile,
+    considerMinimumStock,
+    stockFloor,
     suggestionSort,
     suggestionTableSearch,
   ]);
@@ -1439,10 +1464,10 @@ export function ReallocationManager({
     + originCurvePriority.length
     + destinationCurvePriority.length
     + (lastSaleMaxDays > 0 ? 1 : 0)
-    + (lastPurchaseMaxDays > 0 ? 1 : 0)
-    + (minRuptureSales > 0 ? 1 : 0)
-    + (maxSuppliedPercent > 0 ? 1 : 0);
+    + (lastPurchaseMaxDays > 0 ? 1 : 0);
   const suggestionSettingsSignature = useMemo(() => JSON.stringify({
+    considerMinimumStock,
+    stockFloor,
     snapshotId: stockSnapshot?.id || '',
     products: productFilters.map((item) => item.id),
     origins: originFilters.map((item) => item.id),
@@ -1461,9 +1486,9 @@ export function ReallocationManager({
     maxRoutePriority,
     lastSaleMaxDays,
     lastPurchaseMaxDays,
-    minRuptureSales,
-    maxSuppliedPercent,
   }), [
+    considerMinimumStock,
+    stockFloor,
     classificationCategoryFilters,
     classificationDepartmentFilters,
     classificationFilters,
@@ -1476,8 +1501,6 @@ export function ReallocationManager({
     lastSaleMaxDays,
     manufacturerFilters,
     maxRoutePriority,
-    maxSuppliedPercent,
-    minRuptureSales,
     needTypeFilters,
     originCurvePriority,
     originFilters,
@@ -1743,6 +1766,8 @@ export function ReallocationManager({
             lastPurchaseSuppliers: selectedLastPurchaseSuppliers,
           },
           rules: {
+            considerMinimumStock,
+            stockFloor,
             originMinimumDays,
             destinationTargetDays,
             maxRoutePriority,
@@ -1750,8 +1775,6 @@ export function ReallocationManager({
             destinationCurves: destinationCurvePriority,
             lastSaleMaxDays,
             lastPurchaseMaxDays,
-            minRuptureSales,
-            maxSuppliedPercent,
           },
           branchLogistics: Object.fromEntries(branchLogisticsByCode),
         }),
@@ -2670,18 +2693,6 @@ export function ReallocationManager({
     }
   };
 
-  const toggleCurvePriority = (
-    curve: string,
-    selectedCurves: string[],
-    setSelectedCurves: (value: string[]) => void,
-  ) => {
-    setSelectedCurves(
-      selectedCurves.includes(curve)
-        ? selectedCurves.filter((item) => item !== curve)
-        : [...selectedCurves, curve],
-    );
-  };
-
   const dataImportPermissionTitle = canImportData ? undefined : getPermissionDeniedMessage('importar dados do remanejamento inteligente', 'perfumePurchasingOrSupreme');
   const generatePermissionTitle = canGenerateSuggestions ? undefined : getPermissionDeniedMessage('gerar sugestoes de remanejamento inteligente', 'perfumePurchasingOrSupreme');
   const exportPermissionTitle = canExport ? undefined : getPermissionDeniedMessage('exportar remanejamento inteligente', 'perfumePurchasingOrSupreme');
@@ -2737,7 +2748,7 @@ export function ReallocationManager({
 
       <section className="flex min-h-0 flex-1 flex-col overflow-visible rounded-[12px] border border-slate-200 bg-white shadow-sm">
         {showTopPanel ? (
-        <div className="relative z-[90] grid gap-1.5 border-b border-slate-300 bg-slate-100/80 p-1.5 xl:grid-cols-[minmax(980px,1fr)_420px_150px]">
+        <div className="relative z-[90] grid gap-1.5 border-b border-slate-300 bg-slate-100/80 p-1.5 xl:grid-cols-[minmax(0,1fr)_150px]">
           <div className="min-w-0">
             <div className="grid grid-cols-1 items-start gap-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-11">
               <QuickFilterBox
@@ -2858,16 +2869,12 @@ export function ReallocationManager({
               <CurvePriorityBox
                 title="Curva origem"
                 selectedCurves={originCurvePriority}
-                onToggle={(curve) => toggleCurvePriority(curve, originCurvePriority, setOriginCurvePriority)}
-                onClear={() => setOriginCurvePriority([])}
-                tone="violet"
+                onChange={setOriginCurvePriority}
               />
               <CurvePriorityBox
                 title="Curva destino"
                 selectedCurves={destinationCurvePriority}
-                onToggle={(curve) => toggleCurvePriority(curve, destinationCurvePriority, setDestinationCurvePriority)}
-                onClear={() => setDestinationCurvePriority([])}
-                tone="emerald"
+                onChange={setDestinationCurvePriority}
               />
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] font-black uppercase">
@@ -2902,19 +2909,40 @@ export function ReallocationManager({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-1 sm:grid-cols-4 xl:grid-cols-4">
-            <StatusMetric label="Exportaveis" value={suggestionExportStats.exportableLines.toLocaleString('pt-BR')} helper={`${suggestionExportStats.exportableUnits.toLocaleString('pt-BR')} un.`} tone="emerald" compact />
-            <StatusMetric label="Sem ERP" value={suggestionExportStats.missingErpCodeLines.toLocaleString('pt-BR')} helper="fora TXT" tone="amber" compact />
-            <StatusMetric label="Excedidas" value={overAllocatedOrigins.length.toLocaleString('pt-BR')} helper="bloqueia" tone="red" compact />
-            <StatusMetric label="Estoque" value={stockItems.length.toLocaleString('pt-BR')} tone="indigo" compact />
-            <StatusMetric label="Sugestões" value={transferSuggestions.length.toLocaleString('pt-BR')} tone="violet" compact />
-            <StatusMetric label="Confirmadas" value={confirmedSuggestions.length.toLocaleString('pt-BR')} tone="emerald" compact />
-            <StatusMetric label="Pedidos" value={transferOrders.length.toLocaleString('pt-BR')} tone="indigo" compact />
-            <StatusMetric label="Produtos mov." value={new Set(transferSuggestions.map((item) => item.ean)).size.toLocaleString('pt-BR')} tone="violet" compact />
-            <StatusMetric label="Produtos" value={totalProducts.toLocaleString('pt-BR')} compact />
-          </div>
-
           <div className="relative grid grid-cols-2 gap-1">
+            <div ref={summaryRef} className={`relative col-span-2 ${showMetricDetails ? 'z-[240]' : ''}`}>
+            <button
+              type="button"
+              aria-expanded={showMetricDetails}
+              aria-controls="reallocation-summary-panel"
+              onClick={() => setShowMetricDetails((current) => !current)}
+              className="flex h-9 w-full items-center justify-center gap-1 rounded-md border border-slate-200 bg-white px-2 text-[10px] font-black uppercase text-violet-700 shadow-sm hover:border-violet-300 hover:bg-violet-50"
+            >
+              Resumo <ChevronDown size={13} className={showMetricDetails ? 'rotate-180' : ''} />
+              {suggestionExportStats.missingErpCodeLines + overAllocatedOrigins.length > 0 && (
+                <span className="rounded bg-amber-100 px-1 text-amber-800">{suggestionExportStats.missingErpCodeLines + overAllocatedOrigins.length}</span>
+              )}
+            </button>
+            {showMetricDetails && (
+              <div id="reallocation-summary-panel" role="region" aria-labelledby="reallocation-summary-title" className="absolute right-0 top-[calc(100%+4px)] z-[240] w-[min(420px,calc(100vw-2rem))] overflow-hidden rounded-[6px] border border-slate-400 bg-white shadow-[0_18px_38px_rgba(15,23,42,0.22)]">
+                <div className="flex h-7 items-center justify-between border-b border-slate-300 bg-slate-100 px-2">
+                  <h2 id="reallocation-summary-title" className="text-xs font-bold text-slate-900">Resumo do remanejamento</h2>
+                  <button type="button" onClick={() => { setShowMetricDetails(false); summaryRef.current?.querySelector('button')?.focus(); }} aria-label="Fechar resumo" className="h-5 w-5 rounded border border-slate-300 bg-white text-slate-500 hover:text-red-600"><X size={12} className="mx-auto" /></button>
+                </div>
+                <div className="grid max-h-[min(380px,60dvh)] grid-cols-2 gap-1 overflow-auto p-2 sm:grid-cols-3">
+                  <StatusMetric label="Exportaveis" value={suggestionExportStats.exportableLines.toLocaleString('pt-BR')} helper={`${suggestionExportStats.exportableUnits.toLocaleString('pt-BR')} un.`} tone="emerald" compact />
+                  <StatusMetric label="Sem ERP" value={suggestionExportStats.missingErpCodeLines.toLocaleString('pt-BR')} helper="fora TXT" tone="amber" compact />
+                  <StatusMetric label="Excedidas" value={overAllocatedOrigins.length.toLocaleString('pt-BR')} helper="bloqueia" tone="red" compact />
+                  <StatusMetric label="Sugestões" value={transferSuggestions.length.toLocaleString('pt-BR')} tone="violet" compact />
+                  <StatusMetric label="Confirmadas" value={confirmedSuggestions.length.toLocaleString('pt-BR')} tone="emerald" compact />
+                  <StatusMetric label="Pedidos" value={transferOrders.length.toLocaleString('pt-BR')} tone="indigo" compact />
+                  <StatusMetric label="Estoque" value={stockItems.length.toLocaleString('pt-BR')} tone="indigo" compact />
+                  <StatusMetric label="Produtos mov." value={new Set(transferSuggestions.map((item) => item.ean)).size.toLocaleString('pt-BR')} tone="violet" compact />
+                  <StatusMetric label="Produtos" value={totalProducts.toLocaleString('pt-BR')} compact />
+                </div>
+              </div>
+            )}
+            </div>
             <button
               type="button"
               onClick={() => setShowTopPanel(false)}
@@ -3375,17 +3403,43 @@ export function ReallocationManager({
                 })}
               </div>
 
-              <div className="mt-3 grid grid-cols-1 gap-2 lg:grid-cols-[1.2fr_1fr_1fr]">
-                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                  <p className="mb-2 text-[10px] font-black uppercase tracking-widest text-violet-500">Segurança origem</p>
-                  <NumberStepper
-                    value={originMinimumDays}
-                    onChange={setOriginMinimumDays}
-                    min={0}
-                    max={9999}
-                    suffix="dias"
-                  />
-                </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={considerMinimumStock}
+                aria-label="Considerar estoque minimo"
+                onClick={() => setConsiderMinimumStock((current) => !current)}
+                disabled={generatingSuggestions}
+                title="Completar o estoque minimo usando o excesso restante, depois das sugestoes normais"
+                className={`mt-3 flex min-h-14 w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left text-[11px] font-black uppercase outline-none transition-colors focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 motion-reduce:transition-none disabled:cursor-not-allowed disabled:opacity-50 ${considerMinimumStock ? 'border-violet-400 bg-violet-50 text-violet-700' : 'border-slate-200 bg-slate-50 text-slate-600'}`}
+              >
+                <span>Considerar estoque minimo?</span>
+                <span aria-hidden="true" className="flex shrink-0 items-center gap-3">
+                  <span className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] ${considerMinimumStock ? 'bg-violet-600 text-white' : 'bg-slate-200 text-slate-600'}`}>
+                    {considerMinimumStock && <Check size={12} />}
+                    {considerMinimumStock ? 'Ativado' : 'Desativado'}
+                  </span>
+                  <span className={`inline-flex h-7 w-12 shrink-0 items-center rounded-full p-1 transition-colors motion-reduce:transition-none ${considerMinimumStock ? 'bg-violet-600' : 'bg-slate-300'}`}>
+                    <span className={`h-5 w-5 rounded-full bg-white shadow-sm transition-transform motion-reduce:transition-none ${considerMinimumStock ? 'translate-x-5' : 'translate-x-0'}`} />
+                  </span>
+                </span>
+              </button>
+
+              <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2 lg:grid-cols-4">
+                <TransferRuleInput
+                  label="Segurança origem (dias)"
+                  value={originMinimumDays}
+                  onChange={(value) => setOriginMinimumDays(Math.round(value))}
+                  min={0}
+                  max={9999}
+                />
+                <TransferRuleInput
+                  label="Piso de estoque (un.)"
+                  value={stockFloor}
+                  onChange={(value) => setStockFloor(Math.round(value))}
+                  min={0}
+                  max={9999}
+                />
                 <TransferRuleInput
                   label="Meta destino"
                   value={destinationTargetDays}
@@ -3413,22 +3467,6 @@ export function ReallocationManager({
                   label="Min. dias sem compra"
                   value={lastPurchaseMaxDays}
                   onChange={setLastPurchaseMaxDays}
-                  min={0}
-                  max={9999}
-                />
-              </div>
-              <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
-                <TransferRuleInput
-                  label="Ruptura venda minima"
-                  value={minRuptureSales}
-                  onChange={setMinRuptureSales}
-                  min={0}
-                  max={999999}
-                />
-                <TransferRuleInput
-                  label="% suprida maxima"
-                  value={maxSuppliedPercent}
-                  onChange={setMaxSuppliedPercent}
                   min={0}
                   max={9999}
                 />
@@ -3641,9 +3679,10 @@ function TransferRuleInput({
       <span className="block text-[10px] font-black uppercase text-violet-500">{label}</span>
       <input
         type="number"
-        value={value}
+        value={value === 0 ? '' : value}
         min={min}
         max={max}
+        onFocus={(event) => event.currentTarget.select()}
         onChange={(event) => {
           const nextValue = Math.max(min, Math.min(max, Number(event.target.value) || 0));
           onChange(nextValue);
@@ -3651,59 +3690,6 @@ function TransferRuleInput({
         className="mt-2 h-10 w-full rounded-xl border-2 border-slate-100 bg-slate-50 px-3 text-sm font-black text-slate-900 outline-none [appearance:textfield] focus:border-violet-500 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
       />
     </label>
-  );
-}
-
-function NumberStepper({
-  value,
-  onChange,
-  min,
-  max,
-  suffix,
-}: {
-  value: number;
-  onChange: (value: number) => void;
-  min: number;
-  max: number;
-  suffix: string;
-}) {
-  const clamp = (nextValue: number) => Math.max(min, Math.min(max, Math.round(nextValue || 0)));
-
-  return (
-    <div className="flex items-center justify-between gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">
-      <button
-        type="button"
-        onClick={() => onChange(clamp(value - 1))}
-        className="h-10 w-10 rounded-xl bg-slate-100 text-lg font-black text-slate-600 transition hover:bg-slate-200 disabled:opacity-40"
-        disabled={value <= min}
-        aria-label="Diminuir valor"
-      >
-        -
-      </button>
-      <label className="min-w-0 flex-1 text-center">
-        <span className="block text-[9px] font-black uppercase tracking-widest text-slate-400">Seguranca</span>
-        <div className="mt-0.5 flex items-baseline justify-center gap-1">
-          <input
-            type="number"
-            value={value}
-            min={min}
-            max={max}
-            onChange={(event) => onChange(clamp(Number(event.target.value)))}
-            className="w-16 bg-transparent text-center text-3xl font-black leading-none text-violet-700 outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-          />
-          <span className="text-[10px] font-black uppercase text-slate-400">{suffix}</span>
-        </div>
-      </label>
-      <button
-        type="button"
-        onClick={() => onChange(clamp(value + 1))}
-        className="h-10 w-10 rounded-xl bg-violet-600 text-lg font-black text-white transition hover:bg-violet-700 disabled:opacity-40"
-        disabled={value >= max}
-        aria-label="Aumentar valor"
-      >
-        +
-      </button>
-    </div>
   );
 }
 
@@ -3742,56 +3728,24 @@ function StatusMetric({ label, value, helper, tone = 'slate', compact = false }:
 function CurvePriorityBox({
   title,
   selectedCurves,
-  onToggle,
-  onClear,
-  tone,
+  onChange,
 }: {
   title: string;
   selectedCurves: string[];
-  onToggle: (curve: string) => void;
-  onClear: () => void;
-  tone: 'violet' | 'emerald';
+  onChange: (curves: string[]) => void;
 }) {
-  const activeClass = tone === 'emerald'
-    ? 'border-emerald-600 bg-emerald-600 text-white'
-    : 'border-violet-600 bg-violet-600 text-white';
-  const hoverClass = tone === 'emerald'
-    ? 'hover:border-emerald-300 hover:text-emerald-700'
-    : 'hover:border-violet-300 hover:text-violet-700';
-  const selectedLabel = selectedCurves.length ? selectedCurves.join(', ') : 'Todas';
-
   return (
-    <div className={`min-h-[82px] overflow-hidden rounded-[6px] border bg-white shadow-[0_1px_0_rgba(15,23,42,0.04)] ${selectedCurves.length ? (tone === 'emerald' ? 'border-emerald-400' : 'border-violet-400') : 'border-slate-300'}`}>
-      <div className="flex h-7 items-center justify-between border-b border-slate-200 bg-gradient-to-b from-white to-slate-50 px-2">
-        <span className="truncate text-[12px] font-bold leading-none text-slate-950">{title}</span>
-        <button
-          type="button"
-          onClick={onClear}
-          disabled={selectedCurves.length === 0}
-          className="rounded px-1 text-[9px] font-black uppercase text-slate-400 disabled:opacity-40"
-        >
-          Todas
-        </button>
-      </div>
-      <div className="flex h-[55px] flex-col justify-center px-2 py-1.5">
-        <div className="grid grid-cols-5 gap-1">
-          {STOCK_CURVES.map((curve) => {
-            const active = selectedCurves.includes(curve);
-            return (
-              <button
-                key={`${title}-${curve}`}
-                type="button"
-                onClick={() => onToggle(curve)}
-                className={`h-6 rounded-md border text-[11px] font-black ${active ? activeClass : `border-slate-200 bg-white text-slate-600 ${hoverClass}`}`}
-              >
-                {curve}
-              </button>
-            );
-          })}
-        </div>
-        <p className="mt-0.5 truncate text-center text-[9px] font-bold text-slate-500">{selectedLabel}</p>
-      </div>
-    </div>
+    <QuickFilterBox
+      title={title}
+      columns={['Curva']}
+      placeholder="Pesquisar curva"
+      options={CURVE_FILTER_OPTIONS}
+      selected={CURVE_FILTER_OPTIONS.filter((item) => selectedCurves.includes(item.id))}
+      onChange={(items) => onChange(items.map((item) => item.id))}
+      hideInitialOptions
+      quickAddBehavior="optionsPicker"
+      alignPopup="right"
+    />
   );
 }
 

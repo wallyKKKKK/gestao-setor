@@ -16,6 +16,7 @@ import { PurchaseAssistant } from '@/app/components/purchase-assistant'
 import { SettingsModal } from '@/app/components/settings-modal'
 import { TaskDrawer } from '@/app/components/task-drawer'
 import { TaskListView } from '@/app/components/task-list-view'
+import { TableFocusController } from '@/app/components/table-focus-controller'
 import { WeeklyTaskScheduleView } from '@/app/components/weekly-task-schedule-view'
 import { showSystemToast } from '@/app/components/system-toast'
 import { NAV_CATEGORIES } from '@/app/constants'
@@ -1388,7 +1389,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
         nextMeetingTitle: '',
         nextMeetingTime: '',
         unreadNotifications: unreadNotificationIds.length,
-        focusItems: [] as Array<{ title: string; detail: string; tab: string }>,
+        focusItems: [] as Array<{ id: string; title: string; detail: string; tab: string }>,
       };
     }
 
@@ -1420,21 +1421,24 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
 
     const focusItems = [
       ...overduePending.slice(0, 2).map((task) => ({
+        id: String(task.id),
         title: task.title,
         detail: `Atrasada desde ${task.lastOcc}`,
         tab: 'ATRASADOS',
       })),
       ...oneOffPending.slice(0, 2).map((task) => ({
+        id: String(task.id),
         title: task.title,
         detail: task.lastOcc < today ? 'Pontual vencida' : 'Pontual para hoje',
         tab: task.lastOcc < today ? 'ATRASADOS' : 'HOJE',
       })),
       ...todayPending.slice(0, 2).map((task) => ({
+        id: String(task.id),
         title: task.title,
         detail: `${task.category} para hoje`,
         tab: 'HOJE',
       })),
-    ].slice(0, 4);
+    ].filter((item, index, items) => items.findIndex((candidate) => candidate.id === item.id) === index).slice(0, 4);
 
     return {
       todayTasks: todayPending.length,
@@ -1707,6 +1711,8 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
       data-section-theme={visibleSection}
       style={appThemeStyle}
     >
+      <TableFocusController />
+
       {visibleSection !== 'INICIO' && (
         <AppSidebar
           activeSection={visibleSection}

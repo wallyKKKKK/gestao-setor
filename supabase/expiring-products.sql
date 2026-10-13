@@ -25,6 +25,8 @@ create table if not exists public.expiring_inventory_items (
   included_at timestamptz,
   monthly_average numeric(14, 3) not null default 0,
   purchase_demand_30d numeric(14, 3) not null default 0,
+  cost_price numeric(12, 2) not null default 0,
+  sale_price numeric(12, 2) not null default 0,
   source_file text,
   imported_by uuid references auth.users(id) on delete set null,
   imported_at timestamptz not null default now(),
@@ -48,7 +50,7 @@ create table if not exists public.expiring_discount_rules (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint expiring_discount_rules_scope_type_check check (scope_type in ('product', 'manufacturer', 'line', 'department', 'category', 'classification', 'validity')),
-  constraint expiring_discount_rules_discount_type_check check (discount_type in ('percent', 'fixed_price'))
+  constraint expiring_discount_rules_discount_type_check check (discount_type in ('percent', 'fixed_price', 'half_cost_price'))
 );
 
 create index if not exists expiring_inventory_items_branch_idx on public.expiring_inventory_items(branch_code);

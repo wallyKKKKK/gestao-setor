@@ -135,7 +135,7 @@ export interface PricingBranch {
 
 
 export type ExpiringRuleScopeType = "product" | "manufacturer" | "line" | "department" | "category" | "classification" | "validity";
-export type ExpiringDiscountType = "percent" | "fixed_price";
+export type ExpiringDiscountType = "percent" | "fixed_price" | "half_cost_price";
 
 export interface ExpiringInventoryItem {
   id: string;
@@ -164,6 +164,8 @@ export interface ExpiringInventoryItem {
   included_at: string | null;
   monthly_average: number;
   purchase_demand_30d: number;
+  cost_price: number;
+  sale_price: number;
   source_file: string | null;
   imported_by: string | null;
   imported_at: string;
@@ -300,6 +302,24 @@ export interface PricingMarginRule {
   desired_markup_percent: number;
   source_file: string | null;
   is_active: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export type PricingRuleScope = 'all' | 'brand' | 'line' | 'department' | 'category' | 'quote_group';
+export type PricingRuleBasis = 'cost' | 'lowest_competitor' | 'average_competitor';
+
+export interface PricingRule {
+  id: string;
+  name: string;
+  scope: PricingRuleScope;
+  scopeValue: string;
+  targetMarkup: number;
+  minMarkup: number;
+  competitorBuffer: number;
+  basis: PricingRuleBasis;
+  active: boolean;
+  created_by?: string | null;
   created_at?: string;
   updated_at?: string;
 }
