@@ -413,6 +413,8 @@ function calculate(payload: {
   };
   rules?: {
     considerMinimumStock?: boolean;
+    considerOriginMinimumStock?: boolean;
+    considerDestinationMinimumStock?: boolean;
     stockFloor?: number;
     originMinimumDays?: number;
     destinationTargetDays?: number;
@@ -483,7 +485,8 @@ function calculate(payload: {
 
       const dailySales = ownDailySales(item);
       const stockDays = dailySales > 0 ? stock / dailySales : numberValue(item.stock_days);
-      const protectedStock = Math.max(stockFloor, dailySales > 0 ? dailySales * originMinimumDays : 0);
+      const originFloor = Math.max(stockFloor, rules.considerOriginMinimumStock === true ? Math.max(0, Math.ceil(numberValue(item.min_stock))) : 0);
+      const protectedStock = Math.max(originFloor, dailySales > 0 ? dailySales * originMinimumDays : 0);
       const remaining = Math.max(0, Math.floor(stock - protectedStock));
       if (remaining > 0) {
         origins.push({
@@ -493,7 +496,7 @@ function calculate(payload: {
             stock_days: stockDays,
           },
           availableStock: stock,
-          stockFloor,
+          stockFloor: originFloor,
           remaining,
         });
       }
@@ -616,7 +619,7 @@ function calculate(payload: {
     }
 
     // Minimum stock only uses surplus left after every normal allocation for this product.
-    if (rules.considerMinimumStock === true) {
+    if ((rules.considerDestinationMinimumStock ?? rules.considerMinimumStock) === true) {
       const sentByOrigin = new Map<string, number>();
       const suggestionsByRoute = new Map<string, (typeof suggestions)[number]>();
       for (const suggestion of suggestions.slice(productSuggestionStart)) {
@@ -667,7 +670,10 @@ function calculate(payload: {
           if (openNeed <= 0) break;
           const originCode = storeCode(origin.item.store_code);
           const sent = sentByOrigin.get(originCode) || 0;
-          const surplusAboveMinimum = Math.max(0, Math.floor(origin.availableStock - sent - Math.max(0, numberValue(origin.item.min_stock))));
+          // Preserve legacy requests; explicit origin/destination switches are independent.
+          const minimum = (rules.considerOriginMinimumStock ?? rules.considerMinimumStock) === true
+            ? Math.max(0, numberValue(origin.item.min_stock)) : 0;
+          const surplusAboveMinimum = Math.max(0, Math.floor(origin.availableStock - sent - Math.max(origin.stockFloor, minimum)));
           const quantity = Math.min(origin.remaining, surplusAboveMinimum, openNeed);
           if (quantity <= 0) continue;
 

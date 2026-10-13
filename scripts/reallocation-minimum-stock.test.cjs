@@ -144,3 +144,50 @@ test('floor applies to total transfers across normal and minimum destinations', 
   assert.equal(rows[0].quantity, 5);
   assert.equal(rows.reduce((sum, row) => sum + row.quantity, 0), 7);
 });
+
+test('origin minimum protects normal demand and the manual allocation limit', () => {
+  const rows = [origin(12, { min_stock: 8 }), destination({ stock: 0, confirmed_stock: 0, monthly_avg_sales: 300 })];
+  const rules = { considerOriginMinimumStock: true, considerDestinationMinimumStock: false };
+  const result = run(rows, { rules });
+  assert.equal(result[0].quantity, 4);
+  assert.equal(result[0].originAvailableStock, 4);
+  assert.equal(result[0].minimumStockQuantity, 0);
+  assert.equal(run(rows, { rules: { ...rules, considerOriginMinimumStock: false } })[0].quantity, 12);
+});
+
+test('destination switch works independently of origin protection', () => {
+  const rows = [origin(8, { min_stock: 7 }), destination({ stock: 0, confirmed_stock: 0 })];
+  assert.equal(run(rows, { rules: { considerOriginMinimumStock: false, considerDestinationMinimumStock: true } })[0].quantity, 8);
+  assert.equal(run(rows, { rules: { considerOriginMinimumStock: true, considerDestinationMinimumStock: true } })[0].quantity, 1);
+  assert.equal(run(rows, { rules: { considerOriginMinimumStock: true, considerDestinationMinimumStock: false } }).length, 0);
+  assert.equal(run(rows, { rules: { considerOriginMinimumStock: false, considerDestinationMinimumStock: false } }).length, 0);
+});
+
+test('origin minimum, global floor and day reserve use their maximum', () => {
+  const rows = [origin(20, { min_stock: 8, monthly_avg_sales: 30 }), destination({ stock: 0, confirmed_stock: 0, monthly_avg_sales: 300 })];
+  const rules = { considerOriginMinimumStock: true, considerDestinationMinimumStock: false, stockFloor: 5, originMinimumDays: 10 };
+  assert.equal(run(rows, { rules })[0].quantity, 10);
+  assert.equal(run(rows, { rules: { ...rules, stockFloor: 12 } })[0].quantity, 8);
+  assert.equal(run(rows, { rules: { ...rules, originMinimumDays: 0 } })[0].quantity, 12);
+});
+
+test('origin protection covers total normal and minimum allocations', () => {
+  const result = run([origin(12, { min_stock: 6 }), item('03', { monthly_avg_sales: 30 }), destination({ stock: 0, confirmed_stock: 0 })], {
+    rules: { considerOriginMinimumStock: true, considerDestinationMinimumStock: true },
+  });
+  assert.equal(result[0].quantity, 5);
+  assert.equal(result[1].quantity, 1);
+  assert.equal(result.reduce((sum, row) => sum + row.quantity, 0), 6);
+});
+
+test('origin at or below minimum cannot donate, including items without sales', () => {
+  for (const stock of [3, 5]) {
+    assert.equal(run([origin(stock, { min_stock: 5 }), destination()], {
+      rules: { considerOriginMinimumStock: true, considerDestinationMinimumStock: true },
+    }).length, 0);
+  }
+  const result = run([origin(12, { min_stock: 5.2 }), destination({ stock: 0, confirmed_stock: 0 })], {
+    rules: { considerOriginMinimumStock: true, considerDestinationMinimumStock: true },
+  });
+  assert.equal(result[0].quantity, 6);
+});

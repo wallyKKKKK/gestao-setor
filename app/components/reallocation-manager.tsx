@@ -331,7 +331,8 @@ interface ReallocationPreferences {
   needTypeFilters: QuickFilterItem[];
   lastPurchaseSupplierFilters: QuickFilterItem[];
   suggestionProfile: SuggestionProfile;
-  considerMinimumStock: boolean;
+  considerDestinationMinimumStock: boolean;
+  considerOriginMinimumStock: boolean;
   stockFloor: number;
   showAdvancedRules: boolean;
   originMinimumDays: number;
@@ -474,7 +475,8 @@ function defaultReallocationPreferences(): ReallocationPreferences {
     needTypeFilters: [],
     lastPurchaseSupplierFilters: [],
     suggestionProfile: DEFAULT_SUGGESTION_PROFILE,
-    considerMinimumStock: false,
+    considerDestinationMinimumStock: false,
+    considerOriginMinimumStock: false,
     stockFloor: 0,
     showAdvancedRules: false,
     originMinimumDays: preset.originMinimumDays,
@@ -498,7 +500,7 @@ function loadReallocationPreferences() {
   try {
     const stored = window.localStorage.getItem(REALLOCATION_PREFERENCES_STORAGE_KEY);
     if (!stored) return defaultReallocationPreferences();
-    const parsed = JSON.parse(stored) as Partial<ReallocationPreferences>;
+    const parsed = JSON.parse(stored) as Partial<ReallocationPreferences> & { considerMinimumStock?: boolean };
     const defaults = defaultReallocationPreferences();
     const validColumnKeys = new Set(SUGGESTION_COLUMNS.map((column) => column.key));
     const columnOrder = Array.isArray(parsed.suggestionColumnOrder)
@@ -538,7 +540,8 @@ function loadReallocationPreferences() {
       needTypeFilters: readQuickFilterItems(parsed.needTypeFilters),
       lastPurchaseSupplierFilters: readQuickFilterItems(parsed.lastPurchaseSupplierFilters),
       suggestionProfile: profile,
-      considerMinimumStock: parsed.considerMinimumStock === true,
+      considerDestinationMinimumStock: (parsed.considerDestinationMinimumStock ?? parsed.considerMinimumStock) === true,
+      considerOriginMinimumStock: parsed.considerOriginMinimumStock === true,
       stockFloor: clampPreferenceNumber(parsed.stockFloor, defaults.stockFloor),
       showAdvancedRules: Boolean(parsed.showAdvancedRules),
       originMinimumDays: clampPreferenceNumber(parsed.originMinimumDays, defaults.originMinimumDays),
@@ -777,7 +780,8 @@ export function ReallocationManager({
   const [suggestionGenerationContext, setSuggestionGenerationContext] = useState<SuggestionGenerationContext | null>(null);
   const [suggestionDraftReady, setSuggestionDraftReady] = useState(false);
   const [suggestionProfile, setSuggestionProfile] = useState<SuggestionProfile>(initialPreferences.suggestionProfile);
-  const [considerMinimumStock, setConsiderMinimumStock] = useState(initialPreferences.considerMinimumStock);
+  const [considerDestinationMinimumStock, setConsiderDestinationMinimumStock] = useState(initialPreferences.considerDestinationMinimumStock);
+  const [considerOriginMinimumStock, setConsiderOriginMinimumStock] = useState(initialPreferences.considerOriginMinimumStock);
   const [stockFloor, setStockFloor] = useState(initialPreferences.stockFloor);
   const [showAdvancedRules, setShowAdvancedRules] = useState(initialPreferences.showAdvancedRules);
   const [originMinimumDays, setOriginMinimumDays] = useState(initialPreferences.originMinimumDays);
@@ -944,7 +948,8 @@ export function ReallocationManager({
       needTypeFilters,
       lastPurchaseSupplierFilters,
       suggestionProfile,
-      considerMinimumStock,
+      considerDestinationMinimumStock,
+      considerOriginMinimumStock,
       stockFloor,
       showAdvancedRules,
       originMinimumDays,
@@ -985,7 +990,8 @@ export function ReallocationManager({
     suggestionColumnOrder,
     suggestionColumnWidths,
     suggestionProfile,
-    considerMinimumStock,
+    considerDestinationMinimumStock,
+    considerOriginMinimumStock,
     stockFloor,
     suggestionSort,
     suggestionTableSearch,
@@ -1467,7 +1473,8 @@ export function ReallocationManager({
     + (lastSaleMaxDays > 0 ? 1 : 0)
     + (lastPurchaseMaxDays > 0 ? 1 : 0);
   const suggestionSettingsSignature = useMemo(() => JSON.stringify({
-    considerMinimumStock,
+    considerDestinationMinimumStock,
+    considerOriginMinimumStock,
     stockFloor,
     snapshotId: stockSnapshot?.id || '',
     products: productFilters.map((item) => item.id),
@@ -1488,7 +1495,8 @@ export function ReallocationManager({
     lastSaleMaxDays,
     lastPurchaseMaxDays,
   }), [
-    considerMinimumStock,
+    considerDestinationMinimumStock,
+    considerOriginMinimumStock,
     stockFloor,
     classificationCategoryFilters,
     classificationDepartmentFilters,
@@ -1768,7 +1776,8 @@ export function ReallocationManager({
             lastPurchaseSuppliers: selectedLastPurchaseSuppliers,
           },
           rules: {
-            considerMinimumStock,
+            considerDestinationMinimumStock,
+            considerOriginMinimumStock,
             stockFloor,
             originMinimumDays,
             destinationTargetDays,
@@ -3450,27 +3459,35 @@ export function ReallocationManager({
                 })}
               </div>
 
+              <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
+              {[
+                { label: 'Estoque minimo origem', active: considerOriginMinimumStock, toggle: () => setConsiderOriginMinimumStock((current) => !current), title: 'Preservar o minimo da origem em todas as transferencias, respeitando tambem o piso de estoque' },
+                { label: 'Estoque minimo destino', active: considerDestinationMinimumStock, toggle: () => setConsiderDestinationMinimumStock((current) => !current), title: 'Completar o minimo do destino usando o excesso restante, depois das sugestoes normais' },
+              ].map(({ label, active, toggle, title }) => (
               <button
+                key={label}
                 type="button"
                 role="switch"
-                aria-checked={considerMinimumStock}
-                aria-label="Considerar estoque minimo"
-                onClick={() => setConsiderMinimumStock((current) => !current)}
+                aria-checked={active}
+                aria-label={label}
+                onClick={toggle}
                 disabled={generatingSuggestions}
-                title="Completar o estoque minimo usando o excesso restante, depois das sugestoes normais"
-                className={`mt-3 flex min-h-14 w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left text-[11px] font-black uppercase outline-none transition-colors focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 motion-reduce:transition-none disabled:cursor-not-allowed disabled:opacity-50 ${considerMinimumStock ? 'border-violet-400 bg-violet-50 text-violet-700' : 'border-slate-200 bg-slate-50 text-slate-600'}`}
+                title={title}
+                className={`flex min-h-14 w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left text-[11px] font-black uppercase outline-none transition-colors focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 motion-reduce:transition-none disabled:cursor-not-allowed disabled:opacity-50 ${active ? 'border-violet-400 bg-violet-50 text-violet-700' : 'border-slate-200 bg-slate-50 text-slate-600'}`}
               >
-                <span>Considerar estoque minimo?</span>
+                <span>{label}</span>
                 <span aria-hidden="true" className="flex shrink-0 items-center gap-3">
-                  <span className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] ${considerMinimumStock ? 'bg-violet-600 text-white' : 'bg-slate-200 text-slate-600'}`}>
-                    {considerMinimumStock && <Check size={12} />}
-                    {considerMinimumStock ? 'Ativado' : 'Desativado'}
+                  <span className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] ${active ? 'bg-violet-600 text-white' : 'bg-slate-200 text-slate-600'}`}>
+                    {active && <Check size={12} />}
+                    {active ? 'Ativado' : 'Desativado'}
                   </span>
-                  <span className={`inline-flex h-7 w-12 shrink-0 items-center rounded-full p-1 transition-colors motion-reduce:transition-none ${considerMinimumStock ? 'bg-violet-600' : 'bg-slate-300'}`}>
-                    <span className={`h-5 w-5 rounded-full bg-white shadow-sm transition-transform motion-reduce:transition-none ${considerMinimumStock ? 'translate-x-5' : 'translate-x-0'}`} />
+                  <span className={`inline-flex h-7 w-12 shrink-0 items-center rounded-full p-1 transition-colors motion-reduce:transition-none ${active ? 'bg-violet-600' : 'bg-slate-300'}`}>
+                    <span className={`h-5 w-5 rounded-full bg-white shadow-sm transition-transform motion-reduce:transition-none ${active ? 'translate-x-5' : 'translate-x-0'}`} />
                   </span>
                 </span>
               </button>
+              ))}
+              </div>
 
               <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2 lg:grid-cols-4">
                 <TransferRuleInput
