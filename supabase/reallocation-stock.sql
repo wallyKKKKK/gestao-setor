@@ -9,6 +9,11 @@ create table if not exists public.reallocation_stock_snapshots (
   notes text
 );
 
+-- Apply migrations/20261015111951_reallocation_replace_sector_snapshot.sql as well
+-- to enable complete, atomic replacement of the active sector inventory.
+alter table public.reallocation_stock_snapshots
+add column if not exists is_ready boolean not null default true;
+
 create table if not exists public.reallocation_stock_items (
   id uuid primary key default gen_random_uuid(),
   snapshot_id uuid not null references public.reallocation_stock_snapshots(id) on delete cascade,

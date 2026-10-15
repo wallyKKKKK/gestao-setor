@@ -5,6 +5,7 @@ import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { requireAuthenticatedProfile } from "@/lib/server-auth";
 import { normalizeReallocationSector } from "@/lib/reallocation-sector";
 import { createErpInventorySnapshot, splitErpClassificationPath } from "@/lib/erp-inventory";
+import type { ReallocationImportIssue } from "@/lib/reallocation-import-report";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -73,7 +74,7 @@ function parseDelimitedRows(csvText: string) {
     if ((char === "\n" || char === "\r") && !inQuotes) {
       if (char === "\r" && next === "\n") index += 1;
       row.push(current.trim());
-      if (row.some((cell) => cell)) rows.push(row);
+      rows.push(row);
       row = [];
       current = "";
       continue;
@@ -154,8 +155,7 @@ function calculateStockDays(stock: number, confirmedStock: number, monthlyAvgSal
 }
 
 function normalizeMonthlyAvgSales(value: number) {
-  if (value <= 0) return 0;
-  return Number((Math.round(value * 3) / 3).toFixed(3));
+  return Number.isFinite(value) && value > 0 ? value : 0;
 }
 
 function roundNumber(value: number, digits = 3) {
@@ -221,7 +221,7 @@ function parseStockWorkbook(buffer: ArrayBuffer) {
   }
 
   const sheet = workbook.Sheets[firstSheetName];
-  const rows = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1, defval: "", raw: false });
+  const rows = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1, defval: "", raw: false, blankrows: true });
 
   return parseStockRows(rows.map((row) => row.map((cell) => String(cell || "").trim())));
 }
@@ -232,21 +232,20 @@ function looksLikeStockHeader(headers: string[]) {
   const eanIndex = findHeader(headers, ["COD DE BARRAS", "CODIGO DE BARRAS", "COD BARRAS", "EAN", "GTIN"]);
   const productIndex = findHeader(headers, ["PRODUTO", "DESCRICAO PRODUTO", "DESCRICAO"]);
   const stockIndex = findHeader(headers, ["ESTOQUE"], { reject: ["CONF", "DIAS", "MEDIA", "COMPRA", "TRANSF"] });
-  const monthlyAvgIndex = findHeader(headers, ["MEDIA VENDA MENSAL", "VENDA MENSAL", "MEDIA MENSAL"]);
-  const dailyAvgIndex = findHeader(headers, ["MEDIA VENDA DIARIA", "VENDA DIARIA", "MEDIA DIARIA"]);
+  const monthlyAvgIndex = findHeader(headers, ["MEDIA VENDA MENSAL", "VENDA MEDIA MENSAL", "VENDA MENSAL", "MEDIA MENSAL"]);
 
   return storeCodeIndex >= 0
     && storeNameIndex >= 0
     && eanIndex >= 0
     && productIndex >= 0
     && stockIndex >= 0
-    && (monthlyAvgIndex >= 0 || dailyAvgIndex >= 0);
+    && monthlyAvgIndex >= 0;
 }
 
 function findHeaderRowIndex(rows: string[][]) {
   const headerIndex = rows.findIndex((row) => looksLikeStockHeader(row.map((header) => normalizeHeader(header))));
   if (headerIndex < 0) {
-    throw new Error("Arquivo precisa ter Un. Neg., Apelido Un. Neg., Cod. de Barras e Produto.");
+    throw new Error("Arquivo precisa ter Un. Neg., Apelido Un. Neg., Cod. de Barras, Produto, Estoque e Media de venda mensal.");
   }
   return headerIndex;
 }
@@ -275,7 +274,6 @@ function parseStockRows(allRows: string[][]) {
   });
   const confirmedStockIndex = findHeader(headers, ["ESTOQUE CONFIRMADO", "ESTOQUE CONF", "EST CONF"]);
   const monthlyAvgIndex = findHeader(headers, ["MEDIA VENDA MENSAL", "VENDA MEDIA MENSAL", "VENDA MENSAL", "MEDIA MENSAL"]);
-  const dailyAvgIndex = findHeader(headers, ["MEDIA VENDA DIARIA", "VENDA MEDIA DIARIA", "VENDA DIARIA", "MEDIA DIARIA"]);
   const curveIndex = findHeader(headers, ["CURVA QTD", "CURVA ABC QTD", "CURVA ABC", "CURVA"], {
     reject: ["VALOR"],
   });
@@ -296,32 +294,36 @@ function parseStockRows(allRows: string[][]) {
   const maxStockIndex = findHeader(headers, ["EST MAX", "ESTOQUE MAXIMO"], { reject: ["ORIGEM", "DIAS", "VIG"] });
   const needCostIndex = findHeader(headers, ["CUSTO X NECESSIDADE"]);
 
-  if (storeCodeIndex < 0 || storeNameIndex < 0 || eanIndex < 0 || productIndex < 0 || stockIndex < 0 || (monthlyAvgIndex < 0 && dailyAvgIndex < 0)) {
-    throw new Error("Arquivo precisa ter loja, apelido da loja, EAN, produto, estoque e media de venda mensal ou diaria.");
+  if (storeCodeIndex < 0 || storeNameIndex < 0 || eanIndex < 0 || productIndex < 0 || stockIndex < 0 || monthlyAvgIndex < 0) {
+    throw new Error("Arquivo precisa ter loja, apelido da loja, EAN, produto, estoque e media de venda mensal.");
   }
 
   let skipped = 0;
+  const skippedRows: ReallocationImportIssue[] = [];
+  const validRowDetails: ReallocationImportIssue[] = [];
   const attributesByEan = new Map<string, StockProductAttribute>();
-  const rows = dataRows.flatMap((cells) => {
+  const rows = dataRows.flatMap((cells, index) => {
+    if (!cells.some((cell) => cell.trim())) return [];
     const storeCode = normalizeStoreCode(requiredCell(cells, storeCodeIndex));
     const storeName = requiredCell(cells, storeNameIndex).toUpperCase();
     const ean = normalizeCode(requiredCell(cells, eanIndex));
     const productDescription = requiredCell(cells, productIndex).toUpperCase();
+    const detail = { line: headerRowIndex + index + 2, storeCode, storeName, ean, product: productDescription, reason: '' };
 
     if (!storeCode || !storeName || !ean || !productDescription) {
       skipped += 1;
+      const missing = [!storeCode && 'codigo da loja', !storeName && 'nome da loja', !ean && 'EAN', !productDescription && 'descricao do produto'].filter(Boolean);
+      skippedRows.push({ ...detail, reason: `Campos obrigatorios ausentes: ${missing.join(', ')}` });
       return [];
     }
+    validRowDetails.push(detail);
 
     const stock = parseNumber(requiredCell(cells, stockIndex));
     const confirmedStock = confirmedStockIndex >= 0
       ? parseNumber(requiredCell(cells, confirmedStockIndex))
       : stock;
-    const dailyAvgSales = parseNumber(requiredCell(cells, dailyAvgIndex));
     const monthlyAvgSalesFromColumn = parseNumber(requiredCell(cells, monthlyAvgIndex));
-    const monthlyAvgSales = normalizeMonthlyAvgSales(
-      dailyAvgSales > 0 ? dailyAvgSales * 30 : monthlyAvgSalesFromColumn,
-    );
+    const monthlyAvgSales = normalizeMonthlyAvgSales(monthlyAvgSalesFromColumn);
     const manufacturer = normalizeAttribute(requiredCell(cells, manufacturerIndex));
     const classification = normalizeAttribute(requiredCell(cells, classificationIndex));
     const currentAttribute = attributesByEan.get(ean);
@@ -359,7 +361,7 @@ function parseStockRows(allRows: string[][]) {
     }];
   });
 
-  return { rows, skipped, attributes: Array.from(attributesByEan.values()) };
+  return { rows, skipped, skippedRows, validRowDetails, totalRows: rows.length + skipped, attributes: Array.from(attributesByEan.values()) };
 }
 
 function stripMovementColumns(rows: StockRow[]) {
@@ -377,42 +379,6 @@ function stripMovementColumns(rows: StockRow[]) {
 
     return fallbackRow;
   });
-}
-
-async function deleteExistingStockRows(
-  supabase: ReturnType<typeof getSupabaseAdmin>,
-  snapshotId: string,
-  rows: Array<Pick<StockRow, "store_code" | "ean">>,
-) {
-  const eansByStore = new Map<string, Set<string>>();
-  rows.forEach((row) => {
-    if (!row.store_code || !row.ean) return;
-    const eans = eansByStore.get(row.store_code) || new Set<string>();
-    eans.add(row.ean);
-    eansByStore.set(row.store_code, eans);
-  });
-
-  const deleteChunkSize = 500;
-  let deletedRows = 0;
-
-  for (const [storeCode, eans] of eansByStore.entries()) {
-    const uniqueEans = Array.from(eans);
-
-    for (let index = 0; index < uniqueEans.length; index += deleteChunkSize) {
-      const chunk = uniqueEans.slice(index, index + deleteChunkSize);
-      const { count, error } = await supabase
-        .from("reallocation_stock_items")
-        .delete({ count: "exact" })
-        .eq("snapshot_id", snapshotId)
-        .eq("store_code", storeCode)
-        .in("ean", chunk);
-
-      if (error) throw error;
-      deletedRows += count || 0;
-    }
-  }
-
-  return deletedRows;
 }
 
 export async function POST(request: Request) {
@@ -436,7 +402,7 @@ export async function POST(request: Request) {
     } catch (formError) {
       const detail = formError instanceof Error ? formError.message : "";
       const sizeHint = /size|body|payload|too large|large|limit|form/i.test(detail)
-        ? " O arquivo pode ter passado do limite de upload do servidor. Tente dividir por linha/departamento/categoria ou exportar um arquivo menor."
+        ? " O arquivo pode ter passado do limite de upload do servidor. Use um arquivo completo menor, pois cada importacao substitui toda a base do setor."
         : "";
       return NextResponse.json(
         { error: `Nao consegui receber o arquivo de estoque.${sizeHint}` },
@@ -458,40 +424,32 @@ export async function POST(request: Request) {
     }
 
     importStage = "ler arquivo de estoque";
-    const { rows, skipped, attributes } = isExcel
+    const { rows, skipped, skippedRows, validRowDetails, totalRows, attributes } = isExcel
       ? parseStockWorkbook(await file.arrayBuffer())
       : parseStockCsv(await file.text());
     if (!rows.length) {
-      return NextResponse.json({ error: "Nenhuma linha valida de estoque encontrada." }, { status: 400 });
+      return NextResponse.json({
+        error: "Nenhuma linha valida de estoque encontrada. A base anterior foi preservada.",
+        sourceFile: file.name, sector: normalizeReallocationSector(auth.profile.sector),
+        imported: 0, replacedRows: 0, matchedProducts: 0, unmatchedProducts: 0,
+        skipped, skippedRows, totalRows, uniqueProducts: 0, stores: [], unmatchedItems: [],
+        movementColumnsAvailable: true, erpInventoryWarning: null,
+      }, { status: 400 });
     }
 
-    importStage = "preparar base acumulada de estoque";
+    importStage = "preparar nova base de estoque";
     supabase = getSupabaseAdmin();
     const activeSector = normalizeReallocationSector(auth.profile.sector);
 
-    const { data: latestSnapshot, error: latestSnapshotError } = await supabase
-      .from("reallocation_stock_snapshots")
-      .select("id,source_file,notes")
-      .eq("sector", activeSector)
-      .order("imported_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (latestSnapshotError) throw latestSnapshotError;
-
-    let snapshot = latestSnapshot;
-
-    if (!snapshot) {
-      const { data: createdSnapshot, error: snapshotError } = await supabase
+    // Keep partial uploads invisible until all rows have been saved and validated.
+    const { data: snapshot, error: snapshotError } = await supabase
         .from("reallocation_stock_snapshots")
-        .insert([{ source_file: file.name.normalize("NFC"), sector: activeSector, imported_by: auth.userId, notes: "Base acumulada de estoque e venda media" }])
+        .insert([{ source_file: file.name.normalize("NFC"), sector: activeSector, imported_by: auth.userId, is_ready: false, notes: "Importacao em andamento" }])
         .select("id,source_file,notes")
         .single();
 
-      if (snapshotError) throw snapshotError;
-      snapshot = createdSnapshot;
-      createdSnapshotId = snapshot.id;
-    }
+    if (snapshotError) throw snapshotError;
+    createdSnapshotId = snapshot.id;
 
     if (!snapshot?.id) {
       throw new Error("Nao foi possivel preparar o snapshot de estoque.");
@@ -593,9 +551,6 @@ export async function POST(request: Request) {
       erp_code: erpByEan.get(row.ean) || null,
     }));
 
-    importStage = "mesclar com estoque ja importado";
-    const replacedRows = await deleteExistingStockRows(supabase, snapshot.id, payload);
-
     importStage = "salvar linhas de estoque";
     const insertChunkSize = 1000;
     let movementColumnsAvailable = true;
@@ -618,16 +573,14 @@ export async function POST(request: Request) {
 
     const matchedProducts = payload.filter((row) => row.erp_code).length;
     const sourceFile = file.name.normalize("NFC");
-    await supabase
-      .from("reallocation_stock_snapshots")
-      .update({
-        source_file: sourceFile,
-        sector: activeSector,
-        imported_by: auth.userId,
-        imported_at: new Date().toISOString(),
-        notes: `Base acumulada de estoque do setor ${activeSector}. Ultimo arquivo: ${sourceFile}`,
-      })
-      .eq("id", snapshot.id);
+    importStage = "substituir base ativa do setor";
+    const { data: replacedRows, error: publishError } = await supabase.rpc("publish_reallocation_stock_snapshot", {
+      p_snapshot_id: snapshot.id,
+      p_sector: activeSector,
+      p_expected_rows: payload.length,
+    });
+    if (publishError) throw publishError;
+    createdSnapshotId = null;
 
     importStage = "espelhar estoque no nucleo ERP";
     let erpInventorySnapshotId: string | null = null;
@@ -688,9 +641,15 @@ export async function POST(request: Request) {
     }
 
     return NextResponse.json({
+      sourceFile,
+      totalRows,
+      uniqueProducts: eans.length,
+      stores: Array.from(new Map(rows.map((row) => [row.store_code, { code: row.store_code, name: row.store_name }])).values()),
+      skippedRows,
+      unmatchedItems: validRowDetails.filter((row) => !erpByEan.has(row.ean)).map((row) => ({ ...row, reason: 'EAN sem codigo ERP vinculado na base de produtos' })),
       snapshotId: snapshot.id,
       sector: activeSector,
-      accumulated: true,
+      accumulated: false,
       imported: payload.length,
       replacedRows,
       matchedProducts,
@@ -707,7 +666,8 @@ export async function POST(request: Request) {
       await supabase
         .from("reallocation_stock_snapshots")
         .delete()
-        .eq("id", createdSnapshotId);
+        .eq("id", createdSnapshotId)
+        .eq("is_ready", false);
     }
 
     const baseMessage = error instanceof Error ? error.message : "Erro ao importar estoque.";
@@ -715,7 +675,7 @@ export async function POST(request: Request) {
     const friendlyMessage = /sector|schema cache/.test(lowerMessage)
       ? "A separacao de estoque por setor ainda nao foi aplicada no banco. Rode o SQL atualizado de reallocation-stock.sql no Supabase e tente importar novamente."
       : /statement timeout|timeout|timed out/.test(lowerMessage)
-        ? "A importacao demorou mais que o banco permitiu. Tente novamente; o processamento foi otimizado para arquivos grandes. Se persistir, divida o arquivo por classificacao ou loja."
+        ? "A importacao demorou mais que o banco permitiu. A base anterior foi preservada; tente novamente com o arquivo completo."
         : baseMessage;
     const message = /^(Arquivo|Nenhuma|Importe|Envie|A separacao|A importacao)/i.test(friendlyMessage)
       ? friendlyMessage

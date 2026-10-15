@@ -684,6 +684,7 @@ async function loadContext(message: string) {
   const { data: snapshot, error: snapshotError } = await supabase
     .from("reallocation_stock_snapshots")
     .select("id")
+    .eq("is_ready", true)
     .order("imported_at", { ascending: false })
     .limit(1)
     .maybeSingle();

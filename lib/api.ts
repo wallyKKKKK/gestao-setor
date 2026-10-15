@@ -821,6 +821,7 @@ export async function fetchLatestReallocationStockSnapshot(sector?: string) {
   const query = supabase
     .from("reallocation_stock_snapshots")
     .select("*")
+    .eq("is_ready", true)
     .eq("sector", normalizedSector)
     .order("imported_at", { ascending: false })
     .limit(1);

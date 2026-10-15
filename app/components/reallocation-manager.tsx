@@ -1,12 +1,18 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
-import { Check, ChevronDown, Clock, Database, Download, FileSpreadsheet, Filter, Loader2, Plus, RefreshCcw, RotateCcw, Search, Shuffle, SlidersHorizontal, Trash2, X } from 'lucide-react';
+import { Check, ChevronDown, Clock, Columns3, Database, Download, FileSpreadsheet, Filter, Loader2, Plus, RefreshCcw, RotateCcw, Search, Shuffle, SlidersHorizontal, Trash2, X } from 'lucide-react';
 import { countReallocationProducts, fetchLatestReallocationStockSnapshot, fetchPricingBranches, fetchReallocationAttributeOptions, fetchReallocationAttributeSummary, fetchReallocationProducts, fetchReallocationStockItems } from '@/lib/api';
 import { getAuthHeaders } from '@/lib/auth-headers';
 import { getPermissionDeniedMessage } from '@/lib/permissions';
 import { normalizeReallocationSector } from '@/lib/reallocation-sector';
 import type { PricingBranch, ReallocationProduct, ReallocationStockItem, ReallocationStockSnapshot } from '@/lib/types';
+import type { ReallocationImportReport } from '@/lib/reallocation-import-report';
+import { ReallocationImportReportDialog } from './reallocation-import-report';
+import { getReallocationRowMarkers, type ReallocationRowMarker } from '@/lib/reallocation-row-markers';
+import { readHiddenTableColumns } from '@/lib/table-column-visibility';
+import { TableColumnMenu } from './table-column-menu';
+import { ReallocationWorkspaceTabs, type ReallocationWorkspaceView } from './reallocation-workspace-tabs';
 
 function txtLine(origin: string, destination: string, erpCode: string, quantity: number) {
   return `${origin};${destination};${erpCode};${quantity}`;
@@ -284,9 +290,10 @@ const REALLOCATION_SUGGESTION_DRAFT_STORAGE_KEY = 'reallocation-suggestion-draft
 const reallocationSuggestionDraftMemory = new Map<string, ReallocationSuggestionDraft>();
 const REALLOCATION_API_VERSION = 'reallocation-api-2026-06-19-v4';
 const REALLOCATION_CLIENT_VERSION = 'reallocation-front-2026-06-19-v5';
+const MIN_SUGGESTION_COLUMN_WIDTH = 10;
 
 const SUGGESTION_COLUMNS = [
-  { key: 'selection', label: '', align: 'center', width: 52 },
+  { key: 'selection', label: '', align: 'center', width: 28 },
   { key: 'description', label: 'Produto', align: 'left', width: 280 },
   { key: 'ean', label: 'EAN', align: 'left', width: 145 },
   { key: 'originName', label: 'Apelido Un. Neg. Orig.', align: 'left', width: 190 },
@@ -313,7 +320,7 @@ const SUGGESTION_COLUMNS = [
 
 type SuggestionColumnKey = typeof SUGGESTION_COLUMNS[number]['key'];
 type SuggestionColumn = typeof SUGGESTION_COLUMNS[number];
-type SuggestionView = 'draft' | 'confirmed' | 'orders';
+type SuggestionView = ReallocationWorkspaceView;
 type SuggestionSort = {
   key: SuggestionColumnKey;
   direction: 'asc' | 'desc';
@@ -342,10 +349,10 @@ interface ReallocationPreferences {
   lastPurchaseMaxDays: number;
   originCurvePriority: string[];
   destinationCurvePriority: string[];
-  showOnlyProblemSuggestions: boolean;
   suggestionTableSearch: string;
   suggestionColumnOrder: SuggestionColumnKey[];
   suggestionColumnWidths: Record<SuggestionColumnKey, number>;
+  hiddenSuggestionColumns: SuggestionColumnKey[];
   suggestionSort: SuggestionSort;
 }
 
@@ -486,10 +493,10 @@ function defaultReallocationPreferences(): ReallocationPreferences {
     lastPurchaseMaxDays: 0,
     originCurvePriority: [],
     destinationCurvePriority: [],
-    showOnlyProblemSuggestions: false,
     suggestionTableSearch: '',
     suggestionColumnOrder: SUGGESTION_COLUMNS.map((column) => column.key),
     suggestionColumnWidths: defaultSuggestionColumnWidths(),
+    hiddenSuggestionColumns: [],
     suggestionSort: null,
   };
 }
@@ -511,7 +518,7 @@ function loadReallocationPreferences() {
     if (parsed.suggestionColumnWidths && typeof parsed.suggestionColumnWidths === 'object') {
       for (const column of SUGGESTION_COLUMNS) {
         const width = Number((parsed.suggestionColumnWidths as Partial<Record<SuggestionColumnKey, number>>)[column.key]);
-        if (Number.isFinite(width)) columnWidths[column.key] = Math.max(80, Math.min(520, width));
+        if (Number.isFinite(width)) columnWidths[column.key] = Math.max(MIN_SUGGESTION_COLUMN_WIDTH, Math.min(520, width));
       }
     }
 
@@ -551,10 +558,10 @@ function loadReallocationPreferences() {
       lastPurchaseMaxDays: clampPreferenceNumber(parsed.lastPurchaseMaxDays, defaults.lastPurchaseMaxDays),
       originCurvePriority: readCurveList(parsed.originCurvePriority),
       destinationCurvePriority: readCurveList(parsed.destinationCurvePriority),
-      showOnlyProblemSuggestions: Boolean(parsed.showOnlyProblemSuggestions),
       suggestionTableSearch: typeof parsed.suggestionTableSearch === 'string' ? parsed.suggestionTableSearch : '',
       suggestionColumnOrder: columnOrder.length > 0 ? columnOrder : defaults.suggestionColumnOrder,
       suggestionColumnWidths: columnWidths,
+      hiddenSuggestionColumns: readHiddenTableColumns(parsed.hiddenSuggestionColumns, SUGGESTION_COLUMNS.filter((column) => column.key !== 'actions')),
       suggestionSort,
     };
   } catch {
@@ -794,8 +801,9 @@ export function ReallocationManager({
   const [stockLoading, setStockLoading] = useState(true);
   const [generatingSuggestions, setGeneratingSuggestions] = useState(false);
   const [stockImporting, setStockImporting] = useState(false);
+  const [importReport, setImportReport] = useState<ReallocationImportReport | null>(null);
   const [errorMessage, setErrorMessage] = useState('');
-  const [showOnlyProblemSuggestions, setShowOnlyProblemSuggestions] = useState(initialPreferences.showOnlyProblemSuggestions);
+  const [suggestionMarker, setSuggestionMarker] = useState<ReallocationRowMarker | null>(null);
   const [showExportConfirm, setShowExportConfirm] = useState(false);
   const [showRecalculateConfirm, setShowRecalculateConfirm] = useState(false);
   const [showReallocationHistory, setShowReallocationHistory] = useState(false);
@@ -804,13 +812,20 @@ export function ReallocationManager({
   const [showMetricDetails, setShowMetricDetails] = useState(false);
   const summaryRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
-    if (!showMetricDetails) return;
+    if (!showMetricDetails && !showDataActions) return;
+    summaryRef.current?.querySelector<HTMLButtonElement>(showMetricDetails
+      ? '#reallocation-summary-panel button'
+      : '#reallocation-options-panel button:not(:disabled)')?.focus();
     const closeOutside = (event: PointerEvent) => {
-      if (event.target instanceof Node && !summaryRef.current?.contains(event.target)) setShowMetricDetails(false);
+      if (event.target instanceof Node && !summaryRef.current?.contains(event.target)) {
+        setShowMetricDetails(false);
+        setShowDataActions(false);
+      }
     };
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setShowMetricDetails(false);
+        setShowDataActions(false);
         summaryRef.current?.querySelector('button')?.focus();
       }
     };
@@ -820,11 +835,14 @@ export function ReallocationManager({
       document.removeEventListener('pointerdown', closeOutside);
       document.removeEventListener('keydown', closeOnEscape);
     };
-  }, [showMetricDetails]);
+  }, [showMetricDetails, showDataActions]);
   const [reallocationAuditLog, setReallocationAuditLog] = useState<ReallocationAuditLog[]>(loadReallocationAuditLog);
   const [suggestionTableSearch, setSuggestionTableSearch] = useState(initialPreferences.suggestionTableSearch);
+  const searchByViewRef = useRef<Record<SuggestionView, string>>({ draft: initialPreferences.suggestionTableSearch, confirmed: '', orders: '' });
   const [suggestionColumnOrder, setSuggestionColumnOrder] = useState<SuggestionColumnKey[]>(initialPreferences.suggestionColumnOrder);
   const [suggestionColumnWidths, setSuggestionColumnWidths] = useState<Record<SuggestionColumnKey, number>>(initialPreferences.suggestionColumnWidths);
+  const [hiddenSuggestionColumns, setHiddenSuggestionColumns] = useState<SuggestionColumnKey[]>(initialPreferences.hiddenSuggestionColumns);
+  const [columnContext, setColumnContext] = useState<{ key: SuggestionColumnKey | null; x: number; y: number; configure?: boolean } | null>(null);
   const [suggestionSort, setSuggestionSort] = useState<SuggestionSort>(initialPreferences.suggestionSort);
   const stockInputRef = useRef<HTMLInputElement>(null);
   const resizingSuggestionColumnRef = useRef<{ key: SuggestionColumnKey; startX: number; startWidth: number } | null>(null);
@@ -832,6 +850,8 @@ export function ReallocationManager({
   const suggestionDraftStorageKey = stockSnapshot?.id
     ? getSuggestionDraftStorageKey(activeStockSector, stockSnapshot.id)
     : '';
+  const suggestionDraftIdentity = JSON.stringify([activeStockSector, stockSnapshot?.id, stockSnapshot?.imported_at]);
+  const restoredDraftIdentityRef = useRef('');
 
   const loadProducts = useCallback(async (term = searchTerm) => {
     try {
@@ -959,10 +979,10 @@ export function ReallocationManager({
       lastPurchaseMaxDays,
       originCurvePriority,
       destinationCurvePriority,
-      showOnlyProblemSuggestions,
-      suggestionTableSearch,
+      suggestionTableSearch: suggestionView === 'draft' ? suggestionTableSearch : searchByViewRef.current.draft,
       suggestionColumnOrder,
       suggestionColumnWidths,
+      hiddenSuggestionColumns,
       suggestionSort,
     };
 
@@ -986,15 +1006,16 @@ export function ReallocationManager({
     originMinimumDays,
     productFilters,
     showAdvancedRules,
-    showOnlyProblemSuggestions,
     suggestionColumnOrder,
     suggestionColumnWidths,
+    hiddenSuggestionColumns,
     suggestionProfile,
     considerDestinationMinimumStock,
     considerOriginMinimumStock,
     stockFloor,
     suggestionSort,
     suggestionTableSearch,
+    suggestionView,
   ]);
 
   const addReallocationAuditLog = useCallback((event: Omit<ReallocationAuditLog, 'id' | 'at'>) => {
@@ -1120,7 +1141,11 @@ export function ReallocationManager({
   }, []);
 
   useEffect(() => {
+    // Do not save the previous render's empty/stale rows before restoration finishes.
+    restoredDraftIdentityRef.current = '';
+    let cancelled = false;
     queueMicrotask(() => {
+      if (cancelled) return;
       setSuggestionDraftReady(false);
       setSelectedSuggestionIds([]);
       setSuggestionDiagnostic(null);
@@ -1150,14 +1175,16 @@ export function ReallocationManager({
         setSuggestionMessage('');
         setAppliedSuggestionSignature('');
         setSuggestionGenerationContext(null);
+        restoredDraftIdentityRef.current = suggestionDraftIdentity;
         setSuggestionDraftReady(true);
         return;
       }
 
       setTransferSuggestions(draft.transferSuggestions);
       setConfirmedSuggestions(draft.confirmedSuggestions);
-      if (draft.transferSuggestions.length > 0) setShowOnlyProblemSuggestions(false);
+      setSuggestionMarker(null);
       setSuggestionView(draft.suggestionView === 'orders' ? 'draft' : draft.suggestionView);
+      if (draft.suggestionView === 'confirmed') setSuggestionTableSearch('');
       setAppliedSuggestionSignature(draft.appliedSuggestionSignature);
       setSuggestionGenerationContext(draft.suggestionGenerationContext);
       setSuggestionMessage(
@@ -1165,12 +1192,14 @@ export function ReallocationManager({
           ? 'Rascunho de sugestoes restaurado. Seus ajustes manuais foram mantidos.'
           : '',
       );
+      restoredDraftIdentityRef.current = suggestionDraftIdentity;
       setSuggestionDraftReady(true);
     });
-  }, [activeStockSector, stockSnapshot?.id, stockSnapshot?.imported_at, suggestionDraftStorageKey]);
+    return () => { cancelled = true; };
+  }, [activeStockSector, stockSnapshot?.id, stockSnapshot?.imported_at, suggestionDraftStorageKey, suggestionDraftIdentity]);
 
   useEffect(() => {
-    if (!suggestionDraftReady || !stockSnapshot?.id || !suggestionDraftStorageKey) return;
+    if (!suggestionDraftReady || !stockSnapshot?.id || !suggestionDraftStorageKey || restoredDraftIdentityRef.current !== suggestionDraftIdentity) return;
 
     const hasDraftData = transferSuggestions.length > 0
       || confirmedSuggestions.length > 0
@@ -1202,6 +1231,7 @@ export function ReallocationManager({
     stockSnapshot?.imported_at,
     suggestionDraftReady,
     suggestionDraftStorageKey,
+    suggestionDraftIdentity,
     suggestionGenerationContext,
     suggestionView,
     transferSuggestions,
@@ -1212,7 +1242,7 @@ export function ReallocationManager({
       const resizing = resizingSuggestionColumnRef.current;
       if (!resizing) return;
 
-      const nextWidth = Math.max(72, resizing.startWidth + event.clientX - resizing.startX);
+      const nextWidth = Math.max(MIN_SUGGESTION_COLUMN_WIDTH, resizing.startWidth + event.clientX - resizing.startX);
       setSuggestionColumnWidths((current) => ({ ...current, [resizing.key]: nextWidth }));
     };
 
@@ -1431,7 +1461,14 @@ export function ReallocationManager({
 
     return ids;
   }, [activeSuggestionRows, maxRoutePriority, overAllocatedOrigins]);
-  const shouldShowOnlyProblemSuggestions = showOnlyProblemSuggestions && problemSuggestionIds.size > 0;
+  const suggestionMarkersById = useMemo(() => new Map(activeSuggestionRows.map((row) => [row.id, getReallocationRowMarkers(
+    row,
+    originAllocationByProduct.get(`${row.ean}:${row.originCode}`)?.destinationCodes.size || 0,
+    destinationAllocationByProduct.get(`${row.ean}:${row.destinationCode}`)?.originCodes.size || 0,
+  )])), [activeSuggestionRows, originAllocationByProduct, destinationAllocationByProduct]);
+  const markerFilteredSuggestions = useMemo(() => suggestionMarker
+    ? activeSuggestionRows.filter((row) => suggestionMarkersById.get(row.id)?.includes(suggestionMarker))
+    : activeSuggestionRows, [activeSuggestionRows, suggestionMarker, suggestionMarkersById]);
   const originSummary = useMemo(() => {
     const map = new Map<string, { originName: string; rows: number; units: number; stock: number; exceeded: number }>();
 
@@ -1529,16 +1566,17 @@ export function ReallocationManager({
       receivesStock: branch.receives_stock !== false,
     },
   ])), [branches]);
-  const orderedSuggestionColumns = useMemo(() => {
+  const allSuggestionColumns = useMemo(() => {
     const byKey = new Map(SUGGESTION_COLUMNS.map((column) => [column.key, column]));
     const selectionColumn = byKey.get('selection');
     const currentColumns = suggestionColumnOrder
       .map((key) => byKey.get(key))
-      .filter((column): column is SuggestionColumn => column !== undefined && column.key !== 'selection');
+      .filter((column): column is SuggestionColumn => column !== undefined && column.key !== 'selection' && column.key !== 'actions');
     const currentKeys = new Set(currentColumns.map((column) => column.key));
-    const newColumns = SUGGESTION_COLUMNS.filter((column) => column.key !== 'selection' && !currentKeys.has(column.key));
+    const newColumns = SUGGESTION_COLUMNS.filter((column) => column.key !== 'selection' && column.key !== 'actions' && !currentKeys.has(column.key));
     return selectionColumn ? [selectionColumn, ...currentColumns, ...newColumns] : [...currentColumns, ...newColumns];
   }, [suggestionColumnOrder]);
+  const orderedSuggestionColumns = useMemo(() => allSuggestionColumns.filter((column) => !hiddenSuggestionColumns.includes(column.key)), [allSuggestionColumns, hiddenSuggestionColumns]);
   const suggestionTableWidth = useMemo(() => orderedSuggestionColumns.reduce((sum, column) => sum + (suggestionColumnWidths[column.key] || column.width), 0), [orderedSuggestionColumns, suggestionColumnWidths]);
 
   const applySuggestionProfile = (profile: SuggestionProfile) => {
@@ -1555,6 +1593,7 @@ export function ReallocationManager({
       return;
     }
     setStockImporting(true);
+    setImportReport(null);
     setErrorMessage('');
 
     try {
@@ -1567,16 +1606,7 @@ export function ReallocationManager({
         body: formData,
       });
       const responseText = await response.text();
-      let data: {
-        error?: string;
-        imported?: number;
-        sector?: string;
-        replacedRows?: number;
-        matchedProducts?: number;
-        unmatchedProducts?: number;
-        skipped?: number;
-        movementColumnsAvailable?: boolean;
-      } | null = null;
+      let data: (ReallocationImportReport & { error?: string }) | null = null;
 
       if (responseText) {
         try {
@@ -1587,10 +1617,11 @@ export function ReallocationManager({
       }
 
       if (!response.ok) {
+        if (data?.skippedRows?.length && data.imported === 0) setImportReport(data);
         const fallbackMessage = response.status === 413
-          ? 'O arquivo parece grande demais para o limite de upload do servidor. Tente dividir por linha, departamento, categoria ou loja.'
+          ? 'O arquivo parece grande demais. Use um arquivo completo menor: cada importacao substitui toda a base do setor.'
           : [408, 504, 522, 524].includes(response.status)
-            ? 'A importacao demorou mais que o servidor permitiu. Tente importar uma base menor ou dividida por classificacao/loja.'
+            ? 'A importacao demorou mais que o servidor permitiu. Confira a base ativa antes de tentar novamente com o arquivo completo.'
             : response.status >= 500
               ? `O servidor recusou a importacao (${response.status}). Tente novamente ou use uma base menor.`
               : 'Erro ao importar estoque.';
@@ -1601,7 +1632,7 @@ export function ReallocationManager({
         throw new Error('A importacao terminou sem uma resposta valida do servidor.');
       }
 
-      alert(`${data.imported || 0} linhas de estoque importadas e mescladas na base ativa do setor ${data.sector || activeStockSector}. ${data.replacedRows || 0} linhas anteriores substituídas. ${data.matchedProducts || 0} vinculadas ao código ERP. ${data.unmatchedProducts || 0} sem vínculo. ${data.skipped || 0} ignoradas.${data.movementColumnsAvailable === false ? ' Rode o SQL atualizado de estoque para habilitar filtros de ultima venda/compra.' : ''}`);
+      setImportReport(data);
       addReallocationAuditLog({
         action: 'Estoque importado',
         detail: file.name,
@@ -1611,6 +1642,7 @@ export function ReallocationManager({
         removeSuggestionDraft(suggestionDraftStorageKey);
       }
       setTransferSuggestions([]);
+      setSuggestionMarker(null);
       setConfirmedSuggestions([]);
       setSelectedSuggestionIds([]);
       setAppliedSuggestionSignature('');
@@ -1840,7 +1872,7 @@ export function ReallocationManager({
 
       setTransferSuggestions(nextSuggestions);
       setSuggestionView('draft');
-      setShowOnlyProblemSuggestions(false);
+      setSuggestionMarker(null);
       setSelectedSuggestionIds([]);
       setAppliedSuggestionSignature(suggestionSettingsSignature);
       setSuggestionGenerationContext({
@@ -1982,15 +2014,9 @@ export function ReallocationManager({
     return getAdjustedDestinationDays(suggestion, allocation?.allocated);
   }, [destinationAllocationByProduct]);
 
-  const tableSearchBaseCount = useMemo(() => (
-    shouldShowOnlyProblemSuggestions
-      ? activeSuggestionRows.filter((suggestion) => problemSuggestionIds.has(suggestion.id)).length
-      : activeSuggestionRows.length
-  ), [activeSuggestionRows, problemSuggestionIds, shouldShowOnlyProblemSuggestions]);
+  const tableSearchBaseCount = markerFilteredSuggestions.length;
   const displayedTransferSuggestions = useMemo(() => {
-    const baseSuggestions = shouldShowOnlyProblemSuggestions
-      ? activeSuggestionRows.filter((suggestion) => problemSuggestionIds.has(suggestion.id))
-      : activeSuggestionRows;
+    const baseSuggestions = markerFilteredSuggestions;
     const query = normalizeAutocompleteText(suggestionTableSearch);
     if (!query) return baseSuggestions;
 
@@ -2010,9 +2036,9 @@ export function ReallocationManager({
       ].join(' ');
       return normalizeAutocompleteText(searchable).includes(query);
     });
-  }, [activeSuggestionRows, problemSuggestionIds, shouldShowOnlyProblemSuggestions, suggestionTableSearch]);
+  }, [markerFilteredSuggestions, suggestionTableSearch]);
   const sortedTransferSuggestions = [...displayedTransferSuggestions];
-  if (suggestionSort && suggestionSort.key !== 'actions' && suggestionSort.key !== 'quantity') {
+  if (suggestionSort && suggestionSort.key !== 'actions') {
     const directionFactor = suggestionSort.direction === 'asc' ? 1 : -1;
     sortedTransferSuggestions.sort((left, right) => {
       const leftValue = getSuggestionSortValue(left, suggestionSort.key);
@@ -2054,8 +2080,14 @@ export function ReallocationManager({
   const equalizeTargetCount = equalizeTargetIds.length;
 
   const changeSuggestionView = (view: SuggestionView) => {
+    searchByViewRef.current[suggestionView] = suggestionTableSearch;
+    setSuggestionTableSearch(searchByViewRef.current[view]);
+    setSuggestionMarker(null);
     setSuggestionView(view);
     setSelectedSuggestionIds([]);
+    setShowDataActions(false);
+    setShowMetricDetails(false);
+    setColumnContext(null);
   };
 
   const toggleSuggestionSelection = (suggestionId: string) => {
@@ -2158,7 +2190,7 @@ export function ReallocationManager({
     const exportableIds = new Set(exportableRows.map((suggestion) => suggestion.id));
     setTransferSuggestions((current) => current.filter((suggestion) => !exportableIds.has(suggestion.id)));
     setSelectedSuggestionIds([]);
-    setSuggestionView('confirmed');
+    changeSuggestionView('confirmed');
     setSuggestionMessage(`${exportableRows.length} sugestão${exportableRows.length === 1 ? '' : 'es'} exportável${exportableRows.length === 1 ? '' : 'is'} confirmada${exportableRows.length === 1 ? '' : 's'}.${heldRows > 0 ? ` ${heldRows} linha${heldRows === 1 ? '' : 's'} zerada${heldRows === 1 ? '' : 's'} ou sem ERP continuou${heldRows === 1 ? '' : 'aram'} em sugestões.` : ''}`);
     addReallocationAuditLog({
       action: 'Sugestão confirmada',
@@ -2197,7 +2229,6 @@ export function ReallocationManager({
 
   const isSuggestionManuallyChanged = (suggestion: TransferSuggestion) => suggestion.quantity !== suggestion.maxQuantity;
   const manualSuggestionChangeCount = transferSuggestions.filter(isSuggestionManuallyChanged).length;
-  const activeManualSuggestionChangeCount = activeSuggestionRows.filter(isSuggestionManuallyChanged).length;
   const requestGenerateTransferSuggestions = () => {
     if (manualSuggestionChangeCount > 0) {
       setShowRecalculateConfirm(true);
@@ -2278,11 +2309,11 @@ export function ReallocationManager({
 
     return 'bg-white group-hover:bg-[#f8fafc]';
   };
-  const visibleMultiDestinationCount = sortedTransferSuggestions.filter((suggestion) => isSuggestionMultiDestination(suggestion)).length;
-  const visibleMultiOriginCount = sortedTransferSuggestions.filter((suggestion) => isSuggestionMultiOrigin(suggestion)).length;
-  const visibleSharedRouteCount = sortedTransferSuggestions.filter((suggestion) => isSuggestionMultiDestination(suggestion) && isSuggestionMultiOrigin(suggestion)).length;
-  const visiblePendingDecisionCount = sortedTransferSuggestions.filter((suggestion) => suggestion.decisionRequired && !suggestion.decisionResolved).length;
-  const visibleMinimumStockCount = sortedTransferSuggestions.filter((suggestion) => Number(suggestion.minimumStockQuantity || 0) > 0).length;
+  const markerCounts = useMemo(() => {
+    const counts: Record<ReallocationRowMarker, number> = { shared: 0, multiDestination: 0, multiOrigin: 0, manual: 0, minimum: 0, tie: 0 };
+    for (const markers of suggestionMarkersById.values()) for (const marker of markers) counts[marker]++;
+    return counts;
+  }, [suggestionMarkersById]);
 
   const downloadSuggestionsTxt = () => {
     if (!canExport) {
@@ -2330,7 +2361,7 @@ export function ReallocationManager({
     const exportedIds = new Set(exportableSuggestions.map((suggestion) => suggestion.id));
     setTransferOrders((current) => [order, ...current].slice(0, 40));
     setConfirmedSuggestions((current) => current.filter((suggestion) => !exportedIds.has(suggestion.id)));
-    setSuggestionView('orders');
+    changeSuggestionView('orders');
     setShowExportConfirm(false);
     setSuggestionMessage(`${order.lineCount} linha${order.lineCount === 1 ? '' : 's'} exportada${order.lineCount === 1 ? '' : 's'} e registrada${order.lineCount === 1 ? '' : 's'} em Pedidos.`);
     addReallocationAuditLog({
@@ -2369,7 +2400,7 @@ export function ReallocationManager({
       return;
     }
 
-    setSuggestionView('confirmed');
+    changeSuggestionView('confirmed');
     setSelectedSuggestionIds([]);
     setShowExportConfirm(true);
   };
@@ -2473,6 +2504,7 @@ export function ReallocationManager({
   };
 
   const resetSuggestionColumns = () => {
+    setHiddenSuggestionColumns([]);
     setSuggestionColumnOrder(SUGGESTION_COLUMNS.map((column) => column.key));
     setSuggestionColumnWidths(Object.fromEntries(SUGGESTION_COLUMNS.map((column) => [column.key, column.width])) as Record<SuggestionColumnKey, number>);
   };
@@ -2486,6 +2518,19 @@ export function ReallocationManager({
     return (
       <th
         key={column.key}
+        tabIndex={0}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          const rect = event.currentTarget.getBoundingClientRect();
+          setColumnContext({ key: column.key, x: event.clientX || rect.left, y: event.clientY || rect.bottom });
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+            event.preventDefault();
+            const rect = event.currentTarget.getBoundingClientRect();
+            setColumnContext({ key: column.key, x: rect.left, y: rect.bottom });
+          }
+        }}
         draggable={!isUtilityColumn}
         onDoubleClick={() => {
           if (isUtilityColumn || column.key === 'quantity') return;
@@ -2502,11 +2547,12 @@ export function ReallocationManager({
         onDrop={() => {
           if (!isUtilityColumn) moveSuggestionColumn(column.key);
         }}
-        className={`relative select-none border-b border-r border-slate-200 px-2.5 py-2.5 text-center text-[10px] font-black uppercase tracking-widest ${highlightClass}`}
+        className={`relative overflow-hidden select-none border-b border-r border-slate-200 ${column.key === 'selection' ? 'px-0' : 'px-1'} py-2.5 text-center text-[10px] font-black uppercase tracking-widest ${highlightClass}`}
         style={{ width: suggestionColumnWidths[column.key] || column.width }}
         title="Arraste para mover. Puxe a borda direita para ajustar a largura."
       >
         {column.key === 'selection' ? (
+          <>
           <input
             type="checkbox"
             checked={allVisibleSuggestionsSelected}
@@ -2515,6 +2561,12 @@ export function ReallocationManager({
             className="h-4 w-4 rounded border-slate-300 accent-violet-600 disabled:opacity-40"
             aria-label="Selecionar linhas visiveis"
           />
+          <span
+            className="absolute right-0 top-1/2 h-5 w-1 -translate-y-1/2 cursor-col-resize hover:bg-violet-200"
+            onMouseDown={(event) => startSuggestionColumnResize(event, column.key)}
+            onDoubleClick={() => setSuggestionColumnWidths((current) => ({ ...current, [column.key]: column.width }))}
+          />
+          </>
         ) : (
           <>
             <span className="block truncate pr-2">
@@ -2540,14 +2592,14 @@ export function ReallocationManager({
   };
 
   const renderSuggestionCell = (suggestion: TransferSuggestion, suggestionIndex: number, column: SuggestionColumn) => {
-    const baseClass = 'overflow-hidden truncate whitespace-nowrap border-b border-r border-slate-100 px-2.5 py-1 text-center text-xs leading-tight text-black';
+    const baseClass = 'overflow-hidden truncate whitespace-nowrap border-b border-r border-slate-100 px-1 py-1 text-center text-xs leading-tight text-black';
     const cellToneClass = getSuggestionCellToneClass(suggestion);
     const cellClass = `${baseClass} ${cellToneClass}`;
 
     switch (column.key) {
       case 'selection':
         return (
-          <td key={column.key} className={`border-b border-r border-slate-100 px-2 py-1 text-center ${cellToneClass}`}>
+          <td key={column.key} className={`overflow-hidden border-b border-r border-slate-100 px-0 py-1 text-center ${cellToneClass}`}>
             <input
               type="checkbox"
               checked={selectedSuggestionIdSet.has(suggestion.id)}
@@ -2761,6 +2813,7 @@ export function ReallocationManager({
 
   return (
     <main className="reallocation-workbench flex h-[calc(100dvh-4rem)] w-full max-w-none flex-col overflow-hidden px-2 py-2 sm:px-3 sm:py-2">
+      {importReport && !stockImporting && <ReallocationImportReportDialog report={importReport} onClose={() => setImportReport(null)} />}
       <input
         ref={stockInputRef}
         type="file"
@@ -2798,8 +2851,9 @@ export function ReallocationManager({
         </div>
       )}
 
-      <section className="flex min-h-0 flex-1 flex-col overflow-visible rounded-[12px] border border-slate-200 bg-white shadow-sm">
-        {showTopPanel ? (
+      <ReallocationWorkspaceTabs value={suggestionView} counts={{ draft: transferSuggestions.length, confirmed: confirmedSuggestions.length, orders: transferOrders.length }} onChange={changeSuggestionView} />
+      <section id={`reallocation-panel-${suggestionView}`} role="tabpanel" aria-labelledby={`reallocation-tab-${suggestionView}`} className="flex min-h-0 flex-1 flex-col overflow-visible border border-t-0 border-slate-200 bg-white">
+        {suggestionView === 'draft' && (showTopPanel ? (
         <div className="relative z-[90] grid gap-1.5 border-b border-slate-300 bg-slate-100/80 p-1.5 xl:grid-cols-[minmax(0,1fr)_150px]">
           <div className="min-w-0">
             <div className="grid grid-cols-1 items-start gap-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-11">
@@ -2962,19 +3016,34 @@ export function ReallocationManager({
           </div>
 
           <div className="relative grid grid-cols-2 gap-1">
-            <div ref={summaryRef} className={`relative col-span-2 ${showMetricDetails ? 'z-[240]' : ''}`}>
+            <div ref={summaryRef} className={`relative ${showMetricDetails || showDataActions ? 'z-[240]' : ''}`}>
             <button
               type="button"
-              aria-expanded={showMetricDetails}
-              aria-controls="reallocation-summary-panel"
-              onClick={() => setShowMetricDetails((current) => !current)}
+              aria-expanded={showMetricDetails || showDataActions}
+              aria-controls={showMetricDetails ? 'reallocation-summary-panel' : 'reallocation-options-panel'}
+              onClick={() => {
+                setShowDataActions(!showDataActions && !showMetricDetails);
+                setShowMetricDetails(false);
+              }}
               className="flex h-9 w-full items-center justify-center gap-1 rounded-md border border-slate-200 bg-white px-2 text-[10px] font-black uppercase text-violet-700 shadow-sm hover:border-violet-300 hover:bg-violet-50"
             >
-              Resumo <ChevronDown size={13} className={showMetricDetails ? 'rotate-180' : ''} />
+              Opções <ChevronDown size={13} className={showMetricDetails || showDataActions ? 'rotate-180' : ''} />
               {suggestionExportStats.missingErpCodeLines + overAllocatedOrigins.length > 0 && (
                 <span className="rounded bg-amber-100 px-1 text-amber-800">{suggestionExportStats.missingErpCodeLines + overAllocatedOrigins.length}</span>
               )}
             </button>
+            {showDataActions && (
+              <div id="reallocation-options-panel" role="region" aria-label="Opcoes do remanejamento" className="absolute right-0 top-[calc(100%+4px)] z-[240] w-60 max-w-[calc(100vw_-_24px)] max-h-[65dvh] overflow-auto rounded-md border border-slate-200 bg-white p-1.5 shadow-xl">
+                <button type="button" onClick={() => { setShowDataActions(false); setShowMetricDetails(true); }} className="flex h-9 w-full items-center gap-2 rounded px-3 text-left text-xs font-bold text-slate-700 hover:bg-violet-50"><Columns3 size={14} /> Resumo</button>
+                <div className="mt-1 border-t border-slate-100 pt-1">
+                  <p className="px-3 py-1 text-[10px] font-bold uppercase text-slate-400">Dados</p>
+                  <button type="button" onClick={() => { setShowDataActions(false); stockInputRef.current?.click(); }} disabled={stockImporting || !canImportData} title={dataImportPermissionTitle} className="flex h-9 w-full items-center gap-2 rounded px-3 text-left text-xs font-bold text-slate-700 hover:bg-violet-50 disabled:opacity-40"><Database size={14} /> Importar estoque</button>
+                  <button type="button" onClick={() => { setShowDataActions(false); loadProducts(searchTerm); }} className="flex h-9 w-full items-center gap-2 rounded px-3 text-left text-xs font-bold text-slate-700 hover:bg-violet-50"><RefreshCcw size={14} /> Atualizar base</button>
+                  <button type="button" onClick={() => { setShowDataActions(false); exportExampleTxt(); }} className="flex h-9 w-full items-center gap-2 rounded px-3 text-left text-xs font-bold text-slate-700 hover:bg-violet-50"><Download size={14} /> Modelo TXT</button>
+                </div>
+                <button type="button" onClick={() => { setShowDataActions(false); setShowTopPanel(false); }} className="mt-1 flex h-9 w-full items-center gap-2 rounded border-t border-slate-100 px-3 text-left text-xs font-bold text-slate-500 hover:bg-violet-50"><X size={14} /> Ocultar filtros</button>
+              </div>
+            )}
             {showMetricDetails && (
               <div id="reallocation-summary-panel" role="region" aria-labelledby="reallocation-summary-title" className="absolute right-0 top-[calc(100%+4px)] z-[240] w-[min(420px,calc(100vw-2rem))] overflow-hidden rounded-[6px] border border-slate-400 bg-white shadow-[0_18px_38px_rgba(15,23,42,0.22)]">
                 <div className="flex h-7 items-center justify-between border-b border-slate-300 bg-slate-100 px-2">
@@ -2997,91 +3066,10 @@ export function ReallocationManager({
             </div>
             <button
               type="button"
-              onClick={() => setShowTopPanel(false)}
-              className="h-9 rounded-md border border-slate-200 bg-white px-2 text-[10px] font-black uppercase text-slate-600 shadow-sm hover:border-violet-300 hover:text-violet-700"
-              title="Ocultar filtros"
-            >
-              <X size={13} className="mr-1 inline-block" /> Ocultar
-            </button>
-            <button
-              type="button"
               onClick={() => setShowAdvancedRules(true)}
               className="h-9 rounded-md border border-slate-200 bg-white px-2 text-[10px] font-black uppercase text-slate-700 shadow-sm hover:border-violet-300 hover:text-violet-700"
             >
               <SlidersHorizontal size={13} className="mr-1 inline-block" /> Perfil
-            </button>
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setShowDataActions((current) => !current)}
-                className="h-9 w-full rounded-md border border-slate-200 bg-white px-2 text-[10px] font-black uppercase text-slate-700 shadow-sm hover:border-violet-300 hover:text-violet-700"
-              >
-                <Database size={13} className="mr-1 inline-block" /> Dados
-              </button>
-              {showDataActions && (
-                <>
-                  <div className="fixed inset-0 z-[95]" onClick={() => setShowDataActions(false)} />
-                  <div className="absolute right-0 top-[calc(100%+6px)] z-[100] w-56 rounded-xl border border-slate-200 bg-white p-1.5 shadow-2xl">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowDataActions(false);
-                        stockInputRef.current?.click();
-                      }}
-                      disabled={stockImporting || !canImportData}
-                      title={dataImportPermissionTitle}
-                      className="flex h-9 w-full items-center gap-2 rounded-lg px-3 text-left text-[10px] font-black uppercase text-slate-700 hover:bg-violet-50 disabled:opacity-50"
-                    >
-                      <Database size={13} /> {stockImporting ? 'Importando...' : 'Importar estoque'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowDataActions(false);
-                        loadProducts(searchTerm);
-                      }}
-                      className="flex h-9 w-full items-center gap-2 rounded-lg px-3 text-left text-[10px] font-black uppercase text-slate-700 hover:bg-violet-50"
-                    >
-                      <RefreshCcw size={13} /> Atualizar base
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowDataActions(false);
-                        exportExampleTxt();
-                      }}
-                      className="flex h-9 w-full items-center gap-2 rounded-lg px-3 text-left text-[10px] font-black uppercase text-violet-700 hover:bg-violet-50"
-                    >
-                      <Download size={13} /> Modelo TXT
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-            <button
-              type="button"
-              onClick={exportSuggestionsTxt}
-              disabled={!canExport || !canExportGeneratedSuggestion || confirmedSuggestions.length === 0 || confirmedBlockingExportIssues.length > 0}
-              title={exportButtonTitle || (confirmedBlockingExportIssues.length > 0 ? `${confirmedBlockingExportIssues[0].title}: ${confirmedBlockingExportIssues[0].detail}` : 'Exportar TXT das sugestões confirmadas')}
-              className="h-9 rounded-md bg-slate-900 px-2 text-[10px] font-black uppercase text-white shadow-sm disabled:opacity-40"
-            >
-              <Download size={13} className="mr-1 inline-block" /> TXT
-            </button>
-            <button
-              type="button"
-              onClick={exportConferenceCsv}
-              disabled={!canExport || !canUseStockSnapshot || activeSuggestionRows.length === 0}
-              title={exportButtonTitle}
-              className="h-9 rounded-md border border-slate-200 bg-white px-2 text-[10px] font-black uppercase text-slate-500 shadow-sm hover:border-violet-300 hover:text-violet-700 disabled:opacity-40"
-            >
-              <FileSpreadsheet size={13} className="mr-1 inline-block" /> CSV
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowReallocationHistory(true)}
-              className="h-9 rounded-md border border-slate-200 bg-white px-2 text-[10px] font-black uppercase text-slate-700 shadow-sm hover:border-violet-300 hover:text-violet-700"
-            >
-              <Clock size={13} className="mr-1 inline-block" /> Histórico
             </button>
             <button
               type="button"
@@ -3129,9 +3117,30 @@ export function ReallocationManager({
               Mostrar filtros
             </button>
           </div>
+        ))}
+
+        {suggestionView === 'confirmed' && (
+          <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-emerald-50/40 px-4 py-3">
+            <div className="min-w-0">
+              <h2 className="text-sm font-bold text-slate-900">Revisão das transferências</h2>
+              <p className="mt-1 text-xs text-slate-500">{confirmedSuggestions.length.toLocaleString('pt-BR')} linhas · {wholeNumber(confirmedExportStats.exportableUnits)} unidades · {confirmedExportStats.exportableLines.toLocaleString('pt-BR')} exportáveis</p>
+              {confirmedSuggestions.length > 0 && exportButtonTitle && <p className="mt-1 max-w-2xl break-words text-xs text-amber-700">{exportButtonTitle}</p>}
+              {confirmedBlockingExportIssues.length > 0 && <p className="mt-1 text-xs text-red-600">{confirmedBlockingExportIssues[0].title}: {confirmedBlockingExportIssues[0].detail}</p>}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button type="button" onClick={exportConferenceCsv} disabled={!canExport || !canUseStockSnapshot || confirmedSuggestions.length === 0} title={exportButtonTitle} className="flex h-9 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-xs font-bold text-slate-600 disabled:opacity-40"><FileSpreadsheet size={14} /> CSV</button>
+              <button type="button" onClick={exportSuggestionsTxt} disabled={!canExport || !canExportGeneratedSuggestion || confirmedSuggestions.length === 0 || confirmedBlockingExportIssues.length > 0} title={exportButtonTitle} className="flex h-9 items-center gap-2 rounded-md bg-emerald-600 px-3 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-40"><Download size={14} /> Gerar pedido TXT</button>
+            </div>
+          </header>
+        )}
+        {suggestionView === 'orders' && (
+          <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3">
+            <div><h2 className="text-sm font-bold text-slate-900">Pedidos de transferência</h2><p className="mt-1 text-xs text-slate-500">{transferOrders.length.toLocaleString('pt-BR')} pedidos · {wholeNumber(transferOrders.reduce((sum, order) => sum + order.units, 0))} unidades</p></div>
+            <button type="button" onClick={() => setShowReallocationHistory(true)} className="flex h-9 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-xs font-bold text-slate-600"><Clock size={14} /> Histórico</button>
+          </header>
         )}
 
-        {(hasPendingSuggestionSettings || stockSnapshotStaleMessage || suggestionExportWarningMessage || suggestionMessage || suggestionDiagnostic || originSummary.length > 0) && (
+        {suggestionView === 'draft' && (hasPendingSuggestionSettings || stockSnapshotStaleMessage || suggestionExportWarningMessage || suggestionMessage || suggestionDiagnostic || originSummary.length > 0) && (
           <div className="flex flex-wrap items-center gap-1.5 border-b border-slate-200 bg-white px-3 py-1.5 text-[10px] font-black uppercase">
             {hasPendingSuggestionSettings && (
               <span className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-amber-700">
@@ -3199,30 +3208,7 @@ export function ReallocationManager({
         )}
 
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="flex h-8 overflow-hidden rounded-md border border-slate-200 bg-white p-0.5 shadow-sm">
-              <button
-                type="button"
-                onClick={() => changeSuggestionView('draft')}
-                className={`rounded px-3 text-[10px] font-black uppercase transition ${suggestionView === 'draft' ? 'bg-violet-600 text-white' : 'text-slate-500 hover:bg-slate-100'}`}
-              >
-                Sugestões {transferSuggestions.length > 0 ? `(${transferSuggestions.length})` : ''}
-              </button>
-              <button
-                type="button"
-                onClick={() => changeSuggestionView('confirmed')}
-                className={`rounded px-3 text-[10px] font-black uppercase transition ${suggestionView === 'confirmed' ? 'bg-emerald-600 text-white' : 'text-slate-500 hover:bg-slate-100'}`}
-              >
-                Sugestão confirmada {confirmedSuggestions.length > 0 ? `(${confirmedSuggestions.length})` : ''}
-              </button>
-              <button
-                type="button"
-                onClick={() => changeSuggestionView('orders')}
-                className={`rounded px-3 text-[10px] font-black uppercase transition ${suggestionView === 'orders' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-100'}`}
-              >
-                Pedidos {transferOrders.length > 0 ? `(${transferOrders.length})` : ''}
-              </button>
-            </div>
+          <div className="flex w-full min-w-0 flex-wrap items-center gap-2">
             {suggestionView === 'draft' ? (
               <button
                 type="button"
@@ -3241,63 +3227,49 @@ export function ReallocationManager({
               >
                 <Trash2 size={13} className="mr-1 inline-block" /> Remover selecionadas
               </button>
-            ) : (
-              <span className="inline-flex h-8 items-center rounded-md bg-slate-100 px-3 text-[10px] font-black uppercase text-slate-500">
-                Histórico de pedidos
-              </span>
+            ) : null}
+            {hiddenSuggestionColumns.length > 0 && suggestionView !== 'orders' && (
+              <button
+                type="button"
+                title="Configurar colunas ocultas"
+                onClick={(event) => {
+                  const rect = event.currentTarget.getBoundingClientRect();
+                  setColumnContext({ key: null, x: rect.left, y: rect.bottom, configure: true });
+                }}
+                className="inline-flex items-center gap-1 rounded border border-violet-200 bg-violet-50 px-2 py-1 text-[10px] font-bold text-violet-700"
+              >
+                <Columns3 size={13} /> {hiddenSuggestionColumns.length} {hiddenSuggestionColumns.length === 1 ? 'coluna oculta' : 'colunas ocultas'}
+              </button>
             )}
-            <button
-              type="button"
-              onClick={() => setShowOnlyProblemSuggestions((current) => !current)}
-              disabled={problemSuggestionIds.size === 0}
-              className={`h-8 rounded-md px-3 text-[10px] font-black uppercase disabled:opacity-40 ${shouldShowOnlyProblemSuggestions ? 'bg-slate-900 text-white' : 'bg-amber-50 text-amber-700'}`}
-            >
-              {shouldShowOnlyProblemSuggestions ? 'Mostrar todos' : 'So problemas'}
-            </button>
-            <button
-              type="button"
-              onClick={equalizeStockDays}
-              disabled={equalizeTargetCount === 0}
-              title={selectedSuggestionIds.length > 0 ? 'Equalizar dias das sugestoes selecionadas' : 'Equalizar dias das sugestoes visiveis'}
-              className="h-8 rounded-md bg-teal-600 px-3 text-[10px] font-black uppercase text-white shadow-sm disabled:opacity-40"
-            >
-              <SlidersHorizontal size={13} className="mr-1 inline-block" /> Equalizar dias {selectedSuggestionIds.length > 0 ? `(${selectedSuggestionIds.length})` : ''}
-            </button>
-            <button
-              type="button"
-              onClick={resetSuggestionColumns}
-              className="h-8 rounded-md bg-slate-100 px-3 text-[10px] font-black uppercase text-slate-600"
-            >
-              Restaurar colunas
-            </button>
-            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 shadow-sm">
-              <span className="inline-flex items-center gap-1.5 rounded-md border border-teal-200 bg-teal-50 px-2 py-1 text-[10px] font-black uppercase text-teal-950">
-                <span className="h-3 w-3 rounded-[3px] border border-teal-600 bg-teal-300" />
-                Rota compartilhada nos dois lados {visibleSharedRouteCount > 0 ? `(${visibleSharedRouteCount})` : ''}
-              </span>
-              <span className="inline-flex items-center gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] font-black uppercase text-amber-950">
-                <span className="h-3 w-3 rounded-[3px] border border-amber-500 bg-amber-300" />
-                Origem p/ varios destinos {visibleMultiDestinationCount > 0 ? `(${visibleMultiDestinationCount})` : ''}
-              </span>
-              <span className="inline-flex items-center gap-1.5 rounded-md border border-sky-200 bg-sky-50 px-2 py-1 text-[10px] font-black uppercase text-sky-950">
-                <span className="h-3 w-3 rounded-[3px] border border-sky-500 bg-sky-300" />
-                Destino recebe varias origens {visibleMultiOriginCount > 0 ? `(${visibleMultiOriginCount})` : ''}
-              </span>
-              <span className="inline-flex items-center gap-1.5 rounded-md border border-violet-200 bg-violet-50 px-2 py-1 text-[10px] font-black uppercase text-violet-950">
-                <span className="h-3 w-3 rounded-[3px] border border-violet-500 bg-violet-300" />
-                Manual {activeManualSuggestionChangeCount > 0 ? `(${activeManualSuggestionChangeCount})` : ''}
-              </span>
-              <span className="inline-flex items-center gap-1.5 rounded-md border border-lime-300 bg-lime-50 px-2 py-1 text-[10px] font-black uppercase text-lime-950">
-                <span className="h-3 w-3 rounded-[3px] border border-lime-600 bg-lime-200" />
-                Estoque mínimo {visibleMinimumStockCount > 0 ? `(${visibleMinimumStockCount})` : ''}
-              </span>
-              <span className="inline-flex items-center gap-1.5 rounded-md border border-orange-200 bg-orange-50 px-2 py-1 text-[10px] font-black uppercase text-orange-950">
-                <span className="h-3 w-3 rounded-[3px] border border-orange-500 bg-orange-300" />
-                Empate {visiblePendingDecisionCount > 0 ? `(${visiblePendingDecisionCount})` : ''}
-              </span>
+            {suggestionView !== 'orders' && (
+            <div role="group" aria-label="Filtrar por tipo de linha" className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 shadow-sm">
+              {([
+                { key: 'shared', label: 'Rota compartilhada nos dois lados', tone: 'border-teal-200 bg-teal-50 text-teal-950', swatch: 'border-teal-600 bg-teal-300' },
+                { key: 'multiDestination', label: 'Origem p/ varios destinos', tone: 'border-amber-200 bg-amber-50 text-amber-950', swatch: 'border-amber-500 bg-amber-300' },
+                { key: 'multiOrigin', label: 'Destino recebe varias origens', tone: 'border-sky-200 bg-sky-50 text-sky-950', swatch: 'border-sky-500 bg-sky-300' },
+                { key: 'manual', label: 'Manual', tone: 'border-violet-200 bg-violet-50 text-violet-950', swatch: 'border-violet-500 bg-violet-300' },
+                { key: 'minimum', label: 'Estoque mínimo', tone: 'border-lime-300 bg-lime-50 text-lime-950', swatch: 'border-lime-600 bg-lime-200' },
+                { key: 'tie', label: 'Empate', tone: 'border-orange-200 bg-orange-50 text-orange-950', swatch: 'border-orange-500 bg-orange-300' },
+              ] as const).map((marker) => (
+                <button
+                  key={marker.key}
+                  type="button"
+                  aria-pressed={suggestionMarker === marker.key}
+                  title={suggestionMarker === marker.key ? 'Remover filtro de tipo de linha' : `Filtrar: ${marker.label}`}
+                  onClick={() => {
+                    setSuggestionMarker((current) => current === marker.key ? null : marker.key);
+                    setSelectedSuggestionIds([]);
+                  }}
+                  className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[10px] font-black uppercase transition disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-violet-600 ${marker.tone} ${suggestionMarker === marker.key ? 'ring-2 ring-slate-600 ring-offset-1' : 'hover:ring-1 hover:ring-slate-300'}`}
+                >
+                  <span aria-hidden="true" className={`h-3 w-3 shrink-0 rounded-[3px] border ${marker.swatch}`} />
+                  {marker.label} ({markerCounts[marker.key]})
+                  {suggestionMarker === marker.key && <X size={12} aria-hidden="true" />}
+                </button>
+              ))}
             </div>
-          </div>
-          <div className="ml-auto flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto">
+            )}
+          <div className="ml-auto flex w-full min-w-0 max-w-[320px] items-center gap-2">
             {suggestionTableSearch && (
               <span className="rounded-md bg-white px-2 py-1 text-[10px] font-black uppercase text-slate-500 shadow-sm">
                 {suggestionView === 'orders'
@@ -3305,7 +3277,7 @@ export function ReallocationManager({
                   : `${sortedTransferSuggestions.length.toLocaleString('pt-BR')} de ${tableSearchBaseCount.toLocaleString('pt-BR')}`}
               </span>
             )}
-            <div className="relative w-full sm:w-[360px] xl:w-[440px]">
+            <div className="relative min-w-0 flex-1">
               <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
               <input
                 type="search"
@@ -3326,16 +3298,17 @@ export function ReallocationManager({
               )}
             </div>
           </div>
+          </div>
         </div>
 
         {suggestionView === 'orders' ? (
           <div className="min-h-0 flex-1 overflow-auto rounded-2xl border border-slate-200 bg-white p-3">
-            <div className="grid gap-2">
+            <div className="grid grid-cols-[minmax(0,1fr)] gap-2">
               {displayedTransferOrders.map((order) => (
-                <div key={order.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <div key={order.id} className="min-w-0 rounded-lg border border-slate-200 bg-slate-50 p-3">
                   <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-black uppercase text-slate-900">{order.fileName}</p>
+                    <div className="min-w-0 flex-1">
+                      <p className="break-all text-sm font-black uppercase text-slate-900">{order.fileName}</p>
                       <p className="mt-1 text-[10px] font-bold uppercase tracking-widest text-slate-400">
                         {new Date(order.createdAt).toLocaleString('pt-BR')} {order.sourceSnapshot ? `- ${order.sourceSnapshot}` : ''}
                       </p>
@@ -3359,7 +3332,7 @@ export function ReallocationManager({
                   </div>
                   <div className="mt-3 max-h-28 overflow-auto rounded-lg border border-slate-200 bg-white">
                     {order.rows.slice(0, 12).map((row) => (
-                      <div key={`${order.id}-${row.id}`} className="grid grid-cols-[1fr_90px_80px] gap-2 border-b border-slate-100 px-3 py-2 text-[10px] font-bold uppercase last:border-b-0">
+                      <div key={`${order.id}-${row.id}`} className="grid grid-cols-[minmax(0,1fr)_60px_60px] gap-2 border-b border-slate-100 px-3 py-2 text-[10px] font-bold uppercase last:border-b-0 sm:grid-cols-[minmax(0,1fr)_90px_80px]">
                         <span className="truncate text-slate-700">{row.description}</span>
                         <span className="text-slate-400">{row.originCode} - {row.destinationCode}</span>
                         <span className="text-right font-black text-emerald-700">{wholeNumber(row.quantity)} un.</span>
@@ -3397,7 +3370,7 @@ export function ReallocationManager({
               {sortedTransferSuggestions.length === 0 && (
                 <tr>
                   <td colSpan={orderedSuggestionColumns.length} className="h-72 border-b border-slate-100 px-3 text-center align-middle text-[10px] font-black uppercase tracking-widest text-black">
-                    {suggestionTableSearch ? 'Nenhuma linha encontrada na pesquisa' : shouldShowOnlyProblemSuggestions ? 'Nenhuma linha com problema encontrada' : suggestionView === 'confirmed' ? 'Nenhuma sugestão confirmada ainda' : 'Gere as sugestões após importar o estoque'}
+                    {suggestionTableSearch ? 'Nenhuma linha encontrada na pesquisa' : suggestionMarker ? 'Nenhuma linha desse tipo encontrada' : suggestionView === 'confirmed' ? 'Nenhuma sugestão confirmada ainda' : 'Gere as sugestões após importar o estoque'}
                   </td>
                 </tr>
               )}
@@ -3407,6 +3380,30 @@ export function ReallocationManager({
         )}
       </section>
 
+      {columnContext && (
+        <TableColumnMenu
+          x={columnContext.x}
+          y={columnContext.y}
+          configure={columnContext.configure}
+          column={allSuggestionColumns.find((column) => column.key === columnContext.key) || null}
+          columns={allSuggestionColumns}
+          hidden={hiddenSuggestionColumns}
+          canSort={columnContext.key !== null && columnContext.key !== 'selection'}
+          onSort={(direction) => {
+            if (columnContext.key && columnContext.key !== 'selection') setSuggestionSort({ key: columnContext.key, direction });
+          }}
+          onRestoreWidth={() => {
+            const column = allSuggestionColumns.find((item) => item.key === columnContext.key);
+            if (column) setSuggestionColumnWidths((current) => ({ ...current, [column.key]: column.width }));
+          }}
+          onRestoreAll={resetSuggestionColumns}
+          onToggle={(key) => setHiddenSuggestionColumns((current) => current.includes(key)
+            ? current.filter((item) => item !== key)
+            : allSuggestionColumns.length - current.length > 1 ? [...current, key] : current)}
+          onShowAll={() => setHiddenSuggestionColumns([])}
+          onClose={() => setColumnContext(null)}
+        />
+      )}
       {showAdvancedRules && (
         <div
           className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-900/16 p-3 backdrop-blur-sm"
@@ -3540,7 +3537,19 @@ export function ReallocationManager({
               </p>
             </div>
 
-            <div className="flex justify-end gap-2 border-t border-slate-200 bg-slate-50 px-4 py-3">
+            <div className="flex flex-wrap justify-end gap-2 border-t border-slate-200 bg-slate-50 px-4 py-3">
+              <button
+                type="button"
+                onClick={() => {
+                  equalizeStockDays();
+                  setShowAdvancedRules(false);
+                }}
+                disabled={equalizeTargetCount === 0 || generatingSuggestions}
+                title={selectedSuggestionIds.length > 0 ? 'Equalizar dias das sugestoes selecionadas' : 'Equalizar dias das sugestoes visiveis'}
+                className="mr-auto h-9 rounded-md bg-teal-600 px-3 text-[10px] font-black uppercase text-white shadow-sm disabled:opacity-40"
+              >
+                <SlidersHorizontal size={13} className="mr-1 inline-block" /> Equalizar dias {selectedSuggestionIds.length > 0 ? `(${selectedSuggestionIds.length})` : ''}
+              </button>
               <button
                 type="button"
                 onClick={() => setShowAdvancedRules(false)}

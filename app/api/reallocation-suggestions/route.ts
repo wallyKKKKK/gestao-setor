@@ -98,6 +98,7 @@ async function getSnapshotFreshnessError(snapshotId: string, sector: string) {
   const { data, error } = await supabase
     .from("reallocation_stock_snapshots")
     .select("imported_at,sector")
+    .eq("is_ready", true)
     .eq("id", snapshotId)
     .maybeSingle();
 
@@ -177,8 +178,7 @@ function originAvailableStock(item: StockItem) {
 }
 
 function normalizeMonthlyAvgSales(value: number) {
-  if (value <= 0) return 0;
-  return Math.round(value * 3) / 3;
+  return Number.isFinite(value) && value > 0 ? value : 0;
 }
 
 function monthlyToDaily(value: unknown) {
@@ -190,14 +190,7 @@ function dailyToMonthly(value: number) {
 }
 
 function ownDailySales(item: StockItem) {
-  const monthlyDaily = monthlyToDaily(item.monthly_avg_sales);
-  if (monthlyDaily > 0) return monthlyDaily;
-
-  const stock = availableStock(item);
-  const stockDays = numberValue(item.stock_days);
-  if (stock > 0 && stockDays > 0) return stock / stockDays;
-
-  return 0;
+  return monthlyToDaily(item.monthly_avg_sales);
 }
 
 function effectiveStockDays(item: StockItem, dailySales: number) {

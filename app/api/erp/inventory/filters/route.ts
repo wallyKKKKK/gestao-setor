@@ -111,6 +111,7 @@ async function findLatestReallocationSnapshotId(supabase: ReturnType<typeof getS
     .from("reallocation_stock_snapshots")
     .select("id")
     .eq("sector", sector)
+    .eq("is_ready", true)
     .order("imported_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -122,6 +123,7 @@ async function findLatestReallocationSnapshotId(supabase: ReturnType<typeof getS
     .from("reallocation_stock_snapshots")
     .select("id")
     .eq("sector", "Geral")
+    .eq("is_ready", true)
     .order("imported_at", { ascending: false })
     .limit(1)
     .maybeSingle();
