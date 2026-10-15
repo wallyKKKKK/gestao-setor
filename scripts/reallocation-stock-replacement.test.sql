@@ -29,9 +29,9 @@ begin
   end if;
   v_replaced := public.publish_reallocation_stock_snapshot(v_new,v_sector,1);
   if v_replaced <> 2 then raise exception 'Expected two removed rows'; end if;
-  if exists(select 1 from public.reallocation_stock_snapshots where id=v_old)
-    or exists(select 1 from public.reallocation_stock_items where snapshot_id=v_old) then
-    raise exception 'Old inventory was retained';
+  if exists(select 1 from public.reallocation_stock_snapshots where id=v_old and is_ready)
+    or not exists(select 1 from public.reallocation_stock_snapshots where id=v_old and superseded_at is not null) then
+    raise exception 'Old inventory is still active';
   end if;
   if not exists(select 1 from public.reallocation_stock_snapshots where id=v_new and is_ready)
     or not exists(select 1 from public.reallocation_stock_items where snapshot_id=v_new and ean='333') then
@@ -43,6 +43,17 @@ begin
   end if;
   if public.publish_reallocation_stock_snapshot(v_new,v_sector,1) <> 0 then
     raise exception 'Publication retry was not idempotent';
+  end if;
+  while (public.cleanup_reallocation_stock_snapshots(v_sector,1)->>'pending')::boolean loop
+    null;
+  end loop;
+  if exists(select 1 from public.reallocation_stock_snapshots where id=v_old)
+    or exists(select 1 from public.reallocation_stock_items where snapshot_id=v_old) then
+    raise exception 'Old inventory cleanup did not finish';
+  end if;
+  if not exists(select 1 from public.reallocation_stock_snapshots where id=v_pending and superseded_at is null)
+    or not exists(select 1 from public.reallocation_stock_snapshots where id=v_new and is_ready) then
+    raise exception 'Cleanup touched a pending or active import';
   end if;
   if has_function_privilege('authenticated','public.publish_reallocation_stock_snapshot(uuid,text,integer)','EXECUTE')
     or has_function_privilege('anon','public.publish_reallocation_stock_snapshot(uuid,text,integer)','EXECUTE')

@@ -11,6 +11,8 @@ create table if not exists public.reallocation_stock_snapshots (
 
 -- Apply migrations/20261015111951_reallocation_replace_sector_snapshot.sql as well
 -- to enable complete, atomic replacement of the active sector inventory.
+-- Also apply migrations/20261015132514_reallocation_stock_publication_cleanup_batches.sql
+-- so publication does not wait for deletion of previous inventories.
 alter table public.reallocation_stock_snapshots
 add column if not exists is_ready boolean not null default true;
 

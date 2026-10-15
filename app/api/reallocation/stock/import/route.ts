@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import * as XLSX from "xlsx";
 import { getSupabaseAdmin } from "@/lib/supabase-admin";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
@@ -6,6 +6,7 @@ import { requireAuthenticatedProfile } from "@/lib/server-auth";
 import { normalizeReallocationSector } from "@/lib/reallocation-sector";
 import { createErpInventorySnapshot, splitErpClassificationPath } from "@/lib/erp-inventory";
 import type { ReallocationImportIssue } from "@/lib/reallocation-import-report";
+import { cleanupRetiredReallocationStock } from "@/lib/reallocation-stock-cleanup";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -384,6 +385,7 @@ function stripMovementColumns(rows: StockRow[]) {
 export async function POST(request: Request) {
   let importStage = "processar arquivo";
   let createdSnapshotId: string | null = null;
+  let cleanupSector: string | null = null;
   let supabase: ReturnType<typeof getSupabaseAdmin> | null = null;
 
   try {
@@ -440,6 +442,7 @@ export async function POST(request: Request) {
     importStage = "preparar nova base de estoque";
     supabase = getSupabaseAdmin();
     const activeSector = normalizeReallocationSector(auth.profile.sector);
+    cleanupSector = activeSector;
 
     // Keep partial uploads invisible until all rows have been saved and validated.
     const { data: snapshot, error: snapshotError } = await supabase
@@ -581,6 +584,7 @@ export async function POST(request: Request) {
     });
     if (publishError) throw publishError;
     createdSnapshotId = null;
+    after(async () => { await cleanupRetiredReallocationStock(activeSector); });
 
     importStage = "espelhar estoque no nucleo ERP";
     let erpInventorySnapshotId: string | null = null;
@@ -663,14 +667,26 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     if (createdSnapshotId && supabase) {
-      await supabase
+      try {
+      const { error: cleanupError } = await supabase
         .from("reallocation_stock_snapshots")
-        .delete()
+        .update({ superseded_at: new Date().toISOString() })
         .eq("id", createdSnapshotId)
         .eq("is_ready", false);
+      if (cleanupError) console.error('Falha ao cancelar importacao incompleta', { message: cleanupError.message, code: cleanupError.code });
+      if (cleanupSector) {
+        const sector = cleanupSector;
+        after(async () => { await cleanupRetiredReallocationStock(sector); });
+      }
+      } catch (cleanupError) {
+        console.error('Falha ao preparar limpeza da importacao incompleta', cleanupError);
+      }
     }
 
-    const baseMessage = error instanceof Error ? error.message : "Erro ao importar estoque.";
+    const databaseError = error && typeof error === 'object' ? error as { message?: unknown; code?: unknown } : null;
+    const baseMessage = typeof databaseError?.message === 'string' && databaseError.message.trim()
+      ? databaseError.message : "Erro ao importar estoque.";
+    console.error('Falha na importacao de estoque', { stage: importStage, message: baseMessage, code: databaseError?.code });
     const lowerMessage = baseMessage.toLowerCase();
     const friendlyMessage = /sector|schema cache/.test(lowerMessage)
       ? "A separacao de estoque por setor ainda nao foi aplicada no banco. Rode o SQL atualizado de reallocation-stock.sql no Supabase e tente importar novamente."
@@ -680,6 +696,6 @@ export async function POST(request: Request) {
     const message = /^(Arquivo|Nenhuma|Importe|Envie|A separacao|A importacao)/i.test(friendlyMessage)
       ? friendlyMessage
       : `Erro ao ${importStage}: ${friendlyMessage}`;
-    return NextResponse.json({ error: message }, { status: 400 });
+    return NextResponse.json({ error: message, code: databaseError?.code }, { status: 400 });
   }
 }

@@ -7,6 +7,7 @@ const ts = require('typescript');
 
 function loadRoute(failure) {
   const calls = [];
+  const afterTasks = [];
   const db = {
     from(table) {
       const call = { table, filters: [] };
@@ -17,6 +18,7 @@ function loadRoute(failure) {
         in() { return query; },
         eq(key, value) { call.filters.push([key, value]); return query; },
         delete() { call.operation = 'delete'; return query; },
+        update(values) { call.operation = 'retire'; call.rows = values; return query; },
         single() { return Promise.resolve({ data: { id: 'new-snapshot' }, error: null }); },
         then(resolve, reject) {
           return Promise.resolve({ data: [], error: failure === 'insert' && table === 'reallocation_stock_items' ? new Error('Insert failed') : null }).then(resolve, reject);
@@ -26,11 +28,12 @@ function loadRoute(failure) {
     },
     async rpc(name, args) {
       calls.push({ operation: 'publish', name, args });
-      return { data: 200, error: failure === 'publish' ? new Error('Publication failed') : null };
+      return { data: 200, error: failure === 'publish' ? new Error('Publication failed') : failure === 'publish-plain' ? { code: '57014', message: 'canceling statement due to statement timeout' } : null };
     },
   };
   const dependencies = {
-    'next/server': { NextResponse: { json: (value, init) => Response.json(value, init) } },
+    'next/server': { NextResponse: { json: (value, init) => Response.json(value, init) }, after: (callback) => afterTasks.push(callback) },
+    '@/lib/reallocation-stock-cleanup': { cleanupRetiredReallocationStock: async () => ({ completed: true }) },
     '@/lib/supabase-admin': { getSupabaseAdmin: () => db },
     '@/lib/server-auth': { requireAuthenticatedProfile: async () => ({ ok: true, userId: 'user', profile: { sector: 'Geral' } }) },
     '@/lib/rate-limit': { checkRateLimit: () => null },
@@ -40,8 +43,8 @@ function loadRoute(failure) {
   const source = readFileSync(path.join(__dirname, '../app/api/reallocation/stock/import/route.ts'), 'utf8');
   const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText;
   const exports = {};
-  vm.runInNewContext(compiled, { exports, require: (name) => dependencies[name] || {}, File, console });
-  return { POST: exports.POST, calls };
+  vm.runInNewContext(compiled, { exports, require: (name) => dependencies[name] || {}, File, console: { error() {}, warn() {} } });
+  return { POST: exports.POST, calls, afterTasks };
 }
 
 function request(csv = 'Un. Neg.;Apelido Un. Neg.;Cod. de Barras;Produto;Estoque;Media venda mensal\n01;Loja;789123;Produto;5;30') {
@@ -71,6 +74,7 @@ test('import creates a separate pending base and publishes only after saving its
   assert.ok(publishIndex > insertIndex);
   assert.equal(route.calls[publishIndex].args.p_expected_rows, 1);
   assert.equal(route.calls.some((call) => call.operation === 'delete'), false);
+  assert.equal(route.afterTasks.length, 1);
 });
 
 test('report includes ignored row reasons and original row numbers across blank rows', async () => {
@@ -100,9 +104,20 @@ for (const failure of ['insert', 'publish']) {
     const route = loadRoute(failure);
     const response = await route.POST(request());
     assert.equal(response.status, 400);
-    const cleanup = route.calls.find((call) => call.operation === 'delete');
+    const cleanup = route.calls.find((call) => call.operation === 'retire');
     assert.equal(cleanup.table, 'reallocation_stock_snapshots');
     assert.equal(JSON.stringify(cleanup.filters), JSON.stringify([['id', 'new-snapshot'], ['is_ready', false]]));
+    assert.equal(route.afterTasks.length, 1);
     if (failure === 'insert') assert.equal(route.calls.some((call) => call.operation === 'publish'), false);
   });
 }
+
+test('plain database errors preserve the real message and error code', async () => {
+  const route = loadRoute('publish-plain');
+  const response = await route.POST(request());
+  const result = await response.json();
+  assert.equal(response.status, 400);
+  assert.equal(result.code, '57014');
+  assert.match(result.error, /demorou/);
+  assert.doesNotMatch(result.error, /Erro ao importar estoque\./);
+});
