@@ -93,7 +93,7 @@ export function TaskDrawer({ task, profiles, user, userRole, onTradeNotesChanged
   };
 
   return (
-    <div className={`fixed inset-0 z-[100] transition-all duration-500 ${task ? "visible" : "invisible pointer-events-none"}`}>
+    <div role={task ? 'dialog' : undefined} aria-modal={task ? true : undefined} aria-labelledby={task ? 'task-details-title' : undefined} className={`fixed inset-0 z-[250] transition-all duration-500 ${task ? "visible" : "invisible pointer-events-none"}`}>
       <div
         className={`absolute inset-0 bg-slate-900/10 transition-opacity duration-500 ${task ? "opacity-100" : "opacity-0"}`}
         onClick={onClose}
@@ -111,13 +111,16 @@ export function TaskDrawer({ task, profiles, user, userRole, onTradeNotesChanged
                   {task.category}
                 </span>
                 <button
+                  type="button"
+                  aria-label="Fechar detalhes da tarefa"
+                  title="Fechar detalhes da tarefa"
                   onClick={(e) => { e.stopPropagation(); onClose(); }}
                   className="w-10 h-10 flex items-center justify-center rounded-xl bg-white/5 hover:bg-white/20 text-white transition-all"
                 >
                   <X size={24} strokeWidth={3}/>
                 </button>
               </div>
-              <h2 className="text-2xl font-black uppercase italic tracking-tighter leading-tight break-words">
+              <h2 id="task-details-title" className="text-2xl font-black uppercase italic tracking-tighter leading-tight break-words">
                 {task.title}
               </h2>
             </div>

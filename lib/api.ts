@@ -952,6 +952,12 @@ export async function createAnnouncement({ title, content, createdBy, sector, im
   if (error) throw error;
 }
 
+export async function createTaskFromNote(noteId: string, input: CreateTaskInput): Promise<string> {
+  const { data, error } = await supabase.rpc('create_task_from_note', { note_id: noteId, task_input: input });
+  if (error) throw new Error(error.message || 'Erro ao criar tarefa a partir da nota.');
+  return String(data);
+}
+
 export async function createTask(input: CreateTaskInput) {
   const payload = {
     title: input.title.toUpperCase(),

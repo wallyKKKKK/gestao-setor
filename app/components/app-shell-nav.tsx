@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   BadgePercent,
   Bell,
@@ -13,6 +13,7 @@ import {
   LayoutGrid,
   ListTodo,
   Moon,
+  NotebookPen,
   PackageSearch,
   Search,
   RefreshCw,
@@ -22,6 +23,7 @@ import {
   Sun,
   Tags,
   Truck,
+  Users,
   X,
   type LucideIcon,
 } from 'lucide-react';
@@ -69,6 +71,7 @@ const SECTION_NAV_META: Record<AppSection, { icon: LucideIcon }> = {
   INICIO: { icon: LayoutGrid },
   TAREFAS: { icon: ListTodo },
   REUNIAO: { icon: CalendarDays },
+  NOTAS: { icon: NotebookPen },
   COMPRAS_IA: { icon: ShoppingCart },
   CADASTROS: { icon: Database },
   ESTOQUE_ERP: { icon: PackageSearch },
@@ -78,6 +81,7 @@ const SECTION_NAV_META: Record<AppSection, { icon: LucideIcon }> = {
   TRANSPORTE: { icon: Truck },
   BALACUBACO: { icon: Shuffle },
   AUDITORIA: { icon: ClipboardList },
+  USUARIOS: { icon: Users },
 };
 
 const NOTIFICATION_GROUPS = [
@@ -163,6 +167,12 @@ export function AppShellNav({
     }).filter((group) => group.items.length > 0);
   }, [notifications, unreadNotificationIds]);
 
+  useLayoutEffect(() => {
+    if (showTaskTools) {
+      window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+    }
+  }, [activeTab, showTaskTools]);
+
   useEffect(() => {
     if (!showNotifications) return;
 
@@ -175,8 +185,8 @@ export function AppShellNav({
   }, [showNotifications]);
 
   return (
-    <>
-      <nav className="sticky top-0 z-[200] flex h-16 items-center justify-between border-b border-white/10 bg-[#151D33] px-3 text-white shadow-[0_8px_24px_rgba(15,23,42,0.22)] sm:px-5">
+    <div className="sticky top-0 z-[200] w-full">
+      <nav className="flex h-16 items-center justify-between border-b border-white/10 bg-[#151D33] px-3 text-white shadow-[0_8px_24px_rgba(15,23,42,0.22)] sm:px-5">
         <div className="flex items-center gap-2 sm:gap-3 min-w-0 overflow-visible">
           <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl shadow-lg ${sectionTheme.iconClassName}`}>
             <SectionIcon size={22} strokeWidth={2.8} />
@@ -468,7 +478,7 @@ export function AppShellNav({
       </nav>
 
       {showTaskTools && (
-        <div className="sticky top-16 z-30 w-full">
+        <div className="relative w-full">
           <div className="bg-[#DCE7F5] px-3 pt-3 sm:px-5">
             <div className="mx-auto flex h-[82px] max-w-[1180px] items-end justify-start gap-2 overflow-x-auto no-scrollbar lg:justify-center">
                 {visibleTaskTabs.map((tab) => {
@@ -555,6 +565,6 @@ export function AppShellNav({
 
         </div>
       )}
-    </>
+    </div>
   );
 }

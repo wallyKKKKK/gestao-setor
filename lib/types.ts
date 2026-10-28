@@ -43,6 +43,7 @@ export type ProcessedTask = Task & {
   lastOcc: string;
   nextOcc: string;
   isDoneToday: boolean;
+  previousIncompleteOccurrence?: string | null;
 };
 
 export type UserRole = "admin" | "gerente" | "membro";

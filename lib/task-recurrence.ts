@@ -128,8 +128,10 @@ function getMonthlyWeekdayOccurrence(year: number, monthIndex: number, ordinal: 
   return occurrence.getMonth() === monthIndex ? occurrence : null;
 }
 
-export const getLastOccurrence = (task: Task) => {
-  const todayStr = getTodayStr();
+export const getLastOccurrence = (task: Task, referenceDate = getTodayStr()) => {
+  const todayStr = referenceDate;
+  const [year, month, day] = referenceDate.split("-").map(Number);
+  const today = new Date(year, month - 1, day);
   const createdAtStr = task.created_at.split("T")[0];
 
   if (!task.repeat_days || task.repeat_days === "") return task.due_date || task.last_done_date || "1970-01-01";
@@ -138,7 +140,6 @@ export const getLastOccurrence = (task: Task) => {
 
   const monthlyWeekdayRepeats = parseMonthlyWeekdayRepeats(task.repeat_days);
   if (monthlyWeekdayRepeats.length) {
-    const today = new Date();
     const interval = task.repeat_interval || 1;
 
     for (let monthOffset = -interval * 24; monthOffset <= 0; monthOffset += interval) {
@@ -156,7 +157,6 @@ export const getLastOccurrence = (task: Task) => {
   } else {
   const dayOfMonth = parseInt(task.repeat_days);
   if (!isNaN(dayOfMonth) && !task.repeat_days.includes(",")) {
-    const today = new Date();
     const thisMonthOcc = new Date(today.getFullYear(), today.getMonth(), dayOfMonth);
     const lastMonthOcc = new Date(today.getFullYear(), today.getMonth() - 1, dayOfMonth);
 
@@ -194,6 +194,16 @@ export const getLastOccurrence = (task: Task) => {
 
   return theoreticalLastStr;
 };
+
+export function getPreviousIncompleteOccurrence(task: Task, occurrenceDate: string) {
+  if (task.is_one_off || !task.repeat_days || occurrenceDate === "1970-01-01") return null;
+
+  const previous = getLastOccurrence(task, addDaysToDateStr(occurrenceDate, -1));
+  if (previous === "1970-01-01" || previous >= occurrenceDate || previous < task.created_at.split("T")[0]) return null;
+  if (task.last_done_date && task.last_done_date >= previous) return null;
+
+  return previous;
+}
 
 
 export function monthlyWeekdayOccursOnDate(repeatDays: string | null | undefined, dateStr: string, interval = 1, createdAt?: string | null) {

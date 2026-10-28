@@ -1,7 +1,7 @@
 "use client";
 
 import type { RefObject } from "react";
-import { Activity, Calendar, Check, ChevronDown, Flag, ListChecks, Plus, User, X } from "lucide-react";
+import { Activity, Calendar, Check, ChevronDown, Flag, ListChecks, LoaderCircle, Plus, User, X } from "lucide-react";
 import { TASK_CATEGORIES, WEEK_DAYS } from "@/app/constants";
 import { MarginFlowTaskFields } from "@/app/components/margin-flow-task-fields";
 import { buildMarginFlowTaskNotes, MARGIN_FLOW_CATEGORY, canUseMarginFlowTasks, marginFlowTaskTitle, parseMarginFlowTaskNotes } from "@/lib/margin-flow-task";
@@ -44,6 +44,7 @@ interface CreateTaskModalProps {
   onToggleDay: (day: string) => void;
   onClose: () => void;
   onSave: () => void;
+  isSaving: boolean;
 }
 
 export function CreateTaskModal({
@@ -81,6 +82,7 @@ export function CreateTaskModal({
   onToggleDay,
   onClose,
   onSave,
+  isSaving,
 }: CreateTaskModalProps) {
   const isMonthly = taskScheduleMode === "mensal";
   const isOneOff = taskScheduleMode === "pontual";
@@ -122,7 +124,7 @@ export function CreateTaskModal({
             <h2 className="text-xl font-black uppercase italic tracking-tighter text-slate-900 leading-none text-left">Nova Tarefa</h2>
             <p className="text-[9px] font-black text-blue-600 uppercase tracking-widest mt-1 text-left">Setor Operacional: {userSector}</p>
           </div>
-          <button onClick={onClose} className="flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-100 text-slate-700 transition hover:bg-slate-200">
+          <button disabled={isSaving} onClick={onClose} className="flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-100 text-slate-700 transition hover:bg-slate-200 disabled:cursor-wait disabled:opacity-50">
             <X size={21} strokeWidth={3} />
           </button>
         </div>
@@ -287,8 +289,8 @@ export function CreateTaskModal({
         </div>
 
         <div className="mt-auto flex shrink-0 gap-3 border-t-2 border-slate-100 px-5 py-4">
-          <button onClick={onClose} className="h-12 flex-1 rounded-2xl bg-slate-100 text-xs font-black uppercase text-slate-500 transition hover:bg-slate-200">Descartar</button>
-          <button onClick={onSave} className="flex-[2] h-12 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-black uppercase tracking-widest text-[11px] transition-all flex items-center justify-center gap-2 active:scale-95"><Check size={18} strokeWidth={4} /> Lançar Tarefa Agora</button>
+          <button disabled={isSaving} onClick={onClose} className="h-12 flex-1 rounded-2xl bg-slate-100 text-xs font-black uppercase text-slate-500 transition hover:bg-slate-200 disabled:cursor-wait disabled:opacity-50">Descartar</button>
+          <button disabled={isSaving} aria-busy={isSaving} onClick={onSave} className="flex-[2] h-12 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-black uppercase tracking-widest text-[11px] transition-all flex items-center justify-center gap-2 active:scale-95 disabled:cursor-wait disabled:opacity-70 disabled:active:scale-100">{isSaving ? <LoaderCircle size={18} className="animate-spin" /> : <Check size={18} strokeWidth={4} />} {isSaving ? "Salvando..." : "Lançar Tarefa Agora"}</button>
         </div>
       </div>
     </div>

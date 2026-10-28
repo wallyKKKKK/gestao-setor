@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import XLSX from 'xlsx';
 
@@ -8,6 +9,7 @@ const sourcePath = process.argv.slice(2).find((arg) => !arg.startsWith('--'));
 if (!sourcePath) throw new Error('Informe o caminho do CSV');
 const apply = process.argv.includes('--apply');
 const bytes = fs.readFileSync(sourcePath);
+const sourceHash = createHash('sha256').update(bytes).digest('hex');
 let text;
 let encoding = 'utf-8';
 try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
@@ -88,6 +90,17 @@ async function readCatalog() {
 
 const before = await readCatalog();
 const byPair = new Map(before.map((row) => [`${row.erp_code}:${row.ean}`, row]));
+const existingErpsByEan = new Map();
+for (const row of before) {
+  if (!existingErpsByEan.has(row.ean)) existingErpsByEan.set(row.ean, new Set());
+  existingErpsByEan.get(row.ean).add(row.erp_code);
+}
+const sourceErpsByEan = new Map();
+for (const row of input.values()) for (const ean of row.eans) {
+  if (!sourceErpsByEan.has(ean)) sourceErpsByEan.set(ean, new Set());
+  sourceErpsByEan.get(ean).add(row.erp_code);
+}
+const barcodeConflicts = [];
 const byErp = new Map();
 for (const row of before) {
   if (!byErp.has(row.erp_code)) byErp.set(row.erp_code, []);
@@ -132,15 +145,24 @@ for (const row of input.values()) {
       }
       continue;
     }
+    const otherErps = [...(existingErpsByEan.get(ean) || [])].filter((erp) => erp !== row.erp_code);
+    if (sourceErpsByEan.get(ean)?.size > 1 || otherErps.length > 0) {
+      barcodeConflicts.push({ erp_code: row.erp_code, ean, description, sourceErps: [...sourceErpsByEan.get(ean)], existingErps: otherErps });
+      continue;
+    }
     const manufacturer = inherit(row.erp_code, 'manufacturer');
     const classification = inherit(row.erp_code, 'classification');
     inserted.push({ erp_code: row.erp_code, ean, description, search_text: search(row.erp_code, ean, description, manufacturer, classification), source_file: path.basename(sourcePath), imported_at: importedAt, manufacturer, classification });
   }
 }
-console.log(JSON.stringify({ catalogBefore: before.length, toUpdate: updated.length, toInsert: inserted.length, unchanged, newProductsWithoutExactBarcode, ambiguousExistingPreserved }));
+console.log(JSON.stringify({ catalogBefore: before.length, toUpdate: updated.length, toInsert: inserted.length, unchanged, newProductsWithoutExactBarcode, ambiguousExistingPreserved, barcodeConflicts: barcodeConflicts.length }));
+const planPath = path.join(os.tmpdir(), `gestao-products-plan-${Date.now()}.json`);
+fs.writeFileSync(planPath, JSON.stringify({ sourceFile: path.basename(sourcePath), sourceHash, catalogBefore: before.length, updates: updated, inserts: inserted, barcodeConflicts, skipped, newProductsWithoutExactBarcode, ambiguousExistingPreserved }));
+console.log(`Plano de importacao: ${planPath}`);
 if (!apply) process.exit(0);
+if (createHash('sha256').update(fs.readFileSync(sourcePath)).digest('hex') !== sourceHash) throw new Error('O arquivo mudou durante a analise; nenhuma alteracao foi gravada');
 const backupPath = path.join(os.tmpdir(), `gestao-products-before-${Date.now()}.json`);
-fs.writeFileSync(backupPath, JSON.stringify({ sourceFile: path.basename(sourcePath), previousRows: backup, insertedPairs: inserted.map((row) => [row.erp_code, row.ean]) }));
+fs.writeFileSync(backupPath, JSON.stringify({ sourceFile: path.basename(sourcePath), sourceHash, fullCatalog: before, previousRows: backup, insertedPairs: inserted.map((row) => [row.erp_code, row.ean]) }));
 console.log(`Backup local preservado: ${backupPath}`);
 async function writeBatch(name, batch, ignoreDuplicates) {
   const { data: written, error } = await supabase.from('reallocation_products').upsert(batch, { onConflict: 'erp_code,ean', ignoreDuplicates }).select('erp_code,ean,manufacturer,classification');
@@ -171,4 +193,4 @@ for (const previous of before) {
   if (!current || current.manufacturer !== previous.manufacturer || current.classification !== previous.classification) throw new Error('A verificacao de preservacao dos dados existentes falhou');
 }
 if (invalid) throw new Error(`${invalid} produtos divergentes apos a importacao`);
-console.log(JSON.stringify({ completed: true, updated: updated.length, inserted: inserted.length, unchanged, catalogAfter: after.length, skipped, scientificBarcodes, conflictingErpProducts: conflicts.size, conflictingExactPairs: conflictingPairs.size, newProductsWithoutExactBarcode, ambiguousExistingPreserved, verified: updated.length + inserted.length, metadataPreserved: true }));
+console.log(JSON.stringify({ completed: true, updated: updated.length, inserted: inserted.length, unchanged, catalogAfter: after.length, skipped, scientificBarcodes, conflictingErpProducts: conflicts.size, conflictingExactPairs: conflictingPairs.size, newProductsWithoutExactBarcode, ambiguousExistingPreserved, barcodeConflicts: barcodeConflicts.length, verified: updated.length + inserted.length, metadataPreserved: true }));

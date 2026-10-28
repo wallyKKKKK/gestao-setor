@@ -79,6 +79,7 @@ const PERMISSION_PRESETS: Array<{
 ];
 
 interface SettingsModalProps {
+  embedded?: boolean;
   profiles: Profile[];
   userRole: UserRole;
   onClose: () => void;
@@ -127,6 +128,7 @@ function getStatusMeta(status: ReturnType<typeof getProfileStatus>) {
 }
 
 export function SettingsModal({
+  embedded = false,
   profiles,
   userRole,
   onClose,
@@ -163,9 +165,11 @@ export function SettingsModal({
     ].some((value) => value?.toLowerCase().includes(query)));
   }, [profiles, searchTerm]);
 
+  if (embedded && userRole !== 'admin') return null;
+
   return (
-    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-slate-900/18 p-3 backdrop-blur-[2px] animate-in fade-in">
-      <div className="flex max-h-[calc(100vh-1.5rem)] w-full max-w-[1180px] flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_24px_70px_rgba(15,23,42,0.24)]">
+    <div className={embedded ? 'mx-auto max-w-[1500px] p-3 sm:p-5' : 'fixed inset-0 z-[300] flex items-center justify-center bg-slate-900/18 p-3 backdrop-blur-[2px] animate-in fade-in'}>
+      <div className={embedded ? 'flex w-full flex-col overflow-hidden rounded-lg border border-slate-200 bg-white' : 'flex max-h-[calc(100vh-1.5rem)] w-full max-w-[480px] flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_24px_70px_rgba(15,23,42,0.24)]'}>
         <div className="flex shrink-0 items-center justify-between border-b border-slate-200 bg-[#F8FAFC] px-5 py-4">
           <div className="flex min-w-0 items-center gap-3">
             <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-blue-600 text-white shadow-[0_10px_24px_rgba(37,99,235,0.24)]">
@@ -173,23 +177,23 @@ export function SettingsModal({
             </div>
             <div className="min-w-0">
               <p className="text-[10px] font-black uppercase tracking-[0.24em] text-blue-600">Painel de controle</p>
-              <h2 className="truncate text-2xl font-black uppercase italic tracking-tight text-slate-950">Configuracoes</h2>
+              <h2 className={embedded ? 'text-lg font-semibold text-slate-950' : 'truncate text-2xl font-black uppercase italic tracking-tight text-slate-950'}>{embedded ? 'Usuários e permissões' : 'Configuracoes'}</h2>
             </div>
           </div>
 
-          <button
+          {!embedded && <button
             type="button"
             onClick={onClose}
             className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-100 text-slate-600 transition hover:bg-slate-200 hover:text-slate-900"
             aria-label="Fechar configuracoes"
           >
             <X size={23} strokeWidth={3} />
-          </button>
+          </button>}
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50/70 p-4">
           <div className="space-y-4">
-            <section className="min-w-0 space-y-4">
+            {embedded && <section className="min-w-0 space-y-4">
               <div className="grid gap-2 sm:grid-cols-4">
                 <SettingsStat label="Usuarios" value={summary.total} icon={<Users size={15} />} tone="blue" />
                 <SettingsStat label="Pendentes" value={summary.pending} icon={<Clock3 size={15} />} tone="amber" />
@@ -241,10 +245,10 @@ export function SettingsModal({
                   </div>
                 )}
               </div>
-            </section>
+            </section>}
 
-            <aside className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_300px] lg:items-stretch">
-              <section className="rounded-[24px] border border-slate-200 bg-white p-3 shadow-sm">
+            <aside className="min-w-0">
+              {embedded && <section className="rounded-[24px] border border-slate-200 bg-white p-3 shadow-sm">
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2">
                     <ShieldCheck size={18} className="text-blue-600" />
@@ -275,12 +279,12 @@ export function SettingsModal({
                         </div>
 
                         <div className="flex flex-wrap gap-1">
-                          {allowedItems.slice(0, 5).map((item) => (
+                          {(embedded ? allowedItems : allowedItems.slice(0, 5)).map((item) => (
                             <span key={item.key} className="rounded-full border border-blue-100 bg-white px-2 py-1 text-[8px] font-black uppercase text-blue-700">
                               {item.label}
                             </span>
                           ))}
-                          {allowedItems.length > 5 && (
+                          {!embedded && allowedItems.length > 5 && (
                             <span className="rounded-full border border-slate-200 bg-white px-2 py-1 text-[8px] font-black uppercase text-slate-500">
                               +{allowedItems.length - 5}
                             </span>
@@ -290,9 +294,9 @@ export function SettingsModal({
                     );
                   })}
                 </div>
-              </section>
+              </section>}
 
-              <button
+              {!embedded && <button
                 type="button"
                 onClick={onSignOut}
                 className="flex w-full items-center justify-between rounded-[24px] border border-red-100 bg-red-50 p-4 text-left shadow-sm transition hover:border-red-200 hover:bg-red-100"
@@ -307,16 +311,16 @@ export function SettingsModal({
                   </div>
                 </div>
                 <ChevronRight className="text-red-300" />
-              </button>
+              </button>}
             </aside>
           </div>
         </div>
 
-        <div className="shrink-0 border-t border-slate-200 bg-white px-5 py-3 text-center">
+        {!embedded && <div className="shrink-0 border-t border-slate-200 bg-white px-5 py-3 text-center">
           <p className="text-[9px] font-black uppercase tracking-[0.35em] text-slate-400">
             WALLY Task Builder - v2.0
           </p>
-        </div>
+        </div>}
       </div>
     </div>
   );

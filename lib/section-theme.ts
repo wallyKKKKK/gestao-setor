@@ -1,5 +1,7 @@
 export type ThemedAppSection =
   | 'INICIO'
+  | 'NOTAS'
+  | 'USUARIOS'
   | 'TAREFAS'
   | 'REUNIAO'
   | 'COMPRAS_IA'
@@ -22,6 +24,14 @@ interface SectionTheme {
 }
 
 export const SECTION_THEMES: Record<ThemedAppSection, SectionTheme> = {
+  USUARIOS: {
+    helper: 'Admin', gradientClassName: 'from-sky-700 to-sky-600', iconClassName: 'bg-sky-700 text-white',
+    accent: '#0369a1', soft: '#f0f9ff', softDark: '#0c2233',
+  },
+  NOTAS: {
+    helper: 'Pessoal', gradientClassName: 'from-teal-700 to-teal-600',
+    iconClassName: 'bg-teal-700 text-white', accent: '#0f766e', soft: '#f0fdfa', softDark: '#102a28',
+  },
   INICIO: {
     helper: 'Central',
     gradientClassName: 'from-blue-600 to-sky-500',

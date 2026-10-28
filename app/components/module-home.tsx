@@ -10,12 +10,14 @@ import {
   Database,
   LayoutGrid,
   ListTodo,
+  NotebookPen,
   PackageSearch,
   Search,
   ShoppingCart,
   Shuffle,
   Tags,
   Truck,
+  Users,
   type LucideIcon,
 } from 'lucide-react';
 import type { AppSection } from '@/app/components/app-sidebar';
@@ -54,6 +56,7 @@ interface ModuleHomeProps {
 const MODULES: ModuleMeta[] = [
   { section: 'TAREFAS', title: 'Tarefas', description: 'Rotina, prioridades e acompanhamento.', icon: ListTodo, defaultTab: 'HOJE' },
   { section: 'REUNIAO', title: 'Reunioes', description: 'Agenda mensal e compromissos.', icon: CalendarDays },
+  { section: 'NOTAS', title: 'Bloco de notas', description: 'Suas anotações pessoais.', icon: NotebookPen },
   { section: 'COMPRAS_IA', title: 'Compras IA', description: 'Cotacoes e analise de fornecedores.', icon: ShoppingCart },
   { section: 'CADASTROS', title: 'Cadastros', description: 'Produtos, lojas e regras base.', icon: Database },
   { section: 'ESTOQUE_ERP', title: 'Estoque ERP', description: 'Saldo por loja, curva e produto.', icon: PackageSearch },
@@ -63,6 +66,7 @@ const MODULES: ModuleMeta[] = [
   { section: 'TRANSPORTE', title: 'Transporte', description: 'Fretes, debitos e conferencias.', icon: Truck },
   { section: 'BALACUBACO', title: 'Remanejamento', description: 'Sugestoes e pedidos de transferencia.', icon: Shuffle },
   { section: 'AUDITORIA', title: 'Auditoria', description: 'Logs e rastreabilidade do sistema.', icon: ClipboardList },
+  { section: 'USUARIOS', title: 'Usuários e permissões', description: 'Contas, cargos e acessos.', icon: Users },
 ];
 
 function moduleMetric(section: AppSection, overview: DailyOverview) {

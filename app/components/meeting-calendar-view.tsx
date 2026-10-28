@@ -25,19 +25,19 @@ const weekDays = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 const meetingEventToneClasses = ['yellow', 'amber', 'orange', 'red', 'pink', 'fuchsia', 'purple', 'violet', 'indigo', 'blue', 'cyan'] as const;
 type MeetingEventTone = typeof meetingEventToneClasses[number];
 const meetingEventFillClassNames: Record<string, string> = {
-  yellow: 'bg-yellow-300 text-yellow-950 hover:bg-yellow-400',
-  amber: 'bg-amber-300 text-amber-950 hover:bg-amber-400',
+  yellow: 'bg-yellow-400 text-yellow-950 hover:bg-yellow-500',
+  amber: 'bg-amber-400 text-amber-950 hover:bg-amber-500',
   orange: 'bg-orange-400 text-orange-950 hover:bg-orange-500',
-  red: 'bg-red-500 text-white hover:bg-red-600',
-  pink: 'bg-rose-500 text-white hover:bg-rose-600',
-  fuchsia: 'bg-fuchsia-500 text-white hover:bg-fuchsia-600',
-  purple: 'bg-purple-500 text-white hover:bg-purple-600',
-  violet: 'bg-violet-500 text-white hover:bg-violet-600',
-  indigo: 'bg-indigo-500 text-white hover:bg-indigo-600',
-  blue: 'bg-blue-600 text-white hover:bg-blue-700',
-  cyan: 'bg-cyan-500 text-white hover:bg-cyan-600',
-  done: 'bg-emerald-400 text-emerald-950/80 hover:bg-emerald-500',
-  google: 'bg-sky-200 text-sky-950 hover:bg-sky-300',
+  red: 'bg-red-600 text-white hover:bg-red-700',
+  pink: 'bg-rose-600 text-white hover:bg-rose-700',
+  fuchsia: 'bg-fuchsia-700 text-white hover:bg-fuchsia-800',
+  purple: 'bg-purple-600 text-white hover:bg-purple-700',
+  violet: 'bg-violet-600 text-white hover:bg-violet-700',
+  indigo: 'bg-indigo-600 text-white hover:bg-indigo-700',
+  blue: 'bg-blue-700 text-white hover:bg-blue-800',
+  cyan: 'bg-cyan-700 text-white hover:bg-cyan-800',
+  done: 'bg-emerald-700 text-white hover:bg-emerald-800',
+  google: 'bg-sky-700 text-white hover:bg-sky-800',
 };
 
 function isMeetingEventTone(value: string): value is MeetingEventTone {
@@ -55,6 +55,31 @@ function randomMeetingEventTone() {
 
 function toISODate(date: Date) {
   return date.toISOString().slice(0, 10);
+}
+
+function BrazilianDateField({ value, min, onChange, label }: {
+  value: string;
+  min?: string;
+  onChange: (value: string) => void;
+  label: string;
+}) {
+  const displayDate = value ? value.split('-').reverse().join('/') : 'DD/MM/AAAA';
+  return (
+    <div className="relative">
+      <input
+        type="date"
+        lang="pt-BR"
+        aria-label={label}
+        value={value}
+        min={min}
+        onChange={(event) => onChange(event.target.value)}
+        className="h-12 w-full rounded-2xl border-2 border-slate-100 bg-slate-50 px-4 text-sm font-black text-transparent outline-none transition focus:border-blue-600 [&::-webkit-datetime-edit]:opacity-0"
+      />
+      <span aria-hidden="true" className="pointer-events-none absolute inset-y-0 left-4 right-10 flex items-center text-sm font-black text-slate-900">
+        {displayDate}
+      </span>
+    </div>
+  );
 }
 
 function monthLabel(date: Date) {
@@ -460,62 +485,6 @@ export function MeetingCalendarView({
 
   const getMeetingEndDate = (task: ProcessedTask) => getMeetingEndDateFromTask(task);
 
-  const monthGoogleEvents = useMemo(() => {
-    const linkedEventIds = new Set(tasks.map((task) => task.google_event_id).filter(Boolean));
-    const year = visibleMonth.getFullYear();
-    const month = visibleMonth.getMonth();
-    const monthStart = toISODate(new Date(year, month, 1));
-    const monthEnd = toISODate(new Date(year, month + 1, 0));
-
-    return googleEvents
-      .filter((event) => {
-        if (linkedEventIds.has(event.id)) return false;
-        const startDate = getGoogleEventStartDate(event);
-        const endDate = getGoogleEventEndDate(event);
-        return Boolean(startDate) && startDate <= monthEnd && endDate >= monthStart;
-      })
-      .map((event) => ({
-        id: `google:${event.id}`,
-        date: getGoogleEventStartDate(event),
-        endDate: getGoogleEventEndDate(event),
-        time: getGoogleEventTime(event),
-        title: event.summary || 'Evento Google',
-        source: 'Google',
-        completed: false,
-      }));
-  }, [googleEvents, tasks, visibleMonth]);
-
-  const monthSummaryItems = useMemo(() => (
-    [
-      ...monthTasks.map((task) => ({
-        id: `task:${task.id}`,
-        date: getMeetingStartDate(task),
-        endDate: getMeetingEndDate(task),
-        time: getMeetingTime(task),
-        title: task.title,
-        source: getAssigneeName(task),
-        completed: isMeetingCompleted(task),
-      })),
-      ...monthGoogleEvents,
-    ]
-      .sort((left, right) => (
-        left.date.localeCompare(right.date)
-        || getTimeSortValue(left.time) - getTimeSortValue(right.time)
-        || left.title.localeCompare(right.title)
-      ))
-      .slice(0, 5)
-  ), [getAssigneeName, monthGoogleEvents, monthTasks]);
-
-  const monthActiveDays = useMemo(() => {
-    const dates = new Set<string>();
-    monthTasks.forEach((task) => {
-      getISODateRange(getMeetingStartDate(task), getMeetingEndDate(task)).forEach((date) => dates.add(date));
-    });
-    monthGoogleEvents.forEach((event) => {
-      getISODateRange(event.date, event.endDate).forEach((date) => dates.add(date));
-    });
-    return dates.size;
-  }, [monthGoogleEvents, monthTasks]);
 
   const resetMeetingForm = useCallback(() => {
     setMeetingTitle('');
@@ -578,8 +547,8 @@ export function MeetingCalendarView({
   };
 
   const submitMeeting = async () => {
-    if (!meetingTitle || !meetingDate || !meetingEndDate || !meetingTime || !meetingMotive || !meetingAssignedTo) {
-      alert('Preencha titulo, data inicial, data final, hora, motivo e responsavel.');
+    if (!meetingTitle || !meetingDate || !meetingEndDate || !meetingTime || !meetingAssignedTo) {
+      alert('Preencha titulo, data inicial, data final, hora e responsavel.');
       return;
     }
 
@@ -685,169 +654,26 @@ export function MeetingCalendarView({
 
   return (
     <main className="mx-auto flex h-[calc(100dvh-5rem)] max-w-[1760px] flex-col overflow-hidden px-2 py-2 pb-20 sm:h-[calc(100dvh-4rem)] sm:px-4 sm:pb-2">
-      <div className="hidden">
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-black uppercase tracking-tight text-slate-900 sm:text-base">
-            {monthLabel(visibleMonth)}
-          </p>
-          <p className="truncate text-[10px] font-black uppercase tracking-widest text-blue-600">
-            {monthTasks.length} {monthTasks.length === 1 ? 'reunião' : 'reuniões'}
-            {monthTasks.length > 0 ? ` • ${completedMonthTasks} concluída${completedMonthTasks === 1 ? '' : 's'}` : ''}
-          </p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <button onClick={() => openCreateMeeting()} className="flex h-10 items-center gap-2 rounded-2xl bg-blue-600 px-4 text-[10px] font-black uppercase tracking-widest text-white shadow-sm">
-            <Plus size={18} /> Agendar reunião
-          </button>
-          {googleStatus.configured ? (
-            <button
-              onClick={() => {
-                if (!googleStatus.connected) {
-                  getAuthHeaders()
-                    .then((headers) => fetch('/api/google-calendar/connect', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json', ...headers },
-                      body: JSON.stringify({ userId: defaultAssignedTo }),
-                    }))
-                    .then((response) => response.ok ? response.json() : Promise.reject(response))
-                    .then((data) => {
-                      if (data?.url) window.location.href = data.url;
-                    })
-                    .catch(() => alert('Não foi possível iniciar a conexão com o Google Calendar.'));
-                }
-              }}
-              className={`h-10 rounded-2xl px-4 text-[10px] font-black uppercase tracking-widest shadow-sm ${
-                googleStatus.connected ? 'bg-green-100 text-green-700 border-2 border-green-200' : 'bg-white text-slate-700 border-2 border-slate-100'
-              }`}
-            >
-              {googleStatus.connected ? 'Google conectado' : 'Conectar Google'}
-            </button>
-          ) : (
-            <span className="flex h-10 items-center rounded-2xl bg-slate-100 px-3 text-[9px] font-black uppercase tracking-widest text-slate-400">
-              Google não configurado
-            </span>
-          )}
-          <button onClick={() => setVisibleMonth((current) => new Date(current.getFullYear(), current.getMonth() - 1, 1))} className="flex h-10 w-10 items-center justify-center rounded-2xl border-2 border-slate-100 bg-white shadow-sm">
-            <ChevronLeft size={20} />
-          </button>
-          <button onClick={() => {
-            const now = new Date();
-            setVisibleMonth(new Date(now.getFullYear(), now.getMonth(), 1));
-          }} className="h-10 rounded-2xl bg-slate-900 px-4 text-[10px] font-black uppercase tracking-widest text-white shadow-sm">
-            Hoje
-          </button>
-          <button onClick={() => setVisibleMonth((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1))} className="flex h-10 w-10 items-center justify-center rounded-2xl border-2 border-slate-100 bg-white shadow-sm">
-            <ChevronRight size={20} />
-          </button>
-        </div>
-      </div>
 
       <div className="flex min-h-0 flex-1 gap-3 overflow-hidden">
-        <aside className="hidden w-[270px] shrink-0 flex-col overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-[0_18px_48px_rgba(15,23,42,0.10)] xl:flex">
-          <div className="shrink-0">
-            <div className="border-b border-slate-100 bg-slate-950 px-4 py-3 text-white">
-              <p className="text-[9px] font-black uppercase tracking-[0.22em] text-blue-200">Resumo do mês</p>
-              <div className="mt-1 flex items-end justify-between gap-3">
-                <h3 className="text-xl font-black uppercase italic tracking-tighter">
-                  {visibleMonth.toLocaleDateString('pt-BR', { month: 'short' })}
-                </h3>
-                <span className="pb-0.5 text-[10px] font-black uppercase tracking-widest text-slate-400">
-                  {visibleMonth.getFullYear()}
-                </span>
-              </div>
-            </div>
 
-            <div className="space-y-2 p-3">
-              <div className="grid grid-cols-2 gap-2">
-                <div className="rounded-xl border border-blue-100 bg-blue-50 px-3 py-2">
-                  <p className="text-[8px] font-black uppercase tracking-widest text-blue-500">Reuniões</p>
-                  <p className="text-xl font-black text-slate-950">{monthTasks.length}</p>
-                </div>
-                <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2">
-                  <p className="text-[8px] font-black uppercase tracking-widest text-emerald-600">Concluídas</p>
-                  <p className="text-xl font-black text-slate-950">{completedMonthTasks}</p>
-                </div>
-                <div className="rounded-xl border border-amber-100 bg-amber-50 px-3 py-2">
-                  <p className="text-[8px] font-black uppercase tracking-widest text-amber-600">Pendentes</p>
-                  <p className="text-xl font-black text-slate-950">{Math.max(monthTasks.length - completedMonthTasks, 0)}</p>
-                </div>
-                <div className="rounded-xl border border-violet-100 bg-violet-50 px-3 py-2">
-                  <p className="text-[8px] font-black uppercase tracking-widest text-violet-600">Dias ativos</p>
-                  <p className="text-xl font-black text-slate-950">{monthActiveDays}</p>
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between gap-2 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
-                <div>
-                  <p className="text-[8px] font-black uppercase tracking-widest text-slate-400">Google</p>
-                  <p className="text-xs font-black uppercase text-slate-800">
-                    {monthGoogleEvents.length} externo{monthGoogleEvents.length === 1 ? '' : 's'}
-                  </p>
-                </div>
-                <span className={`rounded-full px-2 py-1 text-[8px] font-black uppercase tracking-widest ${
-                  googleStatus.connected ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-500'
-                }`}>
-                  {googleStatus.connected ? 'On' : 'Off'}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex min-h-0 flex-1 flex-col border-t border-slate-100">
-            <p className="shrink-0 px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-400">Próximas do mês</p>
-            <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
-              {monthSummaryItems.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-slate-200 p-4 text-center text-[10px] font-black uppercase tracking-widest text-slate-300">
-                  Sem compromissos
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {monthSummaryItems.map((item) => (
-                    <div key={item.id} className="rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-[10px] font-black uppercase text-blue-600">
-                          {new Date(`${item.date}T00:00:00`).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}
-                        </span>
-                        <span className={`rounded-full px-2 py-0.5 text-[8px] font-black uppercase ${
-                          item.completed ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'
-                        }`}>
-                          {item.completed ? 'Ok' : item.time}
-                        </span>
-                      </div>
-                      <p className={`mt-2 line-clamp-2 text-xs font-black uppercase leading-snug ${
-                        item.completed ? 'text-slate-500' : 'text-slate-950'
-                      }`}>
-                        {item.title}
-                      </p>
-                      <p className="mt-1 truncate text-[9px] font-black uppercase tracking-widest text-slate-400">
-                        {item.source}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </aside>
-
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[22px] border border-slate-200 bg-white shadow-[0_18px_48px_rgba(15,23,42,0.10)] sm:rounded-[28px]">
-        <div className="shrink-0 border-b border-slate-200 bg-slate-50 px-3 py-2">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white">
+        <div className="shrink-0 border-b border-slate-200 bg-white px-4 py-3">
           <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
             <div className="min-w-0 flex-1">
-              <h2 className="truncate text-base font-black uppercase italic tracking-tighter text-slate-900 sm:text-xl">
+              <h2 className="truncate text-lg font-semibold capitalize text-slate-900 sm:text-xl">
                 {monthLabel(visibleMonth)}
               </h2>
-              <p className="mt-0.5 truncate text-[9px] font-black uppercase tracking-widest text-blue-600">
-                {monthTasks.length} {monthTasks.length === 1 ? 'reunião' : 'reuniões'} WALLY
+              <p className="mt-1 truncate text-xs font-medium text-slate-500">
+                {monthTasks.length} {monthTasks.length === 1 ? 'reunião' : 'reuniões'}
                 {monthTasks.length > 0 ? ` - ${completedMonthTasks} concluída${completedMonthTasks === 1 ? '' : 's'}` : ''}
                 {googleStatus.connected ? ` - ${googleEvents.length} evento${googleEvents.length === 1 ? '' : 's'} Google` : ''}
               </p>
             </div>
 
             <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-              <button onClick={() => openCreateMeeting()} className="flex h-8 items-center gap-1.5 rounded-lg bg-blue-600 px-3 text-[9px] font-black uppercase tracking-widest text-white shadow-sm transition hover:bg-blue-700">
-                <Plus size={14} /> Agendar reunião
+              <button onClick={() => openCreateMeeting()} className="flex h-9 items-center gap-1.5 rounded-md bg-blue-600 px-3 text-xs font-semibold text-white transition hover:bg-blue-700">
+                <Plus size={15} /> Nova reunião
               </button>
               {googleStatus.configured ? (
                 <button
@@ -858,37 +684,33 @@ export function MeetingCalendarView({
                 >
                   {googleStatus.connected ? 'Google conectado' : 'Conectar Google'}
                 </button>
-              ) : (
-                <span className="flex h-8 items-center rounded-lg bg-slate-100 px-2 text-[8px] font-black uppercase tracking-widest text-slate-400">
-                  Google não configurado
-                </span>
-              )}
-              <button onClick={() => setVisibleMonth((current) => new Date(current.getFullYear(), current.getMonth() - 1, 1))} className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white shadow-sm transition hover:border-blue-300">
+              ) : null}
+              <button title="Mês anterior" aria-label="Mês anterior" onClick={() => setVisibleMonth((current) => new Date(current.getFullYear(), current.getMonth() - 1, 1))} className="flex h-9 w-9 items-center justify-center rounded-md border border-slate-200 bg-white transition hover:bg-slate-50">
                 <ChevronLeft size={17} />
               </button>
               <button onClick={() => {
                 const now = new Date();
                 setVisibleMonth(new Date(now.getFullYear(), now.getMonth(), 1));
-              }} className="h-8 rounded-lg bg-slate-900 px-3 text-[9px] font-black uppercase tracking-widest text-white shadow-sm transition hover:bg-slate-700">
+              }} className="h-9 rounded-md border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50">
                 Hoje
               </button>
-              <button onClick={() => setVisibleMonth((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1))} className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white shadow-sm transition hover:border-blue-300">
+              <button title="Próximo mês" aria-label="Próximo mês" onClick={() => setVisibleMonth((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1))} className="flex h-9 w-9 items-center justify-center rounded-md border border-slate-200 bg-white transition hover:bg-slate-50">
                 <ChevronRight size={17} />
               </button>
             </div>
           </div>
         </div>
 
-        <div className="hidden shrink-0 grid-cols-7 bg-slate-950 text-white md:grid">
+        <div className="hidden shrink-0 grid-cols-7 border-b border-slate-200 bg-white text-slate-500 md:grid">
           {weekDays.map((day) => (
-            <div key={day} className="px-4 py-2.5 text-center text-[10px] font-black uppercase tracking-widest">
+            <div key={day} className="px-3 py-2 text-right text-base font-bold">
               {day}
             </div>
           ))}
         </div>
 
         <div
-          className="hidden min-h-0 flex-1 grid-cols-7 gap-2 bg-slate-950 p-2 md:grid"
+          className="hidden min-h-0 flex-1 grid-cols-7 gap-px bg-slate-200 md:grid"
           style={{ gridTemplateRows: `repeat(${calendarWeekCount}, minmax(0, 1fr))` }}
         >
           {days.map((day, index) => {
@@ -924,6 +746,7 @@ export function MeetingCalendarView({
                 key={key}
                 onClick={day ? () => openCreateMeeting(day) : undefined}
                 onKeyDown={day ? (event) => {
+                  if (event.target !== event.currentTarget) return;
                   if (event.key === 'Enter' || event.key === ' ') {
                     event.preventDefault();
                     openCreateMeeting(day);
@@ -932,34 +755,34 @@ export function MeetingCalendarView({
                 role={day ? 'button' : undefined}
                 tabIndex={day ? 0 : undefined}
                 title={day ? 'Clique para agendar uma reuniao neste dia' : undefined}
-                className={`relative flex min-h-0 flex-col overflow-hidden rounded-2xl border p-2 transition ${
+                className={`relative flex min-h-0 flex-col overflow-hidden p-1.5 transition ${
                   day
-                    ? 'cursor-pointer border-slate-200 bg-white hover:-translate-y-0.5 hover:border-blue-300 hover:shadow-[0_14px_28px_rgba(15,23,42,0.16)] focus:outline-none focus:ring-2 focus:ring-blue-300'
-                    : 'border-slate-200/40 bg-slate-100/80'
+                    ? 'cursor-pointer bg-white hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-300'
+                    : 'bg-slate-50'
                 }`}
               >
                 {day && (
                   <>
                     {calendarItems.length > 0 && (
-                      <div className="absolute inset-x-0 bottom-0 top-0 overflow-hidden rounded-2xl">
+                      <div className="-mx-1.5 mt-7 flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
                         {calendarItems.map((item, itemIndex) => {
-                          const itemCount = calendarItems.length;
-                          const segmentHeight = itemCount === 1 ? 50 : 100 / itemCount;
-                          const segmentTop = itemCount === 1 ? 50 : itemIndex * segmentHeight;
                           const tone = item.type === 'task'
                             ? getMeetingEventTone(item.task, itemIndex)
                             : getStableMeetingEventTone(item.event.id || item.event.summary || item.id, itemIndex);
                           const fillClassName = meetingEventFillClassNames[tone] || meetingEventFillClassNames.blue;
                           const isRangeEvent = item.rangeEnd > item.rangeStart;
                           const shouldShowRangeLabel = !isRangeEvent || dayKey === item.rangeStart || day?.getDay() === 0;
+                          const rangeShape = isRangeEvent
+                            ? `${dayKey === item.rangeStart || day.getDay() === 0 ? 'ml-1.5 rounded-l' : ''} ${dayKey === item.rangeEnd || day.getDay() === 6 ? 'mr-1.5 rounded-r' : ''}`
+                            : 'mx-1.5 rounded';
 
                           if (item.type === 'google') {
                             return (
                               <div
                                 key={item.id}
                                 onClick={(clickEvent) => clickEvent.stopPropagation()}
-                                className={`absolute inset-x-0 flex min-w-0 items-center gap-1.5 px-2 text-left text-[10px] font-black uppercase transition ${fillClassName}`}
-                                style={{ height: `${segmentHeight}%`, top: `${segmentTop}%` }}
+                                title={`${item.time} ${item.event.summary || 'Evento Google'}`}
+                                className={`flex h-6 min-h-6 min-w-0 shrink-0 items-center gap-1.5 px-1.5 text-left text-[11px] font-medium transition ${rangeShape} ${fillClassName}`}
                               >
                                 <a href={item.event.htmlLink} target="_blank" rel="noreferrer" className="flex min-w-0 flex-1 items-center gap-1.5">
                                   <span className="shrink-0 tabular-nums opacity-85">{shouldShowRangeLabel ? item.time : ''}</span>
@@ -990,8 +813,8 @@ export function MeetingCalendarView({
                                 event.stopPropagation();
                                 setSelectedMeeting(item.task);
                               }}
-                              className={`absolute inset-x-0 flex min-w-0 items-center gap-1.5 px-2 text-left text-[10px] font-black uppercase transition ${fillClassName}`}
-                              style={{ height: `${segmentHeight}%`, top: `${segmentTop}%` }}
+                              title={`${item.time} ${item.task.title}`}
+                              className={`flex h-6 min-h-6 min-w-0 shrink-0 items-center gap-1.5 px-1.5 text-left text-[11px] font-medium transition ${rangeShape} ${fillClassName}`}
                             >
                               <span className="shrink-0 tabular-nums opacity-85">{shouldShowRangeLabel ? item.time : ''}</span>
                               <span className={`min-w-0 flex-1 truncate ${completed ? 'opacity-70' : ''}`}>
@@ -1008,8 +831,8 @@ export function MeetingCalendarView({
                       </div>
                     )}
 
-                    <div className={`absolute left-1 top-1 z-20 flex h-5 w-5 items-center justify-center rounded-lg text-[10px] font-black shadow-sm ring-1 ring-white/70 ${
-                      isToday ? 'bg-blue-600 text-white' : 'bg-white/90 text-slate-600'
+                    <div className={`absolute right-1.5 top-1 z-20 flex h-6 w-6 items-center justify-center rounded-full text-base font-semibold ${
+                      isToday ? 'bg-blue-600 text-white' : 'text-slate-600'
                     }`}>
                       {day.getDate()}
                     </div>
@@ -1020,7 +843,7 @@ export function MeetingCalendarView({
           })}
         </div>
 
-        <div className="min-h-0 flex-1 divide-y-2 divide-slate-100 overflow-y-auto md:hidden">
+        <div className="min-h-0 flex-1 divide-y divide-slate-100 overflow-y-auto md:hidden">
           {monthTasks.length === 0 && googleEvents.length === 0 ? (
             <div className="flex min-h-[260px] items-center justify-center p-8 text-center text-xs font-black uppercase tracking-widest text-slate-300">
               Nenhuma reunião neste mês
@@ -1032,23 +855,25 @@ export function MeetingCalendarView({
 
               return (
               <div key={task.id} className={`flex w-full gap-3 p-4 transition-all ${completed ? 'bg-emerald-50/70 hover:bg-emerald-50' : 'hover:bg-blue-50'}`}>
-                <div className={`flex h-14 w-14 shrink-0 flex-col items-center justify-center rounded-2xl text-white ${completed ? 'bg-emerald-600' : 'bg-blue-600'}`}>
-                  <span className="text-lg font-black">{new Date(`${task.due_date || task.nextOcc}T00:00:00`).getDate()}</span>
-                  <span className="text-[8px] font-black uppercase">
-                    {new Date(`${task.due_date || task.nextOcc}T00:00:00`).toLocaleDateString('pt-BR', { month: 'short' })}
+                <div className={`flex h-12 w-12 shrink-0 flex-col items-center justify-center rounded-md ${completed ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-50 text-slate-700'}`}>
+                  <span className="text-lg font-semibold">{new Date(`${getMeetingStartDate(task)}T00:00:00`).getDate()}</span>
+                  <span className="text-[10px] font-medium">
+                    {new Date(`${getMeetingStartDate(task)}T00:00:00`).toLocaleDateString('pt-BR', { month: 'short' })}
                   </span>
                 </div>
                 <div className="min-w-0 flex-1">
                   <button onClick={() => setSelectedMeeting(task)} className="block w-full text-left">
                     <div className="flex items-start gap-2">
-                      <h3 className={`line-clamp-2 text-sm font-black uppercase leading-tight ${completed ? 'text-emerald-800/65' : 'text-slate-900'}`}>{task.title}</h3>
+                      <h3 className={`line-clamp-2 text-sm font-semibold leading-snug ${completed ? 'text-emerald-800/65' : 'text-slate-900'}`}>{task.title}</h3>
                       {completed && <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-emerald-600" />}
                     </div>
                   </button>
-                  <p className={`mt-1 truncate text-[10px] font-bold uppercase ${completed ? 'text-emerald-600/70' : 'text-slate-400'}`}>
-                    {getMeetingTime(task)} • {getAssigneeName(task)} • {task.sector}
+                  <p className={`mt-1 truncate text-xs font-medium ${completed ? 'text-emerald-600/70' : 'text-slate-500'}`}>
+                    {getMeetingTime(task)} • {getAssigneeName(task)}
                   </p>
-                  {task.notes && <p className={`text-xs font-bold mt-2 line-clamp-2 ${completed ? 'text-emerald-700/70' : 'text-slate-500'}`}>{task.notes}</p>}
+                  {getMeetingEndDate(task) > getMeetingStartDate(task) && (
+                    <p className="mt-1 text-xs text-slate-500">Até {new Date(`${getMeetingEndDate(task)}T00:00:00`).toLocaleDateString('pt-BR')}</p>
+                  )}
                 </div>
               </div>
               );
@@ -1230,16 +1055,15 @@ export function MeetingCalendarView({
 
               <label className="space-y-1">
                 <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest">Data inicial</span>
-                <input type="date" value={meetingDate} onChange={(event) => {
-                  const nextDate = event.target.value;
+                <BrazilianDateField label="Data inicial" value={meetingDate} onChange={(nextDate) => {
                   setMeetingDate(nextDate);
                   if (meetingEndDate < nextDate) setMeetingEndDate(nextDate);
-                }} className="h-12 w-full rounded-2xl border-2 border-slate-100 bg-slate-50 px-4 text-sm font-black outline-none transition focus:border-blue-600" />
+                }} />
               </label>
 
               <label className="space-y-1">
                 <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest">Data final</span>
-                <input type="date" value={meetingEndDate} min={meetingDate} onChange={(event) => setMeetingEndDate(event.target.value)} className="h-12 w-full rounded-2xl border-2 border-slate-100 bg-slate-50 px-4 text-sm font-black outline-none transition focus:border-blue-600" />
+                <BrazilianDateField label="Data final" value={meetingEndDate} min={meetingDate} onChange={setMeetingEndDate} />
               </label>
 
               <div className="space-y-1">
@@ -1247,10 +1071,10 @@ export function MeetingCalendarView({
                 <TimePickerField value={meetingTime} onChange={setMeetingTime} />
               </div>
 
-              <label className="space-y-1 sm:col-span-2 lg:col-span-4">
+              {editingMeeting && <label className="space-y-1 sm:col-span-2 lg:col-span-4">
                 <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest">Motivo</span>
                 <input value={meetingMotive} onChange={(event) => setMeetingMotive(event.target.value)} className="h-12 w-full rounded-2xl border-2 border-slate-100 bg-slate-50 px-4 text-sm font-bold outline-none transition focus:border-blue-600" placeholder="Ex: Definir prioridades da semana" />
-              </label>
+              </label>}
 
               <label className="space-y-1 sm:col-span-1 lg:col-span-2">
                 <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest">Responsável</span>

@@ -29,6 +29,7 @@ import {
   createAppNotification,
   createMeeting,
   createTask,
+  createTaskFromNote,
   deleteTask as deleteTaskApi,
   fetchAppNotifications,
   fetchAnnouncements as fetchAnnouncementsApi,
@@ -48,7 +49,7 @@ import { getAuthHeaders } from '@/lib/auth-headers'
 import { supabase } from '@/lib/supabase'
 import { getAppPermissions, getPermissionDeniedMessage, isPerfumePurchasingSector, isPricingSector } from '@/lib/permissions'
 import type { RealtimeChannel, User as SupabaseUser } from '@supabase/supabase-js'
-import { addDaysToDateStr, getTodayStr, parseMonthlyWeekdayRepeat } from '@/lib/task-recurrence'
+import { addDaysToDateStr, formatToBR, getTodayStr, parseMonthlyWeekdayRepeat } from '@/lib/task-recurrence'
 import { filterTasks, getSectorStats, getTaskStats, processTasks } from '@/lib/task-selectors'
 import type { CreateMeetingInput } from '@/lib/api'
 import { DEFAULT_TASK_PRIORITY } from '@/lib/task-priority'
@@ -72,6 +73,7 @@ const SectionLoader = () => (
 )
 
 const DEFAULT_TASK_CATEGORY = 'Geral'
+const PersonalNotes = dynamic(() => import('@/app/components/personal-notes').then(mod => mod.PersonalNotes), { loading: SectionLoader })
 
 const AuditTimeline = dynamic(() => import('@/app/components/audit-timeline').then((mod) => mod.AuditTimeline), { loading: SectionLoader })
 const MeetingCalendarView = dynamic(() => import('@/app/components/meeting-calendar-view').then((mod) => mod.MeetingCalendarView), { loading: SectionLoader })
@@ -142,6 +144,8 @@ function timeToMinutes(time: string | null) {
 
 const SECTION_LABELS: Record<AppSection, string> = {
   INICIO: 'Inicio',
+  NOTAS: 'Bloco de notas',
+  USUARIOS: 'Usuários e permissões',
   TAREFAS: 'Tarefas',
   COMPRAS_IA: 'Compras IA',
   REUNIAO: 'Reunião',
@@ -256,6 +260,10 @@ export default function App() {
   const [dashFilter, setDashFilter] = useState<'HOJE' | 'SEMANAL'>('HOJE')
   const [filterUsers, setFilterUsers] = useState<string[]>([])
   const [showCreateBox, setShowCreateBox] = useState(false)
+  const [isCreatingTask, setIsCreatingTask] = useState(false)
+  const creatingTaskRef = useRef(false)
+  const [sourceNoteId, setSourceNoteId] = useState<string | null>(null)
+  const [notesVersion, setNotesVersion] = useState(0)
   const [showProfileModal, setShowProfileModal] = useState(false)
   const [showGlobalSearch, setShowGlobalSearch] = useState(false)
   const [globalSearchTerm, setGlobalSearchTerm] = useState('')
@@ -267,7 +275,7 @@ export default function App() {
   const [assignedTo, setAssignedTo] = useState('')
   const [category, setCategory] = useState(DEFAULT_TASK_CATEGORY)
   const [taskPriority, setTaskPriority] = useState<TaskPriority>(DEFAULT_TASK_PRIORITY)
-  const [taskScheduleMode, setTaskScheduleMode] = useState<'pontual' | 'semanal' | 'mensal'>('semanal')
+  const [taskScheduleMode, setTaskScheduleMode] = useState<'pontual' | 'semanal' | 'mensal'>('pontual')
   const [oneOffDate, setOneOffDate] = useState(getTodayStr())
   const [repeatInterval, setRepeatInterval] = useState(1)
   const [selectedDays, setSelectedDays] = useState<string[]>([])
@@ -276,7 +284,7 @@ export default function App() {
   const [announcements, setAnnouncements] = useState<Announcement[]>([])
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [globalRefreshing, setGlobalRefreshing] = useState(false);
-  const [displayDate, setDisplayDate] = useState('DD/MM/YYYY');
+  const [displayDate, setDisplayDate] = useState(() => formatToBR(getTodayStr()));
   const dateInputRef = useRef<HTMLInputElement>(null);
   const [editDisplayDate, setEditDisplayDate] = useState('DD/MM/YYYY');
   const editDateInputRef = useRef<HTMLInputElement>(null);
@@ -287,6 +295,10 @@ export default function App() {
   const [showCategoryMenu, setShowCategoryMenu] = useState(false);
   const [marginRules, setMarginRules] = useState<PricingMarginRule[]>([]);
   const canUseMarginFlow = canUseMarginFlowTasks(userSector);
+
+  useEffect(() => {
+    if (!showCreateBox) queueMicrotask(() => setSourceNoteId(null));
+  }, [showCreateBox]);
 
   useEffect(() => {
     if (!user?.id) {
@@ -471,6 +483,7 @@ useEffect(() => {
       return;
     }
     if (showCreateBox) {
+      if (creatingTaskRef.current) return;
       setShowAssignMenu(false);
       setShowCategoryMenu(false);
       setShowCreateBox(false);
@@ -794,6 +807,7 @@ const toggleDayInEdit = (day: string) => {
   }, [addAudit, userSector]);
 
   async function addTask() {
+  if (creatingTaskRef.current) return;
   const cleanNotes = notes.trim();
   const marginFlowData = category === MARGIN_FLOW_CATEGORY ? parseMarginFlowTaskNotes(cleanNotes).data : null;
   const cleanTitle = category === MARGIN_FLOW_CATEGORY ? marginFlowTaskTitle(marginFlowData) : taskTitle.trim();
@@ -821,23 +835,15 @@ const toggleDayInEdit = (day: string) => {
     return;
   }
 
-  if (taskScheduleMode === 'semanal' && selectedDays.length === 0) {
-    alert('Selecione ao menos um dia da semana ou use o modo Pontual.');
-    return;
-  }
-
-  if (taskScheduleMode === 'mensal' && selectedDays.length === 0) {
-    alert('Selecione o dia da tarefa mensal.');
-    return;
-  }
-
-  const isOneOff = taskScheduleMode === 'pontual';
+  const isOneOff = taskScheduleMode === 'pontual' || selectedDays.length === 0;
   const repeatDays = isOneOff ? '' : selectedDays.join(',');
   const assignedProfile = profiles.find((profile) => profile.id === assignedTo);
   const taskSector = assignedProfile?.sector || userSector;
 
+  creatingTaskRef.current = true;
+  setIsCreatingTask(true);
   try {
-    await createTask({
+    const taskInput = {
       title: cleanTitle,
       assignedTo,
       category,
@@ -849,15 +855,18 @@ const toggleDayInEdit = (day: string) => {
       sector: taskSector,
       isOneOff,
       priority: taskPriority,
-    });
+    };
+    if (sourceNoteId) await createTaskFromNote(sourceNoteId, taskInput);
+    else await createTask(taskInput);
+    if (sourceNoteId) setNotesVersion(version => version + 1);
     await addAudit('task_created', 'task', null, cleanTitle, taskSector, `Categoria: ${category}`);
     setTaskTitle('');
-    setDisplayDate('DD/MM/YYYY'); 
+    setDisplayDate(formatToBR(getTodayStr()));
     setNotes(''); 
     setCategory(DEFAULT_TASK_CATEGORY);
     setSelectedDays([]); 
     setTaskPriority(DEFAULT_TASK_PRIORITY);
-    setTaskScheduleMode('semanal');
+    setTaskScheduleMode('pontual');
     setOneOffDate(getTodayStr());
     setTempSubtasks([]); 
     setShowAssignMenu(false);
@@ -867,6 +876,9 @@ const toggleDayInEdit = (day: string) => {
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Erro desconhecido';
     alert("Erro ao lançar tarefa: " + message);
+  } finally {
+    creatingTaskRef.current = false;
+    setIsCreatingTask(false);
   }
 }
   // Marca ou desmarca a conclusao da tarefa
@@ -1572,7 +1584,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
   const canManageBranches = userRole === 'admin' || canAccessPricing;
   const canAccessRegistries = true;
   const visibleSection =
-    (activeSection === 'AUDITORIA' && userRole !== 'admin') ||
+    ((activeSection === 'AUDITORIA' || activeSection === 'USUARIOS') && userRole !== 'admin') ||
     (activeSection === 'CADASTROS' && !canAccessRegistries) ||
     (activeSection === 'ESTOQUE_ERP' && !canAccessErpInventory) ||
     (activeSection === 'COMPRAS_IA' && !canAccessPaymentTerms) ||
@@ -1592,12 +1604,12 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
     '--section-soft-dark': visibleSectionTheme.softDark,
   } as CSSProperties;
   const availableSections = useMemo<AppSection[]>(() => {
-    const sections: AppSection[] = ['TAREFAS', 'REUNIAO', 'CADASTROS', 'BALACUBACO'];
+    const sections: AppSection[] = ['TAREFAS', 'REUNIAO', 'NOTAS', 'CADASTROS', 'BALACUBACO'];
     if (canAccessErpInventory) sections.push('ESTOQUE_ERP');
     if (canAccessPaymentTerms) sections.push('COMPRAS_IA', 'PRAZOS');
     if (canAccessPricing) sections.push('PRECIFICACAO', 'PRE_VENCIDOS');
     if (canAccessTransport) sections.push('TRANSPORTE');
-    if (userRole === 'admin') sections.push('AUDITORIA');
+    if (userRole === 'admin') sections.push('AUDITORIA', 'USUARIOS');
     return sections;
   }, [canAccessErpInventory, canAccessPaymentTerms, canAccessPricing, canAccessTransport, userRole]);
   const globalSearchItems = useMemo<GlobalSearchItem[]>(() => {
@@ -1614,6 +1626,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
       { id: 'module:INICIO', title: 'Inicio', description: 'Abrir central de modulos', section: 'INICIO', type: 'Modulo', keywords: 'inicio home central modulos aplicativos portal' },
       { id: 'module:TAREFAS', title: 'Tarefas', description: 'Abrir painel operacional de tarefas', section: 'TAREFAS', tab: 'HOJE', type: 'Modulo', keywords: 'tarefas hoje atrasados trade dashboard alertas historico' },
       { id: 'module:REUNIAO', title: 'Reunião', description: 'Abrir agenda mensal de reuniões', section: 'REUNIAO', type: 'Modulo', keywords: 'reuniao agenda calendario google eventos' },
+      { id: 'module:NOTAS', title: 'Bloco de notas', description: 'Abrir minhas anotações pessoais', section: 'NOTAS', type: 'Modulo', keywords: 'notas anotacoes bloco pessoal rascunho' },
     ];
 
     if (canAccessRegistries) items.push({ id: 'module:CADASTROS', title: 'Cadastros', description: 'Produtos, lojas e fornecedores', section: 'CADASTROS', type: 'Modulo', keywords: 'cadastros produtos lojas fornecedores' });
@@ -1625,6 +1638,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
     if (canAccessTransport) items.push({ id: 'module:TRANSPORTE', title: 'Transporte', description: 'Controle de dívidas de transporte', section: 'TRANSPORTE', type: 'Modulo', keywords: 'transporte dividas cobranca fornecedores credito debito' });
     if (canAccessReallocation) items.push({ id: 'module:BALACUBACO', title: 'Remanejamento Inteligente', description: 'Sugestões e exportação ERP', section: 'BALACUBACO', type: 'Modulo', keywords: 'remanejamento inteligente sugestoes estoque transferencia balacubaco' });
     if (userRole === 'admin') items.push({ id: 'module:AUDITORIA', title: 'Auditoria', description: 'Histórico de alterações do sistema', section: 'AUDITORIA', type: 'Modulo', keywords: 'auditoria historico logs alteracoes' });
+    if (userRole === 'admin') items.push({ id: 'module:USUARIOS', title: 'Usuários e permissões', description: 'Gerenciar contas, cargos e acessos', section: 'USUARIOS', type: 'Modulo', keywords: 'usuarios permissoes acesso admin contas cargos setores' });
 
     processedTasks.filter(canSeeTask).forEach((task) => {
       const assignee = profileById.get(task.assigned_to) || 'Sem responsável';
@@ -1707,14 +1721,60 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
 
   return (
     <div
-      className={`app-responsive-root app-density-compact min-h-screen text-slate-900 font-sans overflow-x-hidden w-full ${visibleSection === 'INICIO' ? 'pb-0' : visibleSection === 'TRANSPORTE' || visibleSection === 'REUNIAO' || visibleSection === 'BALACUBACO' || visibleSection === 'COMPRAS_IA' || visibleSection === 'PRE_VENCIDOS' || visibleSection === 'ESTOQUE_ERP' ? 'pb-24 md:pb-0' : 'pb-24 md:pb-20'}`}
+      className={`app-responsive-root app-density-compact min-h-screen text-slate-900 font-sans overflow-x-clip w-full ${visibleSection === 'INICIO' ? 'pb-0' : visibleSection === 'TRANSPORTE' || visibleSection === 'REUNIAO' || visibleSection === 'BALACUBACO' || visibleSection === 'COMPRAS_IA' || visibleSection === 'PRE_VENCIDOS' || visibleSection === 'ESTOQUE_ERP' ? 'pb-24 md:pb-0' : 'pb-24 md:pb-20'}`}
       data-section-theme={visibleSection}
       style={appThemeStyle}
     >
       <TableFocusController />
+{showCreateBox && (
+  <CreateTaskModal
+    taskTitle={taskTitle}
+    setTaskTitle={setTaskTitle}
+    notes={notes}
+    setNotes={setNotes}
+    assignedTo={assignedTo}
+    setAssignedTo={setAssignedTo}
+    category={category}
+    setCategory={setCategory}
+    taskPriority={taskPriority}
+    setTaskPriority={setTaskPriority}
+    taskScheduleMode={taskScheduleMode}
+    setTaskScheduleMode={setTaskScheduleMode}
+    oneOffDate={oneOffDate}
+    setOneOffDate={setOneOffDate}
+    repeatInterval={repeatInterval}
+    setRepeatInterval={setRepeatInterval}
+    selectedDays={selectedDays}
+    setSelectedDays={setSelectedDays}
+    tempSubtasks={tempSubtasks}
+    setTempSubtasks={setTempSubtasks}
+    displayDate={displayDate}
+    setDisplayDate={setDisplayDate}
+    dateInputRef={dateInputRef}
+    profiles={profiles}
+    userRole={userRole}
+    userSector={userSector}
+    marginRules={marginRules}
+    showAssignMenu={showAssignMenu}
+    setShowAssignMenu={setShowAssignMenu}
+    showCategoryMenu={showCategoryMenu}
+    setShowCategoryMenu={setShowCategoryMenu}
+    onToggleDay={toggleDay}
+    onClose={() => {
+      setShowAssignMenu(false);
+      setShowCategoryMenu(false);
+      setShowCreateBox(false);
+    }}
+    onSave={addTask}
+    isSaving={isCreatingTask}
+  />
+)}
 
-      {visibleSection !== 'INICIO' && (
+      <div className={visibleSection === 'INICIO' ? 'hidden' : ''}>
         <AppSidebar
+          key={user.id}
+          userId={user.id}
+          availableSections={availableSections}
           activeSection={visibleSection}
           userRole={userRole}
           userSector={userSector}
@@ -1726,7 +1786,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
             }
           }}
         />
-      )}
+      </div>
 
       <div className={visibleSection === 'INICIO' ? '' : 'md:pl-20'}>
       <AppShellNav
@@ -1738,6 +1798,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
           <button
             onClick={() => {
               if (!showCreateBox) {
+                setSourceNoteId(null);
                 setCategory(DEFAULT_TASK_CATEGORY);
                 setShowCategoryMenu(false);
               }
@@ -1859,7 +1920,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
         />
       ) : visibleSection === 'TAREFAS' ? (
         <>
-      <main className="mx-auto max-w-6xl px-4 pb-6">
+      <main className={activeTab === 'SEMANA' ? 'mx-auto w-full px-3 pb-6 sm:px-5' : 'mx-auto max-w-6xl px-4 pb-6'}>
   {activeTab === 'DASHBOARD' ? (
     <DashboardView
       filter={dashFilter}
@@ -1894,48 +1955,6 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
      {/* ----------------------------------------------------------- */}
 {/* Modal flutuante: lançar nova tarefa */}
 {/* ----------------------------------------------------------- */}
-{showCreateBox && (
-  <CreateTaskModal
-    taskTitle={taskTitle}
-    setTaskTitle={setTaskTitle}
-    notes={notes}
-    setNotes={setNotes}
-    assignedTo={assignedTo}
-    setAssignedTo={setAssignedTo}
-    category={category}
-    setCategory={setCategory}
-    taskPriority={taskPriority}
-    setTaskPriority={setTaskPriority}
-    taskScheduleMode={taskScheduleMode}
-    setTaskScheduleMode={setTaskScheduleMode}
-    oneOffDate={oneOffDate}
-    setOneOffDate={setOneOffDate}
-    repeatInterval={repeatInterval}
-    setRepeatInterval={setRepeatInterval}
-    selectedDays={selectedDays}
-    setSelectedDays={setSelectedDays}
-    tempSubtasks={tempSubtasks}
-    setTempSubtasks={setTempSubtasks}
-    displayDate={displayDate}
-    setDisplayDate={setDisplayDate}
-    dateInputRef={dateInputRef}
-    profiles={profiles}
-    userRole={userRole}
-    userSector={userSector}
-    marginRules={marginRules}
-    showAssignMenu={showAssignMenu}
-    setShowAssignMenu={setShowAssignMenu}
-    showCategoryMenu={showCategoryMenu}
-    setShowCategoryMenu={setShowCategoryMenu}
-    onToggleDay={toggleDay}
-    onClose={() => {
-      setShowAssignMenu(false);
-      setShowCategoryMenu(false);
-      setShowCreateBox(false);
-    }}
-    onSave={addTask}
-  />
-)}
       {activeTab === 'SEMANA' ? (
         <WeeklyTaskScheduleView
           tasks={filteredTasks}
@@ -1977,6 +1996,35 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
           onCreateMeeting={addMeeting}
           onUpdateMeeting={updateMeeting}
         />
+      ) : visibleSection === 'USUARIOS' && userRole === 'admin' ? (
+        <SettingsModal embedded profiles={profiles} userRole={userRole}
+          onClose={() => setActiveSection('INICIO')} onRoleChange={changeRole} onSectorChange={changeSector}
+          onAccountStatusChange={changeAccountStatus} onActiveChange={changeActive} onSignOut={signOut} />
+      ) : visibleSection === 'NOTAS' ? (
+        <PersonalNotes key={user.id} userId={user.id} refreshKey={notesVersion}
+          onCreateTask={(noteId, title, content, subtasks) => {
+            setSourceNoteId(noteId);
+            setTaskTitle(title);
+            setNotes(content);
+            setAssignedTo(user.id);
+            setCategory(DEFAULT_TASK_CATEGORY);
+            setTaskPriority(DEFAULT_TASK_PRIORITY);
+            setTaskScheduleMode('pontual');
+            setSelectedDays([]);
+            setRepeatInterval(1);
+            setTempSubtasks(subtasks);
+            setOneOffDate(getTodayStr());
+            setDisplayDate(formatToBR(getTodayStr()));
+            setShowAssignMenu(false);
+            setShowCategoryMenu(false);
+            setShowCreateBox(true);
+          }}
+          onViewTask={async taskId => {
+            const { data, error } = await supabase.from('tasks').select('*').eq('id', taskId).single();
+            if (error || !data) throw new Error('Tarefa indisponível.');
+            const processed = processTasks([{ ...data, archived_at: null } as Task])[0];
+            setViewingTask({ ...processed, archived_at: data.archived_at });
+          }} />
       ) : visibleSection === 'COMPRAS_IA' ? (
         <PurchaseAssistant />
       ) : visibleSection === 'CADASTROS' ? (

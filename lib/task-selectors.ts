@@ -1,6 +1,6 @@
 import { GLOBAL_MEMBER_TABS } from "@/app/constants";
 import { compareTaskPriority, normalizeTaskPriority } from "@/lib/task-priority";
-import { formatToBR, getLastOccurrence, getNextOccurrence, getTodayStr } from "@/lib/task-recurrence";
+import { formatToBR, getLastOccurrence, getNextOccurrence, getPreviousIncompleteOccurrence, getTodayStr } from "@/lib/task-recurrence";
 import type { ProcessedTask, Task, TaskWorkflowStatus, UserRole } from "@/lib/types";
 
 interface FilterTasksInput {
@@ -49,6 +49,12 @@ function compareFlowTasks(left: ProcessedTask, right: ProcessedTask) {
   const doneOrder = Number(left.isDoneToday) - Number(right.isDoneToday);
   if (doneOrder !== 0) return doneOrder;
 
+  const inProgressOrder = Number(getWorkflowStatus(right) === "em_andamento") - Number(getWorkflowStatus(left) === "em_andamento");
+  if (inProgressOrder !== 0) return inProgressOrder;
+
+  const previousPendingOrder = Number(Boolean(right.previousIncompleteOccurrence)) - Number(Boolean(left.previousIncompleteOccurrence));
+  if (previousPendingOrder !== 0) return previousPendingOrder;
+
   const workflowOrder = WORKFLOW_ORDER[getWorkflowStatus(left)] - WORKFLOW_ORDER[getWorkflowStatus(right)];
   if (workflowOrder !== 0) return workflowOrder;
 
@@ -95,6 +101,9 @@ export function processTasks(tasks: Task[]): ProcessedTask[] {
       lastOcc,
       nextOcc,
       isDoneToday,
+      previousIncompleteOccurrence: lastOcc === today && !isDoneToday && !hasActiveScheduleOverride
+        ? getPreviousIncompleteOccurrence(task, lastOcc)
+        : null,
     };
   });
 }

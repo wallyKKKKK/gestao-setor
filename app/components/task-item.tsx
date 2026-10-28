@@ -3,6 +3,7 @@
 import { memo, useRef, useState } from "react";
 import type { PointerEvent, WheelEvent } from "react";
 import { Check, ChevronDown, Edit3, Flag, MessageSquare, PauseCircle, Play, RotateCcw, Trash2 } from "lucide-react";
+import { TaskOccurrenceNotice } from "@/app/components/task-occurrence-notice";
 import { addAuditLog, addTaskHistory, updateTaskCompletion, updateTaskSubtasks } from "@/lib/api";
 import { MARGIN_FLOW_CATEGORY, formatMarginPercent, parseMarginFlowTaskNotes } from "@/lib/margin-flow-task";
 import { getPermissionDeniedMessage } from "@/lib/permissions";
@@ -14,7 +15,11 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
   const [expanded, setExpanded] = useState(false);
   const [feedbackOffset, setFeedbackOffset] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
-  const [optimisticSubtasks, setOptimisticSubtasks] = useState<Subtask[] | null>(null);
+  const [optimisticSubtasks, setOptimisticSubtasks] = useState<{
+    source: Subtask[] | undefined;
+    isDoneToday: boolean;
+    subtasks: Subtask[];
+  } | null>(null);
   const dragStartX = useRef<number | null>(null);
   const cardRef = useRef<HTMLDivElement | null>(null);
   const offsetRef = useRef(0);
@@ -23,7 +28,9 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
   const suppressNextClick = useRef(false);
   const isOwner = task.assigned_to === currentUser?.id;
   const canManage = userRole === "admin" || userRole === "gerente" || isOwner;
-  const subtasks = optimisticSubtasks ?? task.subtasks ?? [];
+  const subtasks = optimisticSubtasks?.source === task.subtasks && optimisticSubtasks?.isDoneToday === task.isDoneToday
+    ? optimisticSubtasks.subtasks
+    : task.subtasks ?? [];
   const subDone = subtasks.filter((s: Subtask) => s.done).length;
   const subTotal = subtasks.length;
   const subtaskProgressPercent = subTotal > 0 ? Math.round((subDone / subTotal) * 100) : 0;
@@ -32,6 +39,7 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
   const isPostponed = task.schedule_override_type === "postponed";
   const hasScheduleOverride = isAdvanced || isPostponed;
   const isScheduledToday = task.lastOcc === getTodayStr();
+  const previousIncompleteOccurrence = isScheduledToday && !task.isDoneToday ? task.previousIncompleteOccurrence : null;
   const assignedProfile = profiles.find((p: Profile) => p.id === task.assigned_to);
   const assignedFirstName = assignedProfile?.full_name?.split(" ")[0] || "Sem dono";
   const assignedInitial = assignedProfile?.full_name?.charAt(0) || "?";
@@ -62,6 +70,17 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
   const workflowFirstName = workflowName.split(" ")[0] || assignedFirstName;
   const canPauseWorkflow = !isInProgress || !task.workflow_started_by || task.workflow_started_by === currentUser?.id;
   const pauseDeniedMessage = `Somente ${workflowFirstName} pode pausar esta tarefa.`;
+  const subtaskButtonTone = previousIncompleteOccurrence
+    ? "bg-amber-100 border-amber-300 text-amber-800 hover:bg-amber-200"
+    : task.isDoneToday
+      ? "bg-green-100 border-green-300 text-green-800 hover:bg-green-200"
+      : isInProgress
+        ? "bg-blue-100 border-blue-300 text-blue-800 hover:bg-blue-200"
+        : isLate
+          ? "bg-red-100 border-red-300 text-red-800 hover:bg-red-200"
+          : isAdvanced
+            ? "bg-blue-100 border-blue-300 text-blue-800 hover:bg-blue-200"
+            : "bg-white border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50";
   const workflowBadgeClassName = workflowStatus === "em_andamento"
     ? "border-blue-600 bg-blue-600 text-white shadow-[0_8px_18px_rgba(37,99,235,0.20)]"
     : workflowStatus === "bloqueada"
@@ -220,7 +239,7 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
     const allDone = newSubtasks.length > 0 && newSubtasks.every((s: Subtask) => s.done);
     const todayStr = getTodayStr();
 
-    setOptimisticSubtasks(newSubtasks);
+    setOptimisticSubtasks({ source: task.subtasks, isDoneToday: task.isDoneToday, subtasks: newSubtasks });
 
     try {
       if (allDone && !task.isDoneToday) {
@@ -288,6 +307,7 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
 
       <div
         ref={cardRef}
+        data-task-card
         onPointerDown={beginDrag}
         onPointerMove={moveDrag}
         onPointerUp={finishDrag}
@@ -297,14 +317,18 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
         will-change-transform
         ${isDragging ? "transition-none cursor-grabbing" : "transition-all duration-200"}
         ${dragAction === "advance" ? "ring-4 ring-blue-300" : dragAction === "postpone" ? "ring-4 ring-slate-300" : ""}
-        ${task.isDoneToday ? "bg-green-400 border-green-200 opacity-80" :
-          isInProgress ? "bg-blue-50 border-blue-500 shadow-[4px_4px_0px_0px_rgba(37,99,235,0.55),0_0_0_4px_rgba(37,99,235,0.08)] animate-[pulse_3.2s_ease-in-out_infinite]" :
+        ${previousIncompleteOccurrence ? "bg-amber-50 border-amber-400 hover:border-amber-500 shadow-[4px_4px_0px_0px_rgba(245,158,11,0.55),0_0_0_4px_rgba(245,158,11,0.08)]" :
+          task.isDoneToday ? "bg-green-400 border-green-200 opacity-80" :
+          isInProgress ? "task-in-progress shadow-[4px_4px_0px_0px_rgba(37,99,235,0.55),0_0_0_4px_rgba(37,99,235,0.08)]" :
           isLate ? "bg-red-400 border-red-200 shadow-[4px_4px_0px_0px_rgba(220,38,38,1)]" :
           isAdvanced ? "bg-blue-50 border-blue-500 shadow-[4px_4px_0px_0px_rgba(37,99,235,1)]" :
           isPostponed ? "bg-slate-50 border-[#232D4A] shadow-[4px_4px_0px_0px_rgba(35,45,74,1)]" :
           "bg-white border-slate-100 hover:border-slate-900 hover:shadow-[6px_6px_0px_0px_rgba(15,23,42,1)]"
         }`}
       >
+      {previousIncompleteOccurrence && (
+        <TaskOccurrenceNotice date={previousIncompleteOccurrence} />
+      )}
       {subTotal > 0 && (
         <div
           aria-hidden="true"
@@ -356,7 +380,7 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
           <div
             role="button"
             tabIndex={0}
-            className="cursor-pointer select-none group/title"
+            className={`cursor-pointer select-none group/title ${previousIncompleteOccurrence ? "pr-8" : ""}`}
             onPointerDown={(event) => event.stopPropagation()}
             onClick={() => viewTask()}
             onKeyDown={(event) => {
@@ -367,7 +391,7 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
             }}
           >
             <h3 className={`text-base sm:text-lg font-black uppercase tracking-tight leading-tight sm:leading-none transition-colors
-              ${task.isDoneToday ? "line-through text-green-900/40" : "text-slate-900 group-hover:text-blue-600"}`}
+              ${task.isDoneToday ? "text-green-900/40" : "text-slate-900 group-hover:text-blue-600"}`}
             >
               {task.title}
             </h3>
@@ -435,7 +459,7 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
             <button
               type="button"
               className={`flex items-center gap-3 px-4 py-2 rounded-2xl border-2 transition-all cursor-pointer
-                ${expanded ? "bg-blue-600 border-blue-700 text-white shadow-[0_8px_18px_rgba(37,99,235,0.22)]" : "bg-blue-50 border-blue-100 text-blue-700 hover:border-blue-300 hover:bg-white"}`}
+                ${subtaskButtonTone} ${expanded ? "ring-1 ring-current" : ""}`}
               onPointerDown={(event) => event.stopPropagation()}
               onClick={(event) => {
                 event.stopPropagation();
@@ -445,8 +469,8 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
               aria-label={`${expanded ? "Ocultar" : "Mostrar"} subtarefas`}
             >
               <div className="flex items-center gap-2">
-                <div className={`w-12 sm:w-16 h-1.5 rounded-full overflow-hidden ${expanded ? "bg-white/25" : "bg-blue-100"}`}>
-                  <div className={`${expanded ? "bg-white" : "bg-blue-500"} h-full transition-all duration-500`} style={{ width: `${(subDone / subTotal) * 100}%` }} />
+                <div className="w-12 sm:w-16 h-1.5 rounded-full overflow-hidden bg-current/15">
+                  <div className="bg-current h-full transition-all duration-500" style={{ width: `${(subDone / subTotal) * 100}%` }} />
                 </div>
                 <span className="text-[10px] font-black whitespace-nowrap">{subDone}/{subTotal}</span>
               </div>
