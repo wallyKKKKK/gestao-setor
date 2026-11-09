@@ -74,6 +74,7 @@ const SectionLoader = () => (
 
 const DEFAULT_TASK_CATEGORY = 'Geral'
 const PersonalNotes = dynamic(() => import('@/app/components/personal-notes').then(mod => mod.PersonalNotes), { loading: SectionLoader })
+const ToolsManager = dynamic(() => import('@/app/components/tools-manager').then(mod => mod.ToolsManager), { loading: SectionLoader })
 
 const AuditTimeline = dynamic(() => import('@/app/components/audit-timeline').then((mod) => mod.AuditTimeline), { loading: SectionLoader })
 const MeetingCalendarView = dynamic(() => import('@/app/components/meeting-calendar-view').then((mod) => mod.MeetingCalendarView), { loading: SectionLoader })
@@ -145,10 +146,11 @@ function timeToMinutes(time: string | null) {
 const SECTION_LABELS: Record<AppSection, string> = {
   INICIO: 'Inicio',
   NOTAS: 'Bloco de notas',
+  FERRAMENTAS: 'Ferramentas',
   USUARIOS: 'Usuários e permissões',
   TAREFAS: 'Tarefas',
   COMPRAS_IA: 'Compras IA',
-  REUNIAO: 'Reunião',
+  REUNIAO: 'Agenda',
   CADASTROS: 'Cadastros',
   ESTOQUE_ERP: 'Estoque ERP',
   PRECIFICACAO: 'Precificação',
@@ -257,6 +259,7 @@ export default function App() {
   
   const [activeSection, setActiveSection] = useState<AppSection>('INICIO')
   const [activeTab, setActiveTab] = useState('HOJE')
+  const [taskLegendTarget, setTaskLegendTarget] = useState<HTMLDivElement | null>(null)
   const [dashFilter, setDashFilter] = useState<'HOJE' | 'SEMANAL'>('HOJE')
   const [filterUsers, setFilterUsers] = useState<string[]>([])
   const [showCreateBox, setShowCreateBox] = useState(false)
@@ -991,6 +994,7 @@ const scheduleTaskOverride = useCallback(async (task: ProcessedTask, action: 'ad
   if (!user) return;
 
   const todayStr = getTodayStr();
+  if (action === 'advance' && (activeTab === 'HOJE' || task.lastOcc === todayStr)) return;
   const overrideDate = action === 'advance'
     ? todayStr
     : action === 'postpone'
@@ -1023,7 +1027,7 @@ const scheduleTaskOverride = useCallback(async (task: ProcessedTask, action: 'ad
     alert('Erro ao ajustar a agenda da tarefa: ' + message);
     fetchTasks();
   }
-}, [addAudit, fetchTasks, user]);
+}, [activeTab, addAudit, fetchTasks, user]);
 
 const changeTaskWorkflow = useCallback(async (task: ProcessedTask, workflowStatus: TaskWorkflowStatus, blockedReason: string | null = null) => {
   if (!user) return;
@@ -1604,7 +1608,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
     '--section-soft-dark': visibleSectionTheme.softDark,
   } as CSSProperties;
   const availableSections = useMemo<AppSection[]>(() => {
-    const sections: AppSection[] = ['TAREFAS', 'REUNIAO', 'NOTAS', 'CADASTROS', 'BALACUBACO'];
+    const sections: AppSection[] = ['TAREFAS', 'REUNIAO', 'NOTAS', 'FERRAMENTAS', 'CADASTROS', 'BALACUBACO'];
     if (canAccessErpInventory) sections.push('ESTOQUE_ERP');
     if (canAccessPaymentTerms) sections.push('COMPRAS_IA', 'PRAZOS');
     if (canAccessPricing) sections.push('PRECIFICACAO', 'PRE_VENCIDOS');
@@ -1625,8 +1629,9 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
     const items: GlobalSearchItem[] = [
       { id: 'module:INICIO', title: 'Inicio', description: 'Abrir central de modulos', section: 'INICIO', type: 'Modulo', keywords: 'inicio home central modulos aplicativos portal' },
       { id: 'module:TAREFAS', title: 'Tarefas', description: 'Abrir painel operacional de tarefas', section: 'TAREFAS', tab: 'HOJE', type: 'Modulo', keywords: 'tarefas hoje atrasados trade dashboard alertas historico' },
-      { id: 'module:REUNIAO', title: 'Reunião', description: 'Abrir agenda mensal de reuniões', section: 'REUNIAO', type: 'Modulo', keywords: 'reuniao agenda calendario google eventos' },
+      { id: 'module:REUNIAO', title: 'Agenda', description: 'Abrir agenda mensal e compromissos', section: 'REUNIAO', type: 'Modulo', keywords: 'reuniao agenda calendario google eventos' },
       { id: 'module:NOTAS', title: 'Bloco de notas', description: 'Abrir minhas anotações pessoais', section: 'NOTAS', type: 'Modulo', keywords: 'notas anotacoes bloco pessoal rascunho' },
+      { id: 'module:FERRAMENTAS', title: 'Ferramentas', description: 'Programas e utilitários para download', section: 'FERRAMENTAS', type: 'Modulo', keywords: 'ferramentas programas executaveis downloads utilitarios baixar' },
     ];
 
     if (canAccessRegistries) items.push({ id: 'module:CADASTROS', title: 'Cadastros', description: 'Produtos, lojas e fornecedores', section: 'CADASTROS', type: 'Modulo', keywords: 'cadastros produtos lojas fornecedores' });
@@ -1719,9 +1724,11 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
 
   if (!user || isPasswordRecovery) return <Login />
 
+  const isWeeklyTaskView = visibleSection === 'TAREFAS' && activeTab === 'SEMANA'
+
   return (
     <div
-      className={`app-responsive-root app-density-compact min-h-screen text-slate-900 font-sans overflow-x-clip w-full ${visibleSection === 'INICIO' ? 'pb-0' : visibleSection === 'TRANSPORTE' || visibleSection === 'REUNIAO' || visibleSection === 'BALACUBACO' || visibleSection === 'COMPRAS_IA' || visibleSection === 'PRE_VENCIDOS' || visibleSection === 'ESTOQUE_ERP' ? 'pb-24 md:pb-0' : 'pb-24 md:pb-20'}`}
+      className={`app-responsive-root app-density-compact text-slate-900 font-sans w-full ${isWeeklyTaskView ? 'h-dvh overflow-clip pb-24 md:pb-0' : 'min-h-screen overflow-x-clip'} ${isWeeklyTaskView || visibleSection === 'INICIO' ? '' : visibleSection === 'TRANSPORTE' || visibleSection === 'REUNIAO' || visibleSection === 'BALACUBACO' || visibleSection === 'COMPRAS_IA' || visibleSection === 'PRE_VENCIDOS' || visibleSection === 'ESTOQUE_ERP' ? 'pb-24 md:pb-0' : 'pb-24 md:pb-20'}`}
       data-section-theme={visibleSection}
       style={appThemeStyle}
     >
@@ -1788,12 +1795,13 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
         />
       </div>
 
-      <div className={visibleSection === 'INICIO' ? '' : 'md:pl-20'}>
+      <div className={visibleSection === 'INICIO' ? '' : isWeeklyTaskView ? 'flex h-full flex-col md:pl-20' : 'md:pl-20'}>
       <AppShellNav
         section={visibleSection}
         sectionTitle={SECTION_LABELS[visibleSection]}
         sectionSubtitle={visibleSection === 'TAREFAS' ? activeTab : undefined}
         showTaskTools={visibleSection === 'TAREFAS'}
+        taskLegend={<div ref={setTaskLegendTarget} />}
         taskAction={visibleSection === 'TAREFAS' ? (
           <button
             onClick={() => {
@@ -1920,7 +1928,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
         />
       ) : visibleSection === 'TAREFAS' ? (
         <>
-      <main className={activeTab === 'SEMANA' ? 'mx-auto w-full px-3 pb-6 sm:px-5' : 'mx-auto max-w-6xl px-4 pb-6'}>
+      <main className={isWeeklyTaskView ? 'flex min-h-0 w-full flex-1 flex-col' : 'mx-auto max-w-6xl px-4 pb-6'}>
   {activeTab === 'DASHBOARD' ? (
     <DashboardView
       filter={dashFilter}
@@ -1965,6 +1973,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
       ) : (
         <TaskListView
           activeTab={activeTab}
+          legendTarget={taskLegendTarget}
           tasks={filteredTasks}
           profiles={profiles}
           tradeNoteTaskIds={tradeNoteTaskIds}
@@ -1986,6 +1995,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
         </>
       ) : visibleSection === 'REUNIAO' ? (
         <MeetingCalendarView
+          key={user.id}
           tasks={meetingTasks}
           profiles={profiles}
           userSector={userSector}
@@ -1996,6 +2006,8 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
           onCreateMeeting={addMeeting}
           onUpdateMeeting={updateMeeting}
         />
+      ) : visibleSection === 'FERRAMENTAS' ? (
+        <ToolsManager key={user.id} userId={user.id} canManage={userRole === 'admin'} />
       ) : visibleSection === 'USUARIOS' && userRole === 'admin' ? (
         <SettingsModal embedded profiles={profiles} userRole={userRole}
           onClose={() => setActiveSection('INICIO')} onRoleChange={changeRole} onSectorChange={changeSector}

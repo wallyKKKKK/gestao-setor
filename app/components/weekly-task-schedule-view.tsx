@@ -4,6 +4,7 @@ import * as XLSX from 'xlsx-js-style';
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import { useState } from 'react';
 import { CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clock, Download, UserRound } from 'lucide-react';
+import { getTaskCardTone, taskCardSurfaceClass, taskCardToneClasses } from '@/lib/task-card-tone';
 import { taskPriorityBadgeClassName, taskPriorityLabel } from '@/lib/task-priority';
 import { monthlyWeekdayOccursOnDate, parseMonthlyWeekdayRepeats } from '@/lib/task-recurrence';
 import type { ProcessedTask, Profile } from '@/lib/types';
@@ -313,8 +314,8 @@ export function WeeklyTaskScheduleView({ tasks, profiles, selectedUserIds, onVie
   };
 
   return (
-    <div className="w-full pt-4">
-      <header className="mb-3 flex flex-wrap items-center justify-between gap-3">
+    <div className="flex min-h-0 w-full flex-1 flex-col pt-4">
+      <header className="mb-3 flex shrink-0 flex-wrap items-center justify-between gap-3 px-3 sm:px-5">
         <div className="flex min-w-0 items-center gap-3">
           <CalendarDays size={22} className="shrink-0 text-blue-600" />
           <div>
@@ -331,8 +332,8 @@ export function WeeklyTaskScheduleView({ tasks, profiles, selectedUserIds, onVie
           <button type="button" onClick={exportSchedule} disabled={!totalTasks} className="inline-flex h-9 items-center gap-2 rounded-md bg-blue-600 px-3 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-40"><Download size={15} /> Exportar XLSX</button>
         </div>
       </header>
-      <section aria-label="Calendário de tarefas da semana" className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
-        <div className="grid min-w-[1000px] grid-cols-5 divide-x divide-slate-200">
+      <section aria-label="Calendário de tarefas da semana" tabIndex={0} className="min-h-0 flex-1 overflow-auto overscroll-contain scroll-pt-20 rounded-lg border border-slate-200 bg-white">
+        <div className="grid min-h-full min-w-[1000px] grid-cols-5 divide-x divide-slate-200">
           {weekDays.map(day => {
             const dayTasks = scopedTasks
               .filter(task => taskOccursOnDay(task, day))
@@ -340,32 +341,33 @@ export function WeeklyTaskScheduleView({ tasks, profiles, selectedUserIds, onVie
             const isToday = day.date === today;
             return (
               <section key={day.id} aria-label={day.label + ' ' + formatDateBR(day.date)} className="min-w-0">
-                <header className={'flex items-center justify-between gap-2 border-b border-slate-200 px-3 py-3 ' + (isToday ? 'bg-blue-50' : 'bg-slate-50/70')}>
+                <header className={'sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-slate-200 px-3 py-3 ' + (isToday ? 'bg-blue-50' : 'bg-slate-50')}>
                   <div>
                     <h3 className={'text-base font-bold ' + (isToday ? 'text-blue-700' : 'text-slate-700')}>{day.label}</h3>
                     <p className="mt-1 text-xs text-slate-500">{dayTasks.length} tarefa{dayTasks.length === 1 ? '' : 's'}{isToday ? ' · Hoje' : ''}</p>
                   </div>
                   <span aria-current={isToday ? 'date' : undefined} className={'flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-lg font-semibold ' + (isToday ? 'bg-blue-600 text-white' : 'text-slate-700')}>{day.dayNumber}</span>
                 </header>
-                <div className={'min-h-[520px] space-y-2 p-2.5 ' + (isToday ? 'bg-blue-50/30' : '')}>
+                <div className={'space-y-2 p-2.5 ' + (isToday ? 'bg-blue-50/30' : '')}>
                   {dayTasks.length === 0 ? <p className="px-2 py-8 text-center text-xs text-slate-400">Sem tarefas</p> : dayTasks.map(task => {
                     const profile = profileById.get(task.assigned_to);
                     const status = getTaskStatusLabel(task, day.date);
                     const done = status === 'Concluida';
                     const inProgress = status === 'Em andamento';
-                    const previousPending = Boolean(task.previousIncompleteOccurrence && task.lastOcc === day.date && !done);
-                    const tone = done ? 'border-l-emerald-500 bg-emerald-50/50'
-                      : previousPending || status === 'Bloqueada' ? 'border-l-amber-500 bg-amber-50'
-                      : inProgress ? 'border-l-blue-600 bg-blue-50'
-                      : 'border-l-slate-300 bg-white';
+                    const tone = done ? 'done'
+                      : status === 'Bloqueada' ? 'previous'
+                      : task.lastOcc === day.date ? getTaskCardTone({ ...task, isDoneToday: false }, today)
+                      : task.schedule_override_date === day.date ? task.schedule_override_type ?? 'default'
+                      : 'default';
+                    const strongFill = tone === 'done' || tone === 'late';
                     return (
-                      <button key={day.id + '-' + task.id} type="button" title={task.title} onClick={() => onView(task)} className={'group w-full rounded-md border border-slate-200 border-l-[3px] p-3 text-left transition hover:border-slate-400 focus-visible:outline-2 focus-visible:outline-blue-600 ' + tone}>
-                        <p className="break-words text-[13px] font-semibold leading-snug text-slate-900 group-hover:text-blue-700">{task.title}</p>
+                      <button key={day.id + '-' + task.id} type="button" title={task.title} onClick={() => onView(task)} className={`w-full rounded-md p-3 text-left transition hover:brightness-95 focus-visible:outline-2 focus-visible:outline-blue-600 [--task-shadow-offset:2px] ${taskCardSurfaceClass} ${taskCardToneClasses[tone]} ${strongFill ? 'text-slate-950' : 'text-slate-900'}`}>
+                        <p className="break-words text-[13px] font-semibold leading-snug">{task.title}</p>
                         <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1">
-                          <span className={'inline-flex items-center gap-1 text-[11px] font-medium ' + (done ? 'text-emerald-700' : inProgress ? 'text-blue-700' : 'text-slate-500')}>{done ? <CheckCircle2 size={12} /> : <Clock size={12} />}{done ? 'Concluída' : status}</span>
+                          <span className={'inline-flex items-center gap-1 text-[11px] font-medium ' + (strongFill ? '' : inProgress ? 'text-blue-700' : 'text-slate-600')}>{done ? <CheckCircle2 size={12} /> : <Clock size={12} />}{done ? 'Concluída' : status}</span>
                           <span className={'rounded border px-1.5 py-0.5 text-[9px] font-semibold ' + taskPriorityBadgeClassName(task.priority)}>{taskPriorityLabel(task.priority)}</span>
                         </div>
-                        <div className="mt-2 flex min-w-0 items-center gap-1.5 text-[11px] text-slate-500"><UserRound size={12} className="shrink-0" /><span className="truncate">{profile?.full_name || 'Sem usuário'}</span></div>
+                        <div className={`mt-2 flex min-w-0 items-center gap-1.5 text-[11px] ${strongFill ? '' : 'text-slate-600'}`}><UserRound size={12} className="shrink-0" /><span className="truncate">{profile?.full_name || 'Sem usuário'}</span></div>
                       </button>
                     );
                   })}

@@ -2,12 +2,12 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { BadgePercent, CalendarDays, ClipboardList, Clock3, Database, ListTodo, NotebookPen, PackageSearch, ShoppingCart, Shuffle, SlidersHorizontal, Tags, Truck, Users, X } from 'lucide-react';
+import { BadgePercent, CalendarDays, ClipboardList, Clock3, Database, ListTodo, NotebookPen, PackageSearch, ShoppingCart, Shuffle, SlidersHorizontal, Tags, Truck, Users, Wrench, X } from 'lucide-react';
 import type { UserRole } from '@/lib/types';
 import { getSectionTheme } from '@/lib/section-theme';
 import { supabase } from '@/lib/supabase';
 
-export type AppSection = 'INICIO' | 'TAREFAS' | 'REUNIAO' | 'COMPRAS_IA' | 'CADASTROS' | 'ESTOQUE_ERP' | 'PRECIFICACAO' | 'PRE_VENCIDOS' | 'PRAZOS' | 'TRANSPORTE' | 'BALACUBACO' | 'AUDITORIA' | 'NOTAS' | 'USUARIOS';
+export type AppSection = 'INICIO' | 'TAREFAS' | 'REUNIAO' | 'COMPRAS_IA' | 'CADASTROS' | 'ESTOQUE_ERP' | 'PRECIFICACAO' | 'PRE_VENCIDOS' | 'PRAZOS' | 'TRANSPORTE' | 'BALACUBACO' | 'AUDITORIA' | 'NOTAS' | 'USUARIOS' | 'FERRAMENTAS';
 
 interface AppSidebarProps {
   activeSection: AppSection;
@@ -21,8 +21,9 @@ interface AppSidebarProps {
 
 const items = [
   { id: 'TAREFAS' as const, label: 'Tarefas', icon: ListTodo },
-  { id: 'REUNIAO' as const, label: 'Reuniao', icon: CalendarDays },
+  { id: 'REUNIAO' as const, label: 'Agenda', icon: CalendarDays },
   { id: 'NOTAS' as const, label: 'Notas', icon: NotebookPen },
+  { id: 'FERRAMENTAS' as const, label: 'Ferramentas', icon: Wrench },
   { id: 'COMPRAS_IA' as const, label: 'Compras IA', icon: ShoppingCart },
   { id: 'CADASTROS' as const, label: 'Cadastros', icon: Database },
   { id: 'ESTOQUE_ERP' as const, label: 'Estoque', icon: PackageSearch },
@@ -107,14 +108,14 @@ export function AppSidebar({
   };
 
   return (
-    <><aside aria-label="Atalhos dos módulos" className="fixed bottom-0 left-0 right-0 md:top-0 md:bottom-0 md:right-auto md:w-20 bg-[#151D33] text-white z-50 border-t md:border-t-0 md:border-r border-white/10">
+    <><aside aria-label="Atalhos dos módulos" className="app-sidebar fixed bottom-0 left-0 right-0 md:top-0 md:bottom-0 md:right-auto md:w-20 bg-[#151D33] text-white z-50 border-t md:border-t-0 md:border-r border-white/10">
       <div className="h-[76px] md:h-full min-h-0 flex md:flex-col items-center gap-2 md:gap-3 md:py-3 px-2 md:px-0">
         <button
           type="button"
           onClick={() => onSectionChange('INICIO')}
           className={[
-            'flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl font-black italic shadow-lg transition-all',
-            activeSection === 'INICIO' ? 'bg-white ring-2 ring-white/30' : 'text-white hover:brightness-110',
+            'flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl font-black italic',
+            activeSection === 'INICIO' ? 'bg-white' : 'text-white',
           ].join(' ')}
           style={activeSection === 'INICIO' ? { color: homeTheme.accent } : { backgroundColor: homeTheme.accent }}
           aria-label="Voltar para o inicio"
@@ -140,10 +141,10 @@ export function AppSidebar({
                   'h-[60px] w-16 shrink-0 rounded-2xl flex flex-col items-center justify-center gap-1 transition-all border',
                   isActive ? 'bg-white border-white' : 'bg-white/5 text-slate-400 border-white/10 hover:bg-white/10 hover:text-white',
                 ].join(' ')}
-                style={isActive ? { color: itemTheme.accent, boxShadow: '0 8px 24px ' + itemTheme.accent + '40' } : undefined}
+                style={isActive ? { color: itemTheme.accent } : undefined}
               >
                 <Icon size={20} strokeWidth={isActive ? 3 : 2} />
-                <span className="text-[8px] font-black uppercase tracking-widest">{item.label}</span>
+                <span className="block w-full min-w-0 break-words px-1 text-center text-[8px] font-black uppercase leading-tight tracking-normal">{item.label}</span>
               </button>
             );
           })}

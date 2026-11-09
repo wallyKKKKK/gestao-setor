@@ -93,31 +93,9 @@ export async function GET(request: Request) {
       return NextResponse.json({ options: cached.options });
     }
 
-    const counts = new Map<string, number>();
-    const pageSize = 1000;
-
-    for (let offset = 0; ; offset += pageSize) {
-      const { data, error } = await supabase
-        .from("reallocation_products")
-        .select(field)
-        .neq(field, "")
-        .order("id", { ascending: true })
-        .range(offset, offset + pageSize - 1);
-
-      if (error) throw error;
-
-      const rows = (data || []) as Array<Record<ProductAttributeField, string>>;
-      rows.forEach((row) => {
-        const value = String(row[field] || "").trim();
-        if (!value) return;
-        counts.set(value, (counts.get(value) || 0) + 1);
-      });
-
-      if (rows.length < pageSize) break;
-    }
-
-    const options = Array.from(counts.entries())
-      .map(([value, count]) => ({ value, count }))
+    const { data, error } = await supabase.rpc("reallocation_product_attribute_summary", { attribute_field: field });
+    if (error) throw error;
+    const options = ((data || []) as Array<{ value: string; count: number }>)
       .sort((left, right) => right.count - left.count || left.value.localeCompare(right.value, "pt-BR"));
 
     attributeSummaryCache.set(field, {

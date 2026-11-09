@@ -24,6 +24,7 @@ import {
   Tags,
   Truck,
   Users,
+  Wrench,
   X,
   type LucideIcon,
 } from 'lucide-react';
@@ -40,6 +41,7 @@ interface AppShellNavProps {
   sectionSubtitle?: string;
   showTaskTools: boolean;
   taskAction?: ReactNode;
+  taskLegend?: ReactNode;
   userId: string;
   userRole: UserRole;
   profiles: Profile[];
@@ -72,6 +74,7 @@ const SECTION_NAV_META: Record<AppSection, { icon: LucideIcon }> = {
   TAREFAS: { icon: ListTodo },
   REUNIAO: { icon: CalendarDays },
   NOTAS: { icon: NotebookPen },
+  FERRAMENTAS: { icon: Wrench },
   COMPRAS_IA: { icon: ShoppingCart },
   CADASTROS: { icon: Database },
   ESTOQUE_ERP: { icon: PackageSearch },
@@ -119,6 +122,7 @@ export function AppShellNav({
   sectionSubtitle,
   showTaskTools,
   taskAction,
+  taskLegend,
   userId,
   userRole,
   profiles,
@@ -563,6 +567,7 @@ export function AppShellNav({
             </div>
           </div>
 
+          {taskLegend}
         </div>
       )}
     </div>

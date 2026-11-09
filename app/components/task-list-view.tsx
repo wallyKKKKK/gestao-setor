@@ -1,8 +1,11 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { User as SupabaseUser } from '@supabase/supabase-js';
 import { TaskItem } from '@/app/components/task-item';
+import { getTaskCardTone, taskCardSurfaceClass, taskCardToneClasses, type TaskCardTone } from '@/lib/task-card-tone';
+import { getTodayStr } from '@/lib/task-recurrence';
 import type { ProcessedTask, Profile, TaskWorkflowStatus, UserRole } from '@/lib/types';
 
 interface ExitingTask {
@@ -13,9 +16,19 @@ interface ExitingTask {
 
 const TASK_EXIT_ANIMATION_MS = 520;
 const EXIT_ANIMATION_TABS = new Set(['HOJE', 'ATRASADOS']);
+const TASK_COLOR_MARKERS = [
+  { tone: 'previous', label: 'Pendência anterior' },
+  { tone: 'progress', label: 'Em andamento' },
+  { tone: 'late', label: 'Atrasada' },
+  { tone: 'done', label: 'Concluída' },
+  { tone: 'advanced', label: 'Adiantada' },
+  { tone: 'postponed', label: 'Adiada' },
+  { tone: 'default', label: 'Sem destaque' },
+] as const;
 
 interface TaskListViewProps {
   activeTab: string;
+  legendTarget: HTMLElement | null;
   tasks: ProcessedTask[];
   profiles: Profile[];
   tradeNoteTaskIds: string[];
@@ -33,6 +46,7 @@ interface TaskListViewProps {
 
 export function TaskListView({
   activeTab,
+  legendTarget,
   tasks,
   profiles,
   tradeNoteTaskIds,
@@ -106,8 +120,29 @@ export function TaskListView({
     onToggle(task);
   };
 
+  const today = getTodayStr();
+  const counts = new Map<TaskCardTone, number>();
+  for (const task of displayTasks) {
+    const tone = getTaskCardTone(task, today);
+    counts.set(tone, (counts.get(tone) ?? 0) + 1);
+  }
+  const legendItems = TASK_COLOR_MARKERS.flatMap((marker) => {
+    const count = counts.get(marker.tone);
+    return count ? [{ ...marker, count }] : [];
+  });
+
   return (
-    <div className="mx-auto w-full max-w-[1180px] space-y-5 px-2 pt-12 sm:px-4">
+    <div className="mx-auto w-full max-w-[1180px] space-y-5 px-2 pt-12 sm:px-[30px]">
+      {legendTarget && legendItems.length > 0 && createPortal(
+      <div role="group" aria-label="Legenda de cores das tarefas" className="overflow-x-auto border-b border-slate-200 bg-slate-50 px-3 py-2">
+        <div className="mx-auto flex w-max gap-2 pr-1 [--task-shadow-offset:2px]">
+        {legendItems.map(({ tone, label, count }) => (
+          <span key={tone} className={`inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-lg px-2.5 py-1 text-[10px] font-black uppercase ${taskCardSurfaceClass} ${taskCardToneClasses[tone]} ${tone === 'late' || tone === 'done' ? 'text-slate-950' : 'text-slate-900'}`}>
+            {label}<span aria-hidden="true">·</span><span className="tabular-nums">{count}</span>
+          </span>
+        ))}
+        </div>
+      </div>, legendTarget)}
       {displayTasks.map((task) => {
         const isExiting = exitingTasks[task.id]?.tab === activeTab;
 
@@ -130,6 +165,7 @@ export function TaskListView({
               onUpdate={onUpdate}
               onDelete={onDelete}
               canDelete={canDeleteTasks}
+              allowAdvance={activeTab !== 'HOJE'}
               onScheduleOverride={onScheduleOverride}
               onWorkflowChange={onWorkflowChange}
             />

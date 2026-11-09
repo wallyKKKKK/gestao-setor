@@ -7,6 +7,7 @@ import { normalizeReallocationSector } from "@/lib/reallocation-sector";
 import { createErpInventorySnapshot, splitErpClassificationPath } from "@/lib/erp-inventory";
 import type { ReallocationImportIssue } from "@/lib/reallocation-import-report";
 import { cleanupRetiredReallocationStock } from "@/lib/reallocation-stock-cleanup";
+import { buildImportFilterPreview } from '@/lib/reallocation-import-filters';
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -414,15 +415,15 @@ export async function POST(request: Request) {
     const file = formData.get("file");
 
     if (!(file instanceof File)) {
-      return NextResponse.json({ error: "Envie um arquivo CSV ou Excel." }, { status: 400 });
+      return NextResponse.json({ error: "Envie um arquivo CSV, Excel ou XML de planilha." }, { status: 400 });
     }
 
     const normalizedName = file.name.toLowerCase();
-    const isExcel = normalizedName.endsWith(".xlsx") || normalizedName.endsWith(".xls");
+    const isExcel = normalizedName.endsWith(".xlsx") || normalizedName.endsWith(".xls") || normalizedName.endsWith(".xml");
     const isCsv = normalizedName.endsWith(".csv");
 
     if (!isCsv && !isExcel) {
-      return NextResponse.json({ error: "Importe um arquivo CSV, XLSX ou XLS." }, { status: 400 });
+      return NextResponse.json({ error: "Importe um arquivo CSV, XLSX, XLS ou XML de planilha." }, { status: 400 });
     }
 
     importStage = "ler arquivo de estoque";
@@ -664,6 +665,7 @@ export async function POST(request: Request) {
       erpInventorySnapshotId,
       erpInventoryCurrentUpdated,
       erpInventoryWarning,
+      filterPreview: buildImportFilterPreview(rows, attributes, productMetaByEan, new Set(erpByEan.keys())),
     });
   } catch (error) {
     if (createdSnapshotId && supabase) {

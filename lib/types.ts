@@ -136,7 +136,14 @@ export interface PricingBranch {
 
 
 export type ExpiringRuleScopeType = "product" | "manufacturer" | "line" | "department" | "category" | "classification" | "validity";
-export type ExpiringDiscountType = "percent" | "fixed_price" | "half_cost_price";
+export type ExpiringDiscountType = "percent" | "fixed_price" | "half_cost_price" | "cost_percent_price" | "sale_percent_price" | "buy_pay" | "quantity_discount" | "cost_markup" | "average_cost_markup" | "reference_price_markup";
+export type ExpiringOfferConfig = {
+  take?: number;
+  pay?: number;
+  quantityType?: string;
+  aboveQuantity?: string;
+  tiers?: Array<{ quantity: number; value: number }>;
+};
 
 export interface ExpiringInventoryItem {
   id: string;
@@ -180,8 +187,10 @@ export interface ExpiringDiscountRule {
   name: string;
   scope_type: ExpiringRuleScopeType;
   scope_value: string;
+  scope_values?: string[];
   discount_type: ExpiringDiscountType;
   discount_value: number;
+  offer_config?: ExpiringOfferConfig | null;
   min_days_to_expire: number;
   max_days_to_expire: number;
   priority: number;
@@ -482,6 +491,7 @@ export interface TaskItemProps {
   onToggle: (task: ProcessedTask) => void;
   onDelete: (taskId: string) => void;
   canDelete: boolean;
+  allowAdvance: boolean;
   onScheduleOverride: (task: ProcessedTask, action: "advance" | "postpone" | "clear") => void;
   onWorkflowChange: (task: ProcessedTask, status: TaskWorkflowStatus, blockedReason?: string | null) => void;
 }

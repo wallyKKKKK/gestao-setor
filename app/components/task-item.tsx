@@ -8,10 +8,11 @@ import { addAuditLog, addTaskHistory, updateTaskCompletion, updateTaskSubtasks }
 import { MARGIN_FLOW_CATEGORY, formatMarginPercent, parseMarginFlowTaskNotes } from "@/lib/margin-flow-task";
 import { getPermissionDeniedMessage } from "@/lib/permissions";
 import { taskPriorityBadgeClassName, taskPriorityLabel } from "@/lib/task-priority";
+import { getTaskCardTone, taskCardSurfaceClass, taskCardToneClasses, taskCompletedBackgroundClass } from "@/lib/task-card-tone";
 import { formatToBR, getScheduleDisplayLabel, getTodayStr } from "@/lib/task-recurrence";
 import type { Profile, Subtask, TaskItemProps, TaskWorkflowStatus } from "@/lib/types";
 
-export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit, userRole, currentUser, onView, onToggle, onDelete, canDelete, onScheduleOverride, onWorkflowChange }: TaskItemProps) => {
+export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit, userRole, currentUser, onView, onToggle, onDelete, canDelete, allowAdvance, onScheduleOverride, onWorkflowChange }: TaskItemProps) => {
   const [expanded, setExpanded] = useState(false);
   const [feedbackOffset, setFeedbackOffset] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
@@ -39,6 +40,8 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
   const isPostponed = task.schedule_override_type === "postponed";
   const hasScheduleOverride = isAdvanced || isPostponed;
   const isScheduledToday = task.lastOcc === getTodayStr();
+  const canAdvance = allowAdvance && !isScheduledToday;
+  const cardTone = getTaskCardTone(task, getTodayStr());
   const previousIncompleteOccurrence = isScheduledToday && !task.isDoneToday ? task.previousIncompleteOccurrence : null;
   const assignedProfile = profiles.find((p: Profile) => p.id === task.assigned_to);
   const assignedFirstName = assignedProfile?.full_name?.split(" ")[0] || "Sem dono";
@@ -79,7 +82,9 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
         : isLate
           ? "bg-red-100 border-red-300 text-red-800 hover:bg-red-200"
           : isAdvanced
-            ? "bg-blue-100 border-blue-300 text-blue-800 hover:bg-blue-200"
+            ? "bg-orange-100 border-orange-400 text-orange-900 hover:bg-orange-200 dark:bg-orange-950 dark:text-orange-200 dark:hover:bg-orange-900"
+            : isPostponed
+              ? "bg-slate-200 border-slate-400 text-slate-800 hover:bg-slate-300"
             : "bg-white border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50";
   const workflowBadgeClassName = workflowStatus === "em_andamento"
     ? "border-blue-600 bg-blue-600 text-white shadow-[0_8px_18px_rgba(37,99,235,0.20)]"
@@ -162,7 +167,7 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
 
   const moveDrag = (event: PointerEvent<HTMLDivElement>) => {
     if (dragStartX.current === null) return;
-    const offset = Math.max(-140, Math.min(140, event.clientX - dragStartX.current));
+    const offset = Math.max(canAdvance ? -140 : 0, Math.min(140, event.clientX - dragStartX.current));
     if (Math.abs(offset) > 8) suppressNextClick.current = true;
     setVisualOffset(offset);
     if (
@@ -186,7 +191,7 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
     resetVisualOffset();
     event.currentTarget.releasePointerCapture(event.pointerId);
 
-    if (action) onScheduleOverride(task, action);
+    if (action && (action !== "advance" || canAdvance)) onScheduleOverride(task, action);
   };
 
   const cancelDrag = () => {
@@ -203,15 +208,16 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
     setFeedbackOffset(0);
     resetVisualOffset();
 
-    if (action) onScheduleOverride(task, action);
+    if (action && (action !== "advance" || canAdvance)) onScheduleOverride(task, action);
   };
 
   const handleWheelDrag = (event: WheelEvent<HTMLDivElement>) => {
     if (!canManage || task.isDoneToday) return;
     if (Math.abs(event.deltaX) <= Math.abs(event.deltaY)) return;
 
+    const nextOffset = Math.max(canAdvance ? -140 : 0, Math.min(140, wheelOffset.current - event.deltaX));
+    if (!canAdvance && nextOffset === 0 && wheelOffset.current === 0) return;
     event.preventDefault();
-    const nextOffset = Math.max(-140, Math.min(140, wheelOffset.current - event.deltaX));
     wheelOffset.current = nextOffset;
     suppressNextClick.current = true;
     setIsDragging(true);
@@ -289,13 +295,13 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
   return (
     <div className="relative mb-2">
       {isDragging && Math.abs(feedbackOffset) > 8 && (
-        <div className={`pointer-events-none absolute inset-0 z-0 rounded-[24px] border-[3px] ${
-          feedbackOffset < 0 ? "border-blue-300 bg-blue-100" : "border-slate-300 bg-slate-100"
+        <div className={`pointer-events-none absolute inset-0 z-0 rounded-[32px] border-2 ${
+          feedbackOffset < 0 ? "border-orange-400 bg-orange-100" : "border-slate-500 bg-slate-300"
         }`}>
           <div
             style={{ width: `${Math.max(72, Math.min(170, Math.abs(feedbackOffset)))}px` }}
             className={`absolute inset-y-0 flex items-center justify-center px-2 ${
-              feedbackOffset < 0 ? "right-0 text-blue-700" : "left-0 text-[#232D4A]"
+              feedbackOffset < 0 ? "right-0 text-orange-800" : "left-0 text-slate-700"
             }`}
           >
             <span className="rounded-full bg-white/80 px-2.5 py-1 text-[8px] font-black uppercase tracking-widest shadow-sm">
@@ -313,18 +319,12 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
         onPointerUp={finishDrag}
         onPointerCancel={cancelDrag}
         onWheel={handleWheelDrag}
-        className={`relative z-10 flex flex-col overflow-hidden border-[3px] rounded-[24px] group touch-pan-y
+        className={`relative z-10 flex flex-col overflow-hidden rounded-[32px] group touch-pan-y
         will-change-transform
         ${isDragging ? "transition-none cursor-grabbing" : "transition-all duration-200"}
-        ${dragAction === "advance" ? "ring-4 ring-blue-300" : dragAction === "postpone" ? "ring-4 ring-slate-300" : ""}
-        ${previousIncompleteOccurrence ? "bg-amber-50 border-amber-400 hover:border-amber-500 shadow-[4px_4px_0px_0px_rgba(245,158,11,0.55),0_0_0_4px_rgba(245,158,11,0.08)]" :
-          task.isDoneToday ? "bg-green-400 border-green-200 opacity-80" :
-          isInProgress ? "task-in-progress shadow-[4px_4px_0px_0px_rgba(37,99,235,0.55),0_0_0_4px_rgba(37,99,235,0.08)]" :
-          isLate ? "bg-red-400 border-red-200 shadow-[4px_4px_0px_0px_rgba(220,38,38,1)]" :
-          isAdvanced ? "bg-blue-50 border-blue-500 shadow-[4px_4px_0px_0px_rgba(37,99,235,1)]" :
-          isPostponed ? "bg-slate-50 border-[#232D4A] shadow-[4px_4px_0px_0px_rgba(35,45,74,1)]" :
-          "bg-white border-slate-100 hover:border-slate-900 hover:shadow-[6px_6px_0px_0px_rgba(15,23,42,1)]"
-        }`}
+        ${dragAction === "advance" ? "ring-4 ring-orange-400" : dragAction === "postpone" ? "ring-4 ring-slate-500" : ""}
+        ${taskCardSurfaceClass} ${taskCardToneClasses[cardTone]}
+        ${cardTone === 'previous' ? 'hover:border-amber-500' : cardTone === 'default' ? 'hover:border-blue-300' : ''}`}
       >
       {previousIncompleteOccurrence && (
         <TaskOccurrenceNotice date={previousIncompleteOccurrence} />
@@ -332,9 +332,7 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
       {subTotal > 0 && (
         <div
           aria-hidden="true"
-          className={`pointer-events-none absolute inset-y-0 left-0 z-0 transition-all duration-500 ease-out ${
-            task.isDoneToday ? "bg-green-500/35" : "bg-emerald-300/35"
-          }`}
+          className={`pointer-events-none absolute inset-y-0 left-0 z-0 transition-all duration-500 ease-out ${taskCompletedBackgroundClass}`}
           style={{ width: `${subtaskProgressPercent}%` }}
         />
       )}
@@ -354,7 +352,7 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
           <span className="hidden sm:inline text-[8px] font-black uppercase tracking-widest">Nota</span>
         </button>
       )}
-      <div className="relative z-10 flex flex-wrap sm:flex-nowrap items-center gap-3 sm:gap-6 p-3 sm:p-4 md:px-8">
+      <div className="relative z-10 flex flex-wrap items-center gap-3 p-4 sm:min-h-[128px] sm:flex-nowrap sm:gap-6 sm:p-6">
         <div className="flex shrink-0 flex-col items-center justify-center gap-2 self-stretch sm:w-[82px]">
           <button
             type="button"
@@ -390,7 +388,7 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
               }
             }}
           >
-            <h3 className={`text-base sm:text-lg font-black uppercase tracking-tight leading-tight sm:leading-none transition-colors
+            <h3 className={`text-xl font-black uppercase tracking-tight leading-tight transition-colors
               ${task.isDoneToday ? "text-green-900/40" : "text-slate-900 group-hover:text-blue-600"}`}
             >
               {task.title}
@@ -438,7 +436,7 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
             )}
             {hasScheduleOverride && (
               <span className={`inline-flex h-6 items-center rounded-full px-3 text-[8px] font-black uppercase tracking-wide border shadow-sm ${
-                isAdvanced ? "bg-blue-600 border-blue-700 text-white" : "bg-[#232D4A] border-slate-900 text-white"
+                isAdvanced ? "bg-orange-700 border-orange-800 text-white" : "bg-slate-700 border-slate-800 text-white"
               }`}>
                 {isAdvanced ? "ADIANTADA" : "ADIADA"}
               </span>
@@ -447,7 +445,7 @@ export const TaskItem = memo(({ task, profiles, hasTradeNotes, onUpdate, onEdit,
               title={scheduleLabel}
               className={`inline-flex h-6 max-w-[220px] items-center rounded-full px-3 text-[8px] font-black uppercase tracking-wide border shadow-sm
               ${task.isDoneToday ? "bg-green-100 border-green-200 text-green-700" :
-                isLate ? "bg-red-600 border-red-700 text-white animate-pulse" : "bg-slate-100 border-slate-200 text-slate-700"}`}
+                isLate ? "bg-red-600 border-red-700 text-white" : "bg-slate-100 border-slate-200 text-slate-700"}`}
             >
               <span className="truncate">{scheduleLabel}</span>
             </span>

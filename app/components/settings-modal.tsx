@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Ban,
   Check,
@@ -19,6 +19,9 @@ import {
 import { SECTORS, USER_ROLES } from '@/app/constants';
 import { getAppPermissions, type AppPermissions } from '@/lib/permissions';
 import type { AccountStatus, Profile, UserRole } from '@/lib/types';
+import { supabase } from '@/lib/supabase';
+import { mergeSectorNames } from '@/lib/sectors';
+import { SectorCreateButton } from '@/app/components/sector-create-button';
 
 const PERMISSION_ITEMS: Array<{ key: keyof AppPermissions; label: string }> = [
   { key: 'canManageUsers', label: 'Usuarios' },
@@ -139,6 +142,31 @@ export function SettingsModal({
   onSignOut,
 }: SettingsModalProps) {
   const [searchTerm, setSearchTerm] = useState('');
+  const [catalogSectors, setCatalogSectors] = useState<string[]>([]);
+  const [sectorError, setSectorError] = useState('');
+  const sectorOptions = useMemo(() => mergeSectorNames(SECTORS, catalogSectors, profiles.map(profile => profile.sector || 'Geral')), [catalogSectors, profiles]);
+
+  useEffect(() => {
+    if (!embedded || userRole !== 'admin') return;
+    let active = true;
+    let sequence = 0;
+    const load = async () => {
+      const current = ++sequence;
+      try {
+        const { data, error } = await supabase.from('app_sectors').select('name').order('name');
+        if (error) throw error;
+        if (!active || current !== sequence) return;
+        setCatalogSectors(previous => mergeSectorNames(previous, (data || []).map(sector => sector.name)));
+        setSectorError('');
+      } catch {
+        if (active && current === sequence) setSectorError('Não foi possível atualizar os setores. As opções já conhecidas foram mantidas.');
+      }
+    };
+    const refresh = () => { void load(); };
+    void load();
+    window.addEventListener('wally:app-refresh', refresh);
+    return () => { active = false; window.removeEventListener('wally:app-refresh', refresh); };
+  }, [embedded, userRole]);
 
   const summary = useMemo(() => {
     const pending = profiles.filter((profile) => getProfileStatus(profile) === 'pending').length;
@@ -207,6 +235,8 @@ export function SettingsModal({
                     <User size={18} className="text-blue-600" />
                     <h3 className="text-xs font-black uppercase tracking-widest text-slate-900">Gestao de usuarios</h3>
                   </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <SectorCreateButton sectors={sectorOptions} onCreated={name => { setCatalogSectors(current => mergeSectorNames(current, [name])); setSectorError(''); }} />
                   <label className="flex h-10 min-w-0 items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 sm:w-64">
                     <Search size={15} className="text-slate-400" />
                     <input
@@ -216,7 +246,9 @@ export function SettingsModal({
                       className="h-full min-w-0 flex-1 bg-transparent text-[11px] font-bold text-slate-800 outline-none placeholder:text-slate-400"
                     />
                   </label>
+                  </div>
                 </div>
+                {sectorError && <p role="alert" className="border-b border-amber-100 bg-amber-50 px-4 py-2 text-xs font-normal text-amber-800">{sectorError}</p>}
 
                 {userRole === 'admin' ? (
                   <div className="divide-y divide-slate-100">
@@ -224,6 +256,7 @@ export function SettingsModal({
                       <ProfileAdminRow
                         key={profile.id}
                         profile={profile}
+                        sectors={sectorOptions}
                         onRoleChange={onRoleChange}
                         onSectorChange={onSectorChange}
                         onAccountStatusChange={onAccountStatusChange}
@@ -357,12 +390,14 @@ function SettingsStat({
 
 function ProfileAdminRow({
   profile,
+  sectors,
   onRoleChange,
   onSectorChange,
   onAccountStatusChange,
   onActiveChange,
 }: {
   profile: Profile;
+  sectors: string[];
   onRoleChange: (profileId: string, role: UserRole) => void;
   onSectorChange: (profileId: string, sector: string) => void;
   onAccountStatusChange: (profileId: string, accountStatus: AccountStatus) => void;
@@ -411,7 +446,7 @@ function ProfileAdminRow({
           onChange={(event) => onSectorChange(profile.id, event.target.value)}
           className="h-10 min-w-0 rounded-2xl border border-slate-200 bg-slate-50 px-3 text-[10px] font-black uppercase text-slate-800 outline-none transition focus:border-blue-400"
         >
-          {SECTORS.map((sector) => (
+          {Array.from(new Set([...sectors, profile.sector || 'Geral'])).map((sector) => (
             <option key={sector} value={sector}>
               {sector}
             </option>

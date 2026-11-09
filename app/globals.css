@@ -735,6 +735,15 @@ html[data-theme="dark"] [data-section-theme]:not([data-section-theme="INICIO"]) 
   background-color: color-mix(in srgb, var(--section-accent) 18%, black) !important;
 }
 
+.app-sidebar button:focus:not(:focus-visible) {
+  outline: none;
+}
+
+.app-sidebar button:focus-visible {
+  outline: 2px solid #0284c7;
+  outline-offset: -4px;
+}
+
 .note-rich-content { overflow-wrap: anywhere; font-size: 14px; line-height: 1.7; }
 .note-rich-content p { margin: 0 0 0.6em; }
 .note-rich-content h1 { font-size: 28px; font-weight: 700; }
@@ -753,7 +762,6 @@ html[data-theme="dark"] [data-section-theme]:not([data-section-theme="INICIO"]) 
 
 .task-in-progress {
   background-color: color-mix(in srgb, var(--section-accent, #2563eb) 22%, white);
-  border-color: color-mix(in srgb, var(--section-accent, #2563eb) 85%, white);
 }
 
 html[data-theme="dark"] .task-in-progress {
@@ -793,4 +801,50 @@ html[data-theme="dark"] .task-in-progress {
 html[data-theme="dark"] :where(table tbody tr.wally-table-focused-row) {
   outline-color: color-mix(in srgb, var(--table-focus-color) 86%, white);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--table-focus-color) 26%, transparent), 0 0 0 4px color-mix(in srgb, var(--table-focus-color) 14%, transparent);
+}
+
+.login-screen {
+  --login-field-bg: #edf3fc;
+  --login-field-text: #0f172a;
+  --login-field-muted: #526176;
+  --login-field-border: #b6c4d8;
+  color-scheme: light;
+}
+
+.login-screen .login-field {
+  background-color: var(--login-field-bg) !important;
+  border-color: var(--login-field-border) !important;
+}
+
+.login-screen .login-field > span,
+.login-screen .login-field > button {
+  background-color: transparent !important;
+  color: var(--login-field-muted) !important;
+  border-color: var(--login-field-border) !important;
+}
+
+.login-screen .login-field input {
+  height: 100%;
+  background-color: transparent !important;
+  color: var(--login-field-text) !important;
+  -webkit-text-fill-color: var(--login-field-text) !important;
+  caret-color: var(--login-field-text);
+}
+
+.login-screen .login-field input::placeholder {
+  color: var(--login-field-muted) !important;
+  -webkit-text-fill-color: var(--login-field-muted);
+  opacity: 1;
+}
+
+.login-screen .login-field input:-webkit-autofill {
+  -webkit-text-fill-color: var(--login-field-text) !important;
+  caret-color: var(--login-field-text);
+  box-shadow: inset 0 0 0 1000px var(--login-field-bg) !important;
+}
+
+.login-screen .login-field input::selection {
+  background: #075eac;
+  color: #ffffff;
+  -webkit-text-fill-color: #ffffff;
 }

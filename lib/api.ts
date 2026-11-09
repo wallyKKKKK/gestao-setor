@@ -544,8 +544,10 @@ export interface ExpiringDiscountRuleInput {
   name: string;
   scope_type: ExpiringRuleScopeType;
   scope_value: string;
+  scope_values?: string[];
   discount_type: ExpiringDiscountType;
   discount_value: number;
+  offer_config?: ExpiringDiscountRule['offer_config'];
   min_days_to_expire: number;
   max_days_to_expire: number;
   priority: number;

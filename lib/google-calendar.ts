@@ -3,8 +3,10 @@ import type { CreateMeetingInput } from "@/lib/api";
 
 const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
-const GOOGLE_CALENDAR_EVENTS_URL = "https://www.googleapis.com/calendar/v3/calendars/primary/events";
-const SCOPES = ["https://www.googleapis.com/auth/calendar.events"];
+const SCOPES = ["https://www.googleapis.com/auth/calendar.events", "https://www.googleapis.com/auth/calendar.calendarlist.readonly"];
+function calendarEventsUrl(calendarId = 'primary') {
+  return `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`;
+}
 const TIME_ZONE = "America/Fortaleza";
 
 interface GoogleTokensResponse {
@@ -25,6 +27,20 @@ export class GoogleCalendarReconnectRequiredError extends Error {
     super(message);
     this.name = "GoogleCalendarReconnectRequiredError";
   }
+}
+
+export class GoogleCalendarScopeRequiredError extends Error {
+  constructor() { super('Autorize novamente o Google para consultar a lista de agendas.'); this.name = 'GoogleCalendarScopeRequiredError'; }
+}
+
+export interface GoogleCalendarListEntry {
+  id: string;
+  summary: string;
+  summaryOverride?: string;
+  primary?: boolean;
+  backgroundColor?: string;
+  foregroundColor?: string;
+  accessRole: string;
 }
 
 export function isGoogleReconnectRequiredError(error: unknown) {
@@ -52,11 +68,13 @@ async function googleCalendarApiError(response: Response) {
         code?: number;
         message?: string;
         status?: string;
+        errors?: Array<{ reason?: string }>;
       };
     };
     if (response.status === 401 || data.error?.status === "UNAUTHENTICATED") {
       return new GoogleCalendarReconnectRequiredError();
     }
+    if (response.status === 403 && (data.error?.errors?.some(item => item.reason === 'insufficientPermissions') || /insufficient.*scope/i.test(data.error?.message || ''))) return new GoogleCalendarScopeRequiredError();
     return new Error(data.error?.message || text);
   } catch {
     if (response.status === 401) {
@@ -68,6 +86,7 @@ async function googleCalendarApiError(response: Response) {
 
 export interface GoogleCalendarEvent {
   id: string;
+  calendarId?: string;
   summary?: string;
   description?: string;
   location?: string;
@@ -216,14 +235,14 @@ function addMinutesToLocalDateTime(date: string, time: string, minutesToAdd: num
   ].join("-") + `T${String(localDate.getHours()).padStart(2, "0")}:${String(localDate.getMinutes()).padStart(2, "0")}:00`;
 }
 
-export async function createGoogleCalendarEvent(accessToken: string, meeting: CreateMeetingInput) {
+export async function createGoogleCalendarEvent(accessToken: string, meeting: CreateMeetingInput, calendarId = 'primary') {
   const start = `${meeting.date}T${meeting.time}:00`;
   const hasDateRange = Boolean(meeting.endDate && meeting.endDate > meeting.date);
   const end = hasDateRange
     ? `${meeting.endDate}T23:59:00`
     : addMinutesToLocalDateTime(meeting.date, meeting.time, 60);
 
-  const response = await fetch(GOOGLE_CALENDAR_EVENTS_URL, {
+  const response = await fetch(calendarEventsUrl(calendarId), {
     method: "POST",
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -246,27 +265,46 @@ export async function createGoogleCalendarEvent(accessToken: string, meeting: Cr
   return await response.json() as CalendarEventResponse;
 }
 
-export async function listGoogleCalendarEvents(accessToken: string, timeMin: string, timeMax: string) {
-  const url = new URL(GOOGLE_CALENDAR_EVENTS_URL);
+export async function listGoogleCalendarEvents(accessToken: string, timeMin: string, timeMax: string, calendarId = 'primary') {
+  const url = new URL(calendarEventsUrl(calendarId));
   url.searchParams.set("timeMin", timeMin);
   url.searchParams.set("timeMax", timeMax);
   url.searchParams.set("singleEvents", "true");
   url.searchParams.set("orderBy", "startTime");
-
-  const response = await fetch(url, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
-  });
-
-  if (!response.ok) throw await googleCalendarApiError(response);
-  const data = await response.json() as { items?: GoogleCalendarEvent[] };
-
-  return data.items || [];
+  url.searchParams.set('timeZone', TIME_ZONE);
+  url.searchParams.set('maxResults', '2500');
+  const events: GoogleCalendarEvent[] = [];
+  let pageToken: string | undefined;
+  do {
+    if (pageToken) url.searchParams.set('pageToken', pageToken);
+    const response = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+    if (!response.ok) throw await googleCalendarApiError(response);
+    const data = await response.json() as { items?: GoogleCalendarEvent[]; nextPageToken?: string };
+    events.push(...(data.items || []).map(event => ({ ...event, calendarId })));
+    pageToken = data.nextPageToken;
+  } while (pageToken);
+  return events;
 }
 
-export async function deleteGoogleCalendarEvent(accessToken: string, eventId: string) {
-  const response = await fetch(`${GOOGLE_CALENDAR_EVENTS_URL}/${encodeURIComponent(eventId)}`, {
+export async function listGoogleCalendars(accessToken: string) {
+  const url = new URL('https://www.googleapis.com/calendar/v3/users/me/calendarList');
+  url.searchParams.set('maxResults', '250');
+  url.searchParams.set('minAccessRole', 'reader');
+  const calendars: GoogleCalendarListEntry[] = [];
+  let pageToken: string | undefined;
+  do {
+    if (pageToken) url.searchParams.set('pageToken', pageToken);
+    const response = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+    if (!response.ok) throw await googleCalendarApiError(response);
+    const data = await response.json() as { items?: GoogleCalendarListEntry[]; nextPageToken?: string };
+    calendars.push(...(data.items || []));
+    pageToken = data.nextPageToken;
+  } while (pageToken);
+  return calendars;
+}
+
+export async function deleteGoogleCalendarEvent(accessToken: string, eventId: string, calendarId = 'primary') {
+  const response = await fetch(`${calendarEventsUrl(calendarId)}/${encodeURIComponent(eventId)}`, {
     method: "DELETE",
     headers: {
       Authorization: `Bearer ${accessToken}`,

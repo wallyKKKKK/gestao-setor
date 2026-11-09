@@ -15,13 +15,13 @@ export async function GET(request: Request) {
     return Response.json({ configured: false, connected: false });
   }
 
-  const auth = await requireSelfOrRole(request, userId, ["admin"]);
+  const auth = await requireSelfOrRole(request, userId, []);
   if (!auth.ok) return auth.response;
 
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
     .from("google_calendar_connections")
-    .select("user_id")
+    .select("user_id,scope")
     .eq("user_id", userId)
     .maybeSingle();
 
@@ -29,5 +29,6 @@ export async function GET(request: Request) {
     return Response.json({ configured: true, connected: false, error: error.message }, { status: 500 });
   }
 
-  return Response.json({ configured: true, connected: Boolean(data) });
+  const scopes = String(data?.scope || '').split(' ');
+  return Response.json({ configured: true, connected: Boolean(data), calendarsAuthorized: ['calendar.calendarlist.readonly', 'calendar.calendarlist', 'calendar.readonly', 'calendar'].some(scope => scopes.includes(`https://www.googleapis.com/auth/${scope}`)) });
 }

@@ -18,6 +18,7 @@ import {
   Tags,
   Truck,
   Users,
+  Wrench,
   type LucideIcon,
 } from 'lucide-react';
 import type { AppSection } from '@/app/components/app-sidebar';
@@ -55,8 +56,9 @@ interface ModuleHomeProps {
 
 const MODULES: ModuleMeta[] = [
   { section: 'TAREFAS', title: 'Tarefas', description: 'Rotina, prioridades e acompanhamento.', icon: ListTodo, defaultTab: 'HOJE' },
-  { section: 'REUNIAO', title: 'Reunioes', description: 'Agenda mensal e compromissos.', icon: CalendarDays },
+  { section: 'REUNIAO', title: 'Agenda', description: 'Agenda mensal e compromissos.', icon: CalendarDays },
   { section: 'NOTAS', title: 'Bloco de notas', description: 'Suas anotações pessoais.', icon: NotebookPen },
+  { section: 'FERRAMENTAS', title: 'Ferramentas', description: 'Programas e utilitários para download.', icon: Wrench },
   { section: 'COMPRAS_IA', title: 'Compras IA', description: 'Cotacoes e analise de fornecedores.', icon: ShoppingCart },
   { section: 'CADASTROS', title: 'Cadastros', description: 'Produtos, lojas e regras base.', icon: Database },
   { section: 'ESTOQUE_ERP', title: 'Estoque ERP', description: 'Saldo por loja, curva e produto.', icon: PackageSearch },

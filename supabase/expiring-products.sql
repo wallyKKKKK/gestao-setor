@@ -41,7 +41,8 @@ create table if not exists public.expiring_discount_rules (
   scope_type text not null default 'category',
   scope_value text not null default '',
   discount_type text not null default 'percent',
-  discount_value numeric(12, 2) not null default 0,
+  discount_value numeric(14, 4) not null default 0,
+  offer_config jsonb,
   min_days_to_expire integer not null default 0,
   max_days_to_expire integer not null default 99999,
   priority integer not null default 100,
@@ -50,7 +51,8 @@ create table if not exists public.expiring_discount_rules (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint expiring_discount_rules_scope_type_check check (scope_type in ('product', 'manufacturer', 'line', 'department', 'category', 'classification', 'validity')),
-  constraint expiring_discount_rules_discount_type_check check (discount_type in ('percent', 'fixed_price', 'half_cost_price'))
+  constraint expiring_discount_rules_discount_type_check check (discount_type in ('percent', 'fixed_price', 'half_cost_price', 'cost_percent_price', 'sale_percent_price',
+    'buy_pay', 'quantity_discount', 'cost_markup', 'average_cost_markup', 'reference_price_markup'))
 );
 
 create index if not exists expiring_inventory_items_branch_idx on public.expiring_inventory_items(branch_code);

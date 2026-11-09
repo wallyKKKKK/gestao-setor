@@ -1,12 +1,17 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Check, CheckCircle2, ChevronLeft, ChevronRight, Edit3, ExternalLink, MapPin, Plus, RotateCcw, Trash2, X } from 'lucide-react';
 import type { CreateMeetingInput } from '@/lib/api';
 import { getAuthHeaders } from '@/lib/auth-headers';
 import { getPermissionDeniedMessage } from '@/lib/permissions';
-import type { GoogleCalendarEvent } from '@/lib/google-calendar';
+import type { GoogleCalendarEvent, GoogleCalendarListEntry } from '@/lib/google-calendar';
 import type { ProcessedTask, Profile } from '@/lib/types';
+import { useMeetingCalendars } from '@/lib/use-meeting-calendars';
+import { calendarEventTask, calendarForeground, googleEventKey } from '@/lib/meeting-calendars';
+import { MeetingCalendarSidebar } from '@/app/components/meeting-calendar-sidebar';
+import { googleCalendarRequestError, needsGoogleReconnect, showGoogleConnectAction } from '@/lib/google-calendar-client';
+import { useGoogleCalendarEvents } from '@/lib/use-google-calendar-events';
 
 interface MeetingCalendarViewProps {
   tasks: ProcessedTask[];
@@ -292,7 +297,7 @@ function formatDateRange(startDate: string, endDate: string) {
 }
 
 export function MeetingCalendarView({
-  tasks,
+  tasks: legacyTasks,
   profiles,
   userSector,
   defaultAssignedTo,
@@ -303,7 +308,18 @@ export function MeetingCalendarView({
   onUpdateMeeting,
 }: MeetingCalendarViewProps) {
   const [googleStatus, setGoogleStatus] = useState({ configured: false, connected: false });
-  const [googleEvents, setGoogleEvents] = useState<GoogleCalendarEvent[]>([]);
+  const [googleCalendars, setGoogleCalendars] = useState<GoogleCalendarListEntry[]>([]);
+  const [googleStatusError, setGoogleStatusError] = useState('');
+  const [googleListHealth, setGoogleListHealth] = useState({ error: '', reconnectRequired: false });
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [hiddenCalendars, setHiddenCalendars] = useState<string[]>(() => {
+    try { const value = JSON.parse(localStorage.getItem(`wally-calendar-hidden:${defaultAssignedTo}`) || '[]'); return Array.isArray(value) ? value.filter(item => typeof item === 'string') : []; }
+    catch { return []; }
+  });
+  const [meetingCalendarId, setMeetingCalendarId] = useState('');
+  const [preferredCalendarId, setPreferredCalendarId] = useState('');
+  const [googleCalendarId, setGoogleCalendarId] = useState('primary');
+  const savingLock = useRef(false);
   const [syncGoogleCalendar, setSyncGoogleCalendar] = useState(false);
   const [visibleMonth, setVisibleMonth] = useState(() => {
     const now = new Date();
@@ -321,58 +337,93 @@ export function MeetingCalendarView({
   const [savingMeeting, setSavingMeeting] = useState(false);
   const [editingMeeting, setEditingMeeting] = useState<ProcessedTask | null>(null);
   const [selectedMeeting, setSelectedMeeting] = useState<ProcessedTask | null>(null);
+  const local = useMeetingCalendars(defaultAssignedTo, visibleMonth, refreshKey);
+  const googleData = useGoogleCalendarEvents(defaultAssignedTo, googleStatus.connected, googleCalendars, hiddenCalendars, visibleMonth, refreshKey);
+  const rawGoogleEvents = googleData.events;
+  const googleError = googleStatusError || googleListHealth.error || googleData.error;
+  const googleReconnectRequired = googleListHealth.reconnectRequired || googleData.reconnectRequired;
+  const calendarById = useMemo(() => new Map(local.calendars.map(calendar => [calendar.id, calendar])), [local.calendars]);
+  const eventByTaskId = useMemo(() => new Map(local.events.map(event => [`calendar:${event.id}`, event])), [local.events]);
+  const tasks = useMemo(() => [
+    ...(hiddenCalendars.includes('legacy') ? [] : legacyTasks),
+    ...local.events.flatMap(event => {
+      const calendar = calendarById.get(event.calendar_id);
+      return calendar && !hiddenCalendars.includes(`local:${calendar.id}`) ? [calendarEventTask(event, calendar)] : [];
+    }),
+  ], [legacyTasks, local.events, calendarById, hiddenCalendars]);
+  const selectedCalendar = calendarById.get(meetingCalendarId);
+  const currentProfile = profiles.find(profile => profile.id === defaultAssignedTo);
+  const canManageMeeting = (task: ProcessedTask) => {
+    const event = eventByTaskId.get(task.id);
+    if (!event) return true;
+    const calendar = calendarById.get(event.calendar_id);
+    return Boolean(calendar && (calendar.owner_id === defaultAssignedTo || event.created_by === defaultAssignedTo || (calendar.visibility === 'sector' && (currentProfile?.role === 'admin' || (currentProfile?.role === 'gerente' && calendar.sector === userSector)))));
+  };
+  const canDeleteMeeting = (task: ProcessedTask) => eventByTaskId.has(task.id) ? canManageMeeting(task) : canDeleteMeetings;
+  const googleCalendarById = useMemo(() => new Map(googleCalendars.map(calendar => [calendar.id, calendar])), [googleCalendars]);
+  const googleEvents = useMemo(() => {
+    const primary = googleCalendars.find(calendar => calendar.primary)?.id || 'primary';
+    const linked = new Set(tasks.flatMap(task => task.google_event_id ? [googleEventKey(eventByTaskId.get(task.id)?.google_calendar_id || primary, task.google_event_id)] : []));
+    return rawGoogleEvents.filter(event => !hiddenCalendars.includes(`google:${event.calendarId}`) && !linked.has(googleEventKey(event.calendarId, event.id)));
+  }, [rawGoogleEvents, googleCalendars, tasks, eventByTaskId, hiddenCalendars]);
+  const writableGoogleCalendars = googleCalendars.filter(calendar => ['owner', 'writer', 'writerWithoutPrivateAccess'].includes(calendar.accessRole));
+  const canDeleteGoogleEvent = (event: GoogleCalendarEvent) => {
+    const calendar = googleCalendarById.get(event.calendarId || 'primary');
+    return calendar ? ['owner', 'writer', 'writerWithoutPrivateAccess'].includes(calendar.accessRole) : canDeleteMeetings;
+  };
+  const meetingStyle = (task: ProcessedTask) => {
+    const event = eventByTaskId.get(task.id);
+    const calendar = event && calendarById.get(event.calendar_id);
+    return calendar && !task.isDoneToday ? { backgroundColor: calendar.color, color: calendarForeground(calendar.color) } : undefined;
+  };
+  const googleStyle = (event: GoogleCalendarEvent) => {
+    const calendar = googleCalendarById.get(event.calendarId || 'primary');
+    const color = calendar?.backgroundColor;
+    return color && /^#[0-9a-f]{6}$/i.test(color) ? { backgroundColor: color, color: calendarForeground(color) } : undefined;
+  };
   const deleteMeetingDeniedMessage = getPermissionDeniedMessage('excluir reunioes', 'managerOrAdmin');
+
+  useEffect(() => {
+    try { localStorage.setItem(`wally-calendar-hidden:${defaultAssignedTo}`, JSON.stringify(hiddenCalendars)); } catch { /* Visibility remains in memory. */ }
+  }, [defaultAssignedTo, hiddenCalendars]);
+  useEffect(() => {
+    const refresh = () => setRefreshKey(value => value + 1);
+    window.addEventListener('wally:app-refresh', refresh);
+    return () => window.removeEventListener('wally:app-refresh', refresh);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
 
     getAuthHeaders()
       .then((headers) => fetch(`/api/google-calendar/status?userId=${defaultAssignedTo}`, { headers }))
-      .then((response) => response.json())
+      .then(async (response) => { const data = await response.json(); if (!response.ok) throw new Error('Falha ao verificar conexão'); return data; })
       .then((data) => {
         if (cancelled) return;
         setGoogleStatus({ configured: Boolean(data.configured), connected: Boolean(data.connected) });
-        setSyncGoogleCalendar(Boolean(data.configured && data.connected));
+        setGoogleStatusError('');
+        setSyncGoogleCalendar(false);
+        if (!data.connected) setGoogleCalendars([]);
       })
       .catch(() => {
         if (cancelled) return;
-        setGoogleStatus({ configured: false, connected: false });
+        setGoogleStatusError('Não foi possível verificar a conexão Google. Tente atualizar.');
       });
 
     return () => {
       cancelled = true;
     };
-  }, [defaultAssignedTo]);
+  }, [defaultAssignedTo, refreshKey]);
 
   useEffect(() => {
     if (!googleStatus.connected) return;
     let cancelled = false;
-
-    const start = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), 1);
-    const end = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 1);
-
-    getAuthHeaders()
-      .then((headers) => fetch(`/api/google-calendar/events?userId=${defaultAssignedTo}&timeMin=${encodeURIComponent(start.toISOString())}&timeMax=${encodeURIComponent(end.toISOString())}`, { headers }))
-      .then(async (response) => {
-        if (response.ok) return response.json();
-        const data = await response.json().catch(() => null);
-        if (data?.reconnectRequired && !cancelled) {
-          setGoogleStatus((current) => ({ ...current, connected: false }));
-          setSyncGoogleCalendar(false);
-        }
-        throw new Error(data?.error || 'Não foi possível carregar eventos do Google Calendar.');
-      })
-      .then((data) => {
-        if (!cancelled) setGoogleEvents(data.events || []);
-      })
-      .catch(() => {
-        if (!cancelled) setGoogleEvents([]);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [defaultAssignedTo, googleStatus.connected, visibleMonth]);
+    getAuthHeaders().then(headers => fetch(`/api/google-calendar/calendars?userId=${defaultAssignedTo}`, { headers }))
+      .then(async response => { const data = await response.json(); if (!response.ok) throw googleCalendarRequestError(data, 'Não foi possível listar as agendas Google.'); return data; })
+      .then(data => { if (!cancelled) { setGoogleCalendars(data.calendars || []); setGoogleListHealth({ error: '', reconnectRequired: false }); const primary = (data.calendars as GoogleCalendarListEntry[]).find(calendar => calendar.primary); if (primary) setGoogleCalendarId(primary.id); } })
+      .catch(error => { if (!cancelled) { setGoogleListHealth({ error: error.message, reconnectRequired: needsGoogleReconnect(error) }); } });
+    return () => { cancelled = true; };
+  }, [defaultAssignedTo, googleStatus.connected, refreshKey]);
 
   const days = useMemo(() => {
     const year = visibleMonth.getFullYear();
@@ -426,10 +477,7 @@ export function MeetingCalendarView({
   ), [selectedMeeting, tasks]);
 
   const googleEventsByDay = useMemo(() => {
-    const linkedEventIds = new Set(tasks.map((task) => task.google_event_id).filter(Boolean));
-
     return googleEvents.reduce<Record<string, GoogleCalendarEvent[]>>((acc, event) => {
-      if (linkedEventIds.has(event.id)) return acc;
       const startDate = getGoogleEventStartDate(event);
       const endDate = getGoogleEventEndDate(event);
       if (!startDate) return acc;
@@ -440,7 +488,7 @@ export function MeetingCalendarView({
 
       return acc;
     }, {});
-  }, [googleEvents, tasks]);
+  }, [googleEvents]);
 
   const getGoogleEventTime = (event: GoogleCalendarEvent) => {
     if (event.start?.date) return 'Dia todo';
@@ -495,8 +543,10 @@ export function MeetingCalendarView({
     setMeetingLocation('');
     setMeetingNotes('');
     setMeetingAssignedTo(defaultAssignedTo);
+    setMeetingCalendarId(preferredCalendarId);
+    setSyncGoogleCalendar(false);
     setEditingMeeting(null);
-  }, [defaultAssignedTo]);
+  }, [defaultAssignedTo, preferredCalendarId]);
 
   const openCreateMeeting = useCallback((date = new Date()) => {
     resetMeetingForm();
@@ -532,6 +582,7 @@ export function MeetingCalendarView({
   }, [selectedMeeting]);
 
   const openEditMeeting = (task: ProcessedTask) => {
+    if (!canManageMeeting(task)) return;
     setEditingMeeting(task);
     setMeetingTitle(task.title);
     const startDate = task.due_date || task.nextOcc || toISODate(new Date());
@@ -542,11 +593,13 @@ export function MeetingCalendarView({
     setMeetingLocation(getMeetingField(task, 'Local'));
     setMeetingNotes(getMeetingField(task, 'Observações'));
     setMeetingAssignedTo(task.assigned_to);
+    setMeetingCalendarId(eventByTaskId.get(task.id)?.calendar_id || '');
     setSyncGoogleCalendar(false);
     setShowCreateModal(true);
   };
 
   const submitMeeting = async () => {
+    if (savingLock.current) return;
     if (!meetingTitle || !meetingDate || !meetingEndDate || !meetingTime || !meetingAssignedTo) {
       alert('Preencha titulo, data inicial, data final, hora e responsavel.');
       return;
@@ -557,6 +610,8 @@ export function MeetingCalendarView({
       return;
     }
 
+    if (selectedCalendar?.visibility === 'personal' && meetingAssignedTo !== defaultAssignedTo) { alert('Eventos pessoais devem ficar atribuídos a você.'); return; }
+    savingLock.current = true;
     setSavingMeeting(true);
     try {
       const meeting = {
@@ -568,7 +623,7 @@ export function MeetingCalendarView({
         location: meetingLocation,
         notes: meetingNotes,
         assignedTo: meetingAssignedTo,
-        sector: userSector,
+        sector: selectedCalendar?.sector || userSector,
         tone: editingMeeting ? getStoredMeetingTone(editingMeeting) || randomMeetingEventTone() : randomMeetingEventTone(),
       };
       let googleEvent: { id?: string; htmlLink?: string } | null = null;
@@ -577,7 +632,7 @@ export function MeetingCalendarView({
         const response = await fetch('/api/google-calendar/events', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...await getAuthHeaders() },
-          body: JSON.stringify({ userId: defaultAssignedTo, meeting }),
+          body: JSON.stringify({ userId: defaultAssignedTo, meeting, calendarId: googleCalendarId }),
         });
 
         if (!response.ok) {
@@ -592,9 +647,16 @@ export function MeetingCalendarView({
 
         const data = await response.json();
         googleEvent = data.event || null;
+        googleData.invalidate();
       }
 
-      if (editingMeeting) {
+      if (meetingCalendarId) {
+        await local.saveEvent(editingMeeting ? eventByTaskId.get(editingMeeting.id)?.id || null : null, {
+          calendar_id: meetingCalendarId, title: meeting.title, start_date: meeting.date, end_date: meeting.endDate,
+          time: meeting.time, location: meeting.location, notes: meeting.notes, assigned_to: meeting.assignedTo,
+          google_event_id: googleEvent?.id || null, google_calendar_id: googleCalendarId, google_event_link: googleEvent?.htmlLink || null,
+        });
+      } else if (editingMeeting) {
         await onUpdateMeeting(editingMeeting, meeting);
       } else {
         await onCreateMeeting({
@@ -606,19 +668,22 @@ export function MeetingCalendarView({
 
       resetMeetingForm();
       setShowCreateModal(false);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Não foi possível salvar o evento.');
     } finally {
+      savingLock.current = false;
       setSavingMeeting(false);
     }
   };
 
   const deleteGoogleEvent = async (event: GoogleCalendarEvent) => {
-    if (!canDeleteMeetings) {
+    if (!canDeleteGoogleEvent(event)) {
       alert(deleteMeetingDeniedMessage);
       return;
     }
     if (!confirm(`Excluir "${event.summary || 'Evento Google'}" do Google Calendar?`)) return;
 
-    const response = await fetch(`/api/google-calendar/events?userId=${defaultAssignedTo}&eventId=${encodeURIComponent(event.id)}`, {
+    const response = await fetch(`/api/google-calendar/events?userId=${defaultAssignedTo}&eventId=${encodeURIComponent(event.id)}&calendarId=${encodeURIComponent(event.calendarId || 'primary')}`, {
       method: 'DELETE',
       headers: await getAuthHeaders(),
     });
@@ -633,12 +698,26 @@ export function MeetingCalendarView({
       return;
     }
 
-    setGoogleEvents((current) => current.filter((item) => item.id !== event.id));
+    googleData.remove(event.calendarId || 'primary', event.id);
+  };
+
+  const toggleMeeting = async (task: ProcessedTask) => {
+    if (!canManageMeeting(task)) return;
+    const event = eventByTaskId.get(task.id);
+    try { if (event) await local.toggleEvent(event); else onToggleMeeting(task); }
+    catch (error) { alert(error instanceof Error ? error.message : 'Não foi possível atualizar o evento.'); }
+  };
+
+  const removeMeeting = async (task: ProcessedTask) => {
+    if (!canDeleteMeeting(task)) return;
+    const event = eventByTaskId.get(task.id);
+    if (!event) { onDeleteTask(task.id); setSelectedMeeting(null); return; }
+    if (!confirm(`Excluir o evento "${task.title}" desta agenda do app?`)) return;
+    try { await local.deleteEvent(event.id); setSelectedMeeting(null); }
+    catch (error) { alert(error instanceof Error ? error.message : 'Não foi possível excluir o evento.'); }
   };
 
   const connectGoogle = () => {
-    if (googleStatus.connected) return;
-
     getAuthHeaders()
       .then((headers) => fetch('/api/google-calendar/connect', {
         method: 'POST',
@@ -655,9 +734,15 @@ export function MeetingCalendarView({
   return (
     <main className="mx-auto flex h-[calc(100dvh-5rem)] max-w-[1760px] flex-col overflow-hidden px-2 py-2 pb-20 sm:h-[calc(100dvh-4rem)] sm:px-4 sm:pb-2">
 
-      <div className="flex min-h-0 flex-1 gap-3 overflow-hidden">
+      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden md:flex-row">
+        <MeetingCalendarSidebar userId={defaultAssignedTo} sector={userSector} calendars={local.calendars} googleCalendars={googleCalendars}
+          hidden={hiddenCalendars} onToggle={key => setHiddenCalendars(current => current.includes(key) ? current.filter(value => value !== key) : [...current, key])}
+          loading={local.loading} googleConnected={googleStatus.connected} googleConfigured={googleStatus.configured} googleReconnectRequired={googleReconnectRequired} googleError={googleError}
+          onConnect={connectGoogle} onRefresh={() => setRefreshKey(value => value + 1)}
+          onCreate={async (name, color, visibility) => { const calendar = await local.createCalendar(name, color, visibility, userSector); setPreferredCalendarId(calendar.id); setHiddenCalendars(current => current.filter(key => key !== `local:${calendar.id}`)); }} />
 
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white">
+        {local.error && <p role="alert" className="shrink-0 border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800">{local.error}</p>}
         <div className="shrink-0 border-b border-slate-200 bg-white px-4 py-3">
           <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
             <div className="min-w-0 flex-1">
@@ -668,6 +753,7 @@ export function MeetingCalendarView({
                 {monthTasks.length} {monthTasks.length === 1 ? 'reunião' : 'reuniões'}
                 {monthTasks.length > 0 ? ` - ${completedMonthTasks} concluída${completedMonthTasks === 1 ? '' : 's'}` : ''}
                 {googleStatus.connected ? ` - ${googleEvents.length} evento${googleEvents.length === 1 ? '' : 's'} Google` : ''}
+                {googleData.loading && !googleData.error && <span role="status" className="ml-2 text-slate-400">Carregando eventos...</span>}
               </p>
             </div>
 
@@ -675,16 +761,16 @@ export function MeetingCalendarView({
               <button onClick={() => openCreateMeeting()} className="flex h-9 items-center gap-1.5 rounded-md bg-blue-600 px-3 text-xs font-semibold text-white transition hover:bg-blue-700">
                 <Plus size={15} /> Nova reunião
               </button>
-              {googleStatus.configured ? (
+              {showGoogleConnectAction(googleStatus.configured, googleStatus.connected, googleReconnectRequired) ? (
                 <button
                   onClick={connectGoogle}
                   className={`h-8 rounded-lg border px-3 text-[9px] font-black uppercase tracking-widest shadow-sm transition ${
                     googleStatus.connected ? 'border-green-200 bg-green-100 text-green-700' : 'border-slate-200 bg-white text-slate-700 hover:border-blue-300'
                   }`}
                 >
-                  {googleStatus.connected ? 'Google conectado' : 'Conectar Google'}
+                  {googleStatus.connected ? 'Reconectar Google' : 'Conectar Google'}
                 </button>
-              ) : null}
+              ) : googleStatus.connected ? <span className="rounded-lg border border-green-200 bg-green-100 px-3 py-2 text-[9px] font-bold uppercase text-green-700">{googleError ? 'Google indisponível' : 'Google conectado'}</span> : null}
               <button title="Mês anterior" aria-label="Mês anterior" onClick={() => setVisibleMonth((current) => new Date(current.getFullYear(), current.getMonth() - 1, 1))} className="flex h-9 w-9 items-center justify-center rounded-md border border-slate-200 bg-white transition hover:bg-slate-50">
                 <ChevronLeft size={17} />
               </button>
@@ -731,7 +817,7 @@ export function MeetingCalendarView({
                   sortValue: getTimeSortValue(getMeetingTime(task)),
                 })),
                 ...dayGoogleEvents.map((event) => ({
-                  id: `google:${event.id}`,
+                  id: `google:${googleEventKey(event.calendarId, event.id)}`,
                   type: 'google' as const,
                   event,
                   time: getGoogleEventTime(event),
@@ -782,7 +868,8 @@ export function MeetingCalendarView({
                                 key={item.id}
                                 onClick={(clickEvent) => clickEvent.stopPropagation()}
                                 title={`${item.time} ${item.event.summary || 'Evento Google'}`}
-                                className={`flex h-6 min-h-6 min-w-0 shrink-0 items-center gap-1.5 px-1.5 text-left text-[11px] font-medium transition ${rangeShape} ${fillClassName}`}
+                                style={googleStyle(item.event)}
+                                className={`flex h-6 min-h-6 min-w-0 shrink-0 items-center gap-1.5 px-1.5 text-left text-[11px] font-medium transition ${rangeShape} ${googleStyle(item.event) ? '' : fillClassName}`}
                               >
                                 <a href={item.event.htmlLink} target="_blank" rel="noreferrer" className="flex min-w-0 flex-1 items-center gap-1.5">
                                   <span className="shrink-0 tabular-nums opacity-85">{shouldShowRangeLabel ? item.time : ''}</span>
@@ -793,10 +880,11 @@ export function MeetingCalendarView({
                                     clickEvent.stopPropagation();
                                     deleteGoogleEvent(item.event);
                                   }}
-                                  className={`shrink-0 transition ${canDeleteMeetings ? 'opacity-80 hover:opacity-100' : 'cursor-not-allowed opacity-40'}`}
-                                  title={canDeleteMeetings ? 'Excluir evento Google' : deleteMeetingDeniedMessage}
+                                  disabled={!canDeleteGoogleEvent(item.event)}
+                                  className={`shrink-0 transition ${canDeleteGoogleEvent(item.event) ? 'opacity-80 hover:opacity-100' : 'cursor-not-allowed opacity-40'}`}
+                                  title={canDeleteGoogleEvent(item.event) ? 'Excluir evento Google' : 'Esta agenda Google é somente leitura.'}
                                   aria-label="Excluir evento Google"
-                                  aria-disabled={!canDeleteMeetings}
+                                  aria-disabled={!canDeleteGoogleEvent(item.event)}
                                 >
                                   <Trash2 size={10} />
                                 </button>
@@ -814,7 +902,8 @@ export function MeetingCalendarView({
                                 setSelectedMeeting(item.task);
                               }}
                               title={`${item.time} ${item.task.title}`}
-                              className={`flex h-6 min-h-6 min-w-0 shrink-0 items-center gap-1.5 px-1.5 text-left text-[11px] font-medium transition ${rangeShape} ${fillClassName}`}
+                              style={meetingStyle(item.task)}
+                              className={`flex h-6 min-h-6 min-w-0 shrink-0 items-center gap-1.5 px-1.5 text-left text-[11px] font-medium transition ${rangeShape} ${meetingStyle(item.task) ? '' : fillClassName}`}
                             >
                               <span className="shrink-0 tabular-nums opacity-85">{shouldShowRangeLabel ? item.time : ''}</span>
                               <span className={`min-w-0 flex-1 truncate ${completed ? 'opacity-70' : ''}`}>
@@ -855,7 +944,7 @@ export function MeetingCalendarView({
 
               return (
               <div key={task.id} className={`flex w-full gap-3 p-4 transition-all ${completed ? 'bg-emerald-50/70 hover:bg-emerald-50' : 'hover:bg-blue-50'}`}>
-                <div className={`flex h-12 w-12 shrink-0 flex-col items-center justify-center rounded-md ${completed ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-50 text-slate-700'}`}>
+                <div style={meetingStyle(task)} className={`flex h-12 w-12 shrink-0 flex-col items-center justify-center rounded-md ${completed ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-50 text-slate-700'}`}>
                   <span className="text-lg font-semibold">{new Date(`${getMeetingStartDate(task)}T00:00:00`).getDate()}</span>
                   <span className="text-[10px] font-medium">
                     {new Date(`${getMeetingStartDate(task)}T00:00:00`).toLocaleDateString('pt-BR', { month: 'short' })}
@@ -882,15 +971,15 @@ export function MeetingCalendarView({
               const eventDate = event.start?.date || event.start?.dateTime?.slice(0, 10) || toISODate(new Date());
 
               return (
-                <div key={event.id} className="flex w-full gap-3 p-4 text-left transition-all hover:bg-green-50">
-                  <div className="flex h-14 w-14 shrink-0 flex-col items-center justify-center rounded-2xl bg-green-600 text-white">
+                <div key={googleEventKey(event.calendarId, event.id)} className="flex w-full gap-3 p-4 text-left transition-all hover:bg-green-50">
+                  <div style={{ backgroundColor: googleCalendarById.get(event.calendarId || 'primary')?.backgroundColor || '#16a34a', color: calendarForeground(googleCalendarById.get(event.calendarId || 'primary')?.backgroundColor || '#16a34a') }} className="flex h-14 w-14 shrink-0 flex-col items-center justify-center rounded-2xl bg-green-600 text-white">
                     <span className="text-lg font-black">{new Date(`${eventDate}T00:00:00`).getDate()}</span>
                     <span className="text-[8px] font-black uppercase">
                       {new Date(`${eventDate}T00:00:00`).toLocaleDateString('pt-BR', { month: 'short' })}
                     </span>
                   </div>
                   <div className="min-w-0 flex-1">
-                    <div className="text-[8px] font-black uppercase text-green-600 mb-1">Google Calendar</div>
+                    <div className="text-[8px] font-black uppercase text-green-600 mb-1">{googleCalendarById.get(event.calendarId || 'primary')?.summary || 'Google Calendar'}</div>
                     <a href={event.htmlLink} target="_blank" rel="noreferrer" className="inline-flex items-start gap-2">
                       <h3 className="line-clamp-2 text-sm font-black uppercase leading-tight text-slate-900">{event.summary || 'Evento Google'}</h3>
                       <ExternalLink size={14} className="text-green-600 shrink-0 mt-0.5" />
@@ -900,9 +989,10 @@ export function MeetingCalendarView({
                     </p>
                     <button
                       onClick={() => deleteGoogleEvent(event)}
-                      className={`mt-3 flex items-center gap-1 text-[10px] font-black uppercase ${canDeleteMeetings ? 'text-red-500' : 'cursor-not-allowed text-slate-300 opacity-60'}`}
-                      title={canDeleteMeetings ? 'Excluir evento Google' : deleteMeetingDeniedMessage}
-                      aria-disabled={!canDeleteMeetings}
+                      disabled={!canDeleteGoogleEvent(event)}
+                      className={`mt-3 flex items-center gap-1 text-[10px] font-black uppercase ${canDeleteGoogleEvent(event) ? 'text-red-500' : 'cursor-not-allowed text-slate-300 opacity-60'}`}
+                      title={canDeleteGoogleEvent(event) ? 'Excluir evento Google' : 'Agenda somente leitura'}
+                      aria-disabled={!canDeleteGoogleEvent(event)}
                     >
                       <Trash2 size={12} /> Excluir do Google
                     </button>
@@ -922,7 +1012,7 @@ export function MeetingCalendarView({
           onMouseDown={() => setSelectedMeeting(null)}
         >
           <div
-            className="w-full max-w-[740px] overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_24px_80px_rgba(15,23,42,0.24)]"
+            className="max-h-[calc(100dvh-2rem)] w-full max-w-[740px] overflow-y-auto rounded-[28px] border border-slate-200 bg-white shadow-[0_24px_80px_rgba(15,23,42,0.24)]"
             onMouseDown={(event) => event.stopPropagation()}
           >
             <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-6 py-5">
@@ -986,7 +1076,8 @@ export function MeetingCalendarView({
               <div className="flex flex-col justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => onToggleMeeting(selectedMeetingDetails)}
+                  onClick={() => void toggleMeeting(selectedMeetingDetails)}
+                  disabled={!canManageMeeting(selectedMeetingDetails)}
                   className={`inline-flex h-12 items-center justify-center gap-2 rounded-2xl px-4 text-[11px] font-black uppercase tracking-widest ${
                     isMeetingCompleted(selectedMeetingDetails)
                       ? 'bg-slate-100 text-slate-600 hover:bg-slate-200'
@@ -1003,25 +1094,25 @@ export function MeetingCalendarView({
                     setSelectedMeeting(null);
                     openEditMeeting(meeting);
                   }}
-                  className="inline-flex h-12 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-[11px] font-black uppercase tracking-widest text-slate-700 hover:border-blue-300 hover:text-blue-600"
+                  disabled={!canManageMeeting(selectedMeetingDetails)}
+                  className="inline-flex h-12 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-[11px] font-black uppercase tracking-widest text-slate-700 hover:border-blue-300 hover:text-blue-600 disabled:opacity-40"
                 >
                   <Edit3 size={16} /> Editar
                 </button>
                 <button
                   type="button"
                   onClick={() => {
-                    if (!canDeleteMeetings) {
+                    if (!canDeleteMeeting(selectedMeetingDetails)) {
                       alert(deleteMeetingDeniedMessage);
                       return;
                     }
-                    const id = selectedMeetingDetails.id;
-                    setSelectedMeeting(null);
-                    onDeleteTask(id);
+                    void removeMeeting(selectedMeetingDetails);
                   }}
-                  title={canDeleteMeetings ? 'Excluir reuniao' : deleteMeetingDeniedMessage}
-                  aria-disabled={!canDeleteMeetings}
+                  title={canDeleteMeeting(selectedMeetingDetails) ? 'Excluir reunião do app' : deleteMeetingDeniedMessage}
+                  disabled={!canDeleteMeeting(selectedMeetingDetails)}
+                  aria-disabled={!canDeleteMeeting(selectedMeetingDetails)}
                   className={`inline-flex h-12 items-center justify-center gap-2 rounded-2xl border px-4 text-[11px] font-black uppercase tracking-widest ${
-                    canDeleteMeetings
+                    canDeleteMeeting(selectedMeetingDetails)
                       ? 'border-red-100 bg-red-50 text-red-600 hover:bg-red-100'
                       : 'cursor-not-allowed border-slate-100 bg-slate-50 text-slate-300 opacity-70'
                   }`}
@@ -1036,7 +1127,7 @@ export function MeetingCalendarView({
 
       {showCreateModal && (
         <div className="fixed inset-0 z-[300] flex items-center justify-center bg-slate-900/16 p-3 backdrop-blur-sm">
-          <div className="w-full max-w-4xl overflow-visible rounded-[30px] border border-slate-200 bg-white shadow-[0_24px_70px_rgba(15,23,42,0.22)]">
+          <div className="max-h-[calc(100dvh-1.5rem)] w-full max-w-4xl overflow-y-auto rounded-[30px] border border-slate-200 bg-white shadow-[0_24px_70px_rgba(15,23,42,0.22)]">
             <div className="flex items-center justify-between border-b-2 border-slate-100 px-5 py-4">
               <div>
                 <h2 className="text-xl font-black uppercase italic tracking-tighter">{editingMeeting ? 'Editar reunião' : 'Agendar reunião'}</h2>
@@ -1048,6 +1139,20 @@ export function MeetingCalendarView({
             </div>
 
             <div className="grid grid-cols-1 gap-3 px-5 py-4 sm:grid-cols-2 lg:grid-cols-4">
+              <label className="space-y-1 sm:col-span-2 lg:col-span-4">
+                <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest">Agenda</span>
+                <select aria-label="Agenda do evento" value={meetingCalendarId} disabled={Boolean(editingMeeting)} onChange={event => {
+                  const id = event.target.value;
+                  const calendar = calendarById.get(id);
+                  setMeetingCalendarId(id);
+                  setPreferredCalendarId(id);
+                  setSyncGoogleCalendar(false);
+                  setMeetingAssignedTo(calendar?.visibility === 'personal' ? defaultAssignedTo : profiles.find(profile => profile.id === defaultAssignedTo && (!calendar || profile.sector === calendar.sector))?.id || profiles.find(profile => profile.sector === calendar?.sector)?.id || defaultAssignedTo);
+                }} className="h-11 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm disabled:opacity-70">
+                  <option value="">Agenda do setor (compromissos atuais)</option>
+                  {local.calendars.map(calendar => <option key={calendar.id} value={calendar.id} disabled={calendar.owner_id !== defaultAssignedTo && calendar.sector !== userSector}>{calendar.name} · {calendar.visibility === 'personal' ? 'Pessoal' : `Setor ${calendar.sector}`}</option>)}
+                </select>
+              </label>
               <label className="sm:col-span-2 space-y-1">
                 <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest">Título</span>
                 <input value={meetingTitle} onChange={(event) => setMeetingTitle(event.target.value)} className="h-12 w-full rounded-2xl border-2 border-slate-100 bg-slate-50 px-4 text-sm font-black uppercase outline-none transition focus:border-blue-600" placeholder="Ex: Alinhamento comercial" />
@@ -1079,7 +1184,7 @@ export function MeetingCalendarView({
               <label className="space-y-1 sm:col-span-1 lg:col-span-2">
                 <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest">Responsável</span>
                 <select value={meetingAssignedTo} onChange={(event) => setMeetingAssignedTo(event.target.value)} className="h-12 w-full rounded-2xl border-2 border-slate-100 bg-slate-50 px-4 text-sm font-black uppercase outline-none transition focus:border-blue-600">
-                  {profiles.map((profile) => (
+                  {profiles.filter(profile => !selectedCalendar || (selectedCalendar.visibility === 'personal' ? profile.id === defaultAssignedTo : profile.sector === selectedCalendar.sector)).map((profile) => (
                     <option key={profile.id} value={profile.id}>{profile.full_name}</option>
                   ))}
                 </select>
@@ -1102,7 +1207,7 @@ export function MeetingCalendarView({
                 <input
                   type="checkbox"
                   checked={syncGoogleCalendar}
-                  disabled={!googleStatus.connected}
+                  disabled={!googleStatus.connected || googleReconnectRequired || !writableGoogleCalendars.length}
                   onChange={(event) => setSyncGoogleCalendar(event.target.checked)}
                   className="h-5 w-5"
                 />
@@ -1110,6 +1215,7 @@ export function MeetingCalendarView({
                   Enviar também para o Google Calendar
                 </span>
               </label>}
+              {!editingMeeting && syncGoogleCalendar && <label className="space-y-1 sm:col-span-2 lg:col-span-4"><span className="text-xs font-semibold">Agenda de destino no Google</span><select aria-label="Agenda de destino no Google" value={googleCalendarId} onChange={event => setGoogleCalendarId(event.target.value)} className="h-11 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm">{writableGoogleCalendars.map(calendar => <option key={calendar.id} value={calendar.id}>{calendar.summary}</option>)}</select></label>}
             </div>
 
             <div className="flex flex-col gap-3 border-t-2 border-slate-100 px-5 py-4 sm:flex-row">

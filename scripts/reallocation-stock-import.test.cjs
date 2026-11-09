@@ -6,6 +6,8 @@ const vm = require('node:vm');
 const ts = require('typescript');
 
 function loadRoute(failure) {
+  const importFilters = {};
+  vm.runInNewContext(ts.transpileModule(readFileSync(path.join(__dirname, '../lib/reallocation-import-filters.ts'), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText, { exports: importFilters });
   const calls = [];
   const afterTasks = [];
   const db = {
@@ -32,6 +34,8 @@ function loadRoute(failure) {
     },
   };
   const dependencies = {
+    'xlsx': require('xlsx'),
+    '@/lib/reallocation-import-filters': importFilters,
     'next/server': { NextResponse: { json: (value, init) => Response.json(value, init) }, after: (callback) => afterTasks.push(callback) },
     '@/lib/reallocation-stock-cleanup': { cleanupRetiredReallocationStock: async () => ({ completed: true }) },
     '@/lib/supabase-admin': { getSupabaseAdmin: () => db },
@@ -75,6 +79,30 @@ test('import creates a separate pending base and publishes only after saving its
   assert.equal(route.calls[publishIndex].args.p_expected_rows, 1);
   assert.equal(route.calls.some((call) => call.operation === 'delete'), false);
   assert.equal(route.afterTasks.length, 1);
+});
+
+test('SpreadsheetML XML import exposes only valid file manufacturers and stores in the preview', async () => {
+  const XLSX = require('xlsx');
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([
+    ['Un. Neg.', 'Apelido Un. Neg.', 'Cod. de Barras', 'Produto', 'Estoque', 'Media venda mensal', 'Fabricante'],
+    ['01', 'Loja 1', '789123', 'Produto', '5', '30', 'FABRICANTE XML'],
+    ['02', 'Loja 2', '789123', 'Produto', '3', '0', 'FABRICANTE XML'],
+    ['99', 'Ignorada', '', 'Invalido', '3', '0', 'NAO SUGERIR'],
+  ]), 'Estoque');
+  const xml = XLSX.write(workbook, { bookType: 'xml', type: 'array' });
+  const form = new FormData();
+  form.set('file', new File([xml], 'estoque.xml', { type: 'application/xml' }));
+  const route = loadRoute();
+  const response = await route.POST(new Request('http://localhost/api/reallocation/stock/import', { method: 'POST', body: form }));
+  const data = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(data.imported, 2);
+  assert.equal(data.stores.map(store => store.code).join(','), '01,02');
+  assert.equal(data.filterPreview.manufacturers.length, 1);
+  assert.equal(data.filterPreview.manufacturers[0].name, 'FABRICANTE XML');
+  assert.equal(data.filterPreview.manufacturers[0].source, 'file');
+  assert.equal(data.filterPreview.manufacturers[0].linked, false);
 });
 
 test('report includes ignored row reasons and original row numbers across blank rows', async () => {

@@ -50,6 +50,8 @@ test('fills only the deficit, even without sales, using confirmed stock', () => 
   assert.equal(rows[0].quantity, 3);
   assert.equal(rows[0].minimumStockQuantity, 3);
   assert.equal(rows[0].destinationConfirmedStock, 7);
+  assert.equal(rows[0].originMinimumStock, 0);
+  assert.equal(rows[0].destinationMinimumStock, 10);
 });
 
 test('missing confirmed stock falls back to physical stock', () => {

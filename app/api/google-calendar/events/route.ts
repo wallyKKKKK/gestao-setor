@@ -3,84 +3,10 @@ import {
   createGoogleCalendarEvent,
   deleteGoogleCalendarEvent,
   getGoogleCalendarConfig,
-  getTokenExpiration,
   listGoogleCalendarEvents,
-  isGoogleReconnectRequiredError,
-  type GoogleCalendarConnection,
-  refreshGoogleAccessToken,
 } from "@/lib/google-calendar";
-import { getSupabaseAdmin } from "@/lib/supabase-admin";
+import { getConnectionAccessToken, googleCalendarErrorResponse } from '@/lib/google-calendar-server';
 import { requireSelfOrRole } from "@/lib/server-auth";
-
-async function getConnectionAccessToken(userId: string) {
-  const supabase = getSupabaseAdmin();
-  const { data, error } = await supabase
-    .from("google_calendar_connections")
-    .select("*")
-    .eq("user_id", userId)
-    .maybeSingle();
-
-  if (error) throw error;
-  if (!data) throw new Error("Google Calendar is not connected.");
-
-  const connection = data as GoogleCalendarConnection;
-  let accessToken = connection.access_token;
-
-  if (new Date(connection.expires_at).getTime() < Date.now() + 60_000) {
-    if (!connection.refresh_token) {
-      throw new Error("Google refresh token is missing. Reconnect Google Calendar.");
-    }
-
-    let refreshed: Awaited<ReturnType<typeof refreshGoogleAccessToken>>;
-    try {
-      refreshed = await refreshGoogleAccessToken(connection.refresh_token);
-    } catch (error) {
-      if (isGoogleReconnectRequiredError(error)) {
-        await supabase
-          .from("google_calendar_connections")
-          .delete()
-          .eq("user_id", userId);
-      }
-      throw error;
-    }
-    accessToken = refreshed.access_token;
-
-    await supabase
-      .from("google_calendar_connections")
-      .update({
-        access_token: refreshed.access_token,
-        expires_at: getTokenExpiration(refreshed.expires_in),
-        scope: refreshed.scope,
-        token_type: refreshed.token_type,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("user_id", userId);
-  }
-
-  return accessToken;
-}
-
-async function clearGoogleCalendarConnection(userId?: string) {
-  if (!userId) return;
-
-  await getSupabaseAdmin()
-    .from("google_calendar_connections")
-    .delete()
-    .eq("user_id", userId);
-}
-
-async function googleCalendarErrorResponse(error: unknown, userId?: string) {
-  if (isGoogleReconnectRequiredError(error)) {
-    await clearGoogleCalendarConnection(userId);
-    return Response.json({
-      error: "Sua conexão com o Google Calendar expirou. Conecte novamente.",
-      reconnectRequired: true,
-    }, { status: 409 });
-  }
-
-  const message = error instanceof Error ? error.message : "Unknown Google Calendar error.";
-  return Response.json({ error: message }, { status: message.includes("not connected") ? 409 : 500 });
-}
 
 export async function GET(request: Request) {
   if (!getGoogleCalendarConfig().isConfigured) {
@@ -97,11 +23,12 @@ export async function GET(request: Request) {
   }
 
   try {
-    const auth = await requireSelfOrRole(request, userId, ["admin"]);
+    const auth = await requireSelfOrRole(request, userId, []);
     if (!auth.ok) return auth.response;
 
     const accessToken = await getConnectionAccessToken(userId);
-    const events = await listGoogleCalendarEvents(accessToken, timeMin, timeMax);
+    if (!Number.isFinite(Date.parse(timeMin)) || !Number.isFinite(Date.parse(timeMax)) || Date.parse(timeMax) <= Date.parse(timeMin)) return Response.json({ error: 'Período inválido.' }, { status: 400 });
+    const events = await listGoogleCalendarEvents(accessToken, timeMin, timeMax, searchParams.get('calendarId') || 'primary');
     return Response.json({ events });
   } catch (error) {
     return await googleCalendarErrorResponse(error, userId);
@@ -113,17 +40,17 @@ export async function POST(request: Request) {
     return Response.json({ error: "Google Calendar integration is not configured." }, { status: 503 });
   }
 
-  const body = await request.json() as { userId?: string; meeting?: CreateMeetingInput };
+  const body = await request.json() as { userId?: string; meeting?: CreateMeetingInput; calendarId?: string };
   if (!body.userId || !body.meeting) {
     return Response.json({ error: "Missing userId or meeting." }, { status: 400 });
   }
 
   try {
-    const auth = await requireSelfOrRole(request, body.userId, ["admin"]);
+    const auth = await requireSelfOrRole(request, body.userId, []);
     if (!auth.ok) return auth.response;
 
     const accessToken = await getConnectionAccessToken(body.userId);
-    const event = await createGoogleCalendarEvent(accessToken, body.meeting);
+    const event = await createGoogleCalendarEvent(accessToken, body.meeting, body.calendarId || 'primary');
     return Response.json({ event });
   } catch (error) {
     return await googleCalendarErrorResponse(error, body.userId);
@@ -144,11 +71,11 @@ export async function DELETE(request: Request) {
   }
 
   try {
-    const auth = await requireSelfOrRole(request, userId, ["admin"]);
+    const auth = await requireSelfOrRole(request, userId, []);
     if (!auth.ok) return auth.response;
 
     const accessToken = await getConnectionAccessToken(userId);
-    await deleteGoogleCalendarEvent(accessToken, eventId);
+    await deleteGoogleCalendarEvent(accessToken, eventId, searchParams.get('calendarId') || 'primary');
     return Response.json({ ok: true });
   } catch (error) {
     return await googleCalendarErrorResponse(error, userId);

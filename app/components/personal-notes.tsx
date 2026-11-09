@@ -20,6 +20,21 @@ function readDrafts(key: string): Record<string, Draft> {
   } catch { return {}; }
 }
 
+function readCachedNotes(key: string, userId: string): Note[] {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(key) || '[]');
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((note): note is Note => Boolean(note && note.user_id === userId
+      && typeof note.id === 'string' && typeof note.title === 'string'
+      && typeof note.content === 'string' && typeof note.updated_at === 'string'));
+  } catch { return []; }
+}
+
+function readSelectedNote(key: string) {
+  try { return localStorage.getItem(key) || ''; }
+  catch { return ''; }
+}
+
 export function PersonalNotes({ userId, onCreateTask, onViewTask, refreshKey = 0 }: {
   userId: string;
   refreshKey?: number;
@@ -27,13 +42,17 @@ export function PersonalNotes({ userId, onCreateTask, onViewTask, refreshKey = 0
   onViewTask: (taskId: string) => Promise<void>;
 }) {
   const draftKey = `wally-note-drafts:${userId}`;
+  const cacheKey = `wally-note-cache:${userId}`;
+  const selectionKey = `wally-note-selected:${userId}`;
   const [drafts, setDrafts] = useState<Record<string, Draft>>(() => readDrafts(draftKey));
-  const [notes, setNotes] = useState<Note[]>([]);
-  const [selectedId, setSelectedId] = useState('');
+  const draftsRef = useRef(drafts);
+  const [notes, setNotes] = useState<Note[]>(() => readCachedNotes(cacheKey, userId));
+  const [selectedId, setSelectedId] = useState(() => readSelectedNote(selectionKey));
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [storageError, setStorageError] = useState(false);
   const lock = useRef(false);
   const mounted = useRef(true);
   const request = useRef(0);
@@ -46,18 +65,37 @@ export function PersonalNotes({ userId, onCreateTask, onViewTask, refreshKey = 0
     return () => { mounted.current = false; };
   }, []);
 
+  // Persist in the editing event, before a tab close can interrupt a React effect.
+  const updateDrafts = (update: (current: Record<string, Draft>) => Record<string, Draft>) => {
+    const next = update(draftsRef.current);
+    draftsRef.current = next;
+    try {
+      localStorage.setItem(draftKey, JSON.stringify(next));
+      setStorageError(false);
+    } catch { setStorageError(true); }
+    setDrafts(next);
+  };
+
   useEffect(() => {
-    try { localStorage.setItem(draftKey, JSON.stringify(drafts)); }
-    catch { setError('Não foi possível guardar o rascunho neste navegador. Salve a nota antes de sair.'); }
-  }, [draftKey, drafts]);
+    try { localStorage.setItem(cacheKey, JSON.stringify(notes)); }
+    catch { /* Draft persistence reports failures separately. */ }
+  }, [cacheKey, notes]);
+
+  useEffect(() => {
+    try { localStorage.setItem(selectionKey, selectedId); }
+    catch { /* Restoring the selected note is optional. */ }
+  }, [selectionKey, selectedId]);
 
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => {
-      if (Object.keys(drafts).length) event.preventDefault();
+      if (storageError && Object.keys(draftsRef.current).length) {
+        event.preventDefault();
+        event.returnValue = '';
+      }
     };
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
-  }, [drafts]);
+  }, [storageError]);
 
   const load = useCallback(async () => {
     const version = ++request.current;
@@ -105,7 +143,7 @@ export function PersonalNotes({ userId, onCreateTask, onViewTask, refreshKey = 0
     if (error) throw error;
     if (!mounted.current) return;
     setNotes(current => [data as Note, ...current.filter(note => note.id !== selected.id)]);
-    setDrafts(current => { const next = { ...current }; delete next[selected.id]; return next; });
+    updateDrafts(current => { const next = { ...current }; delete next[selected.id]; return next; });
   });
   const remove = () => {
     if (!selected || !confirm('Excluir esta nota? Esta ação não pode ser desfeita.')) return;
@@ -115,12 +153,13 @@ export function PersonalNotes({ userId, onCreateTask, onViewTask, refreshKey = 0
       if (!mounted.current) return;
       setNotes(current => current.filter(note => note.id !== selected.id));
       setSelectedId('');
-      setDrafts(current => { const next = { ...current }; delete next[selected.id]; return next; });
+      updateDrafts(current => { const next = { ...current }; delete next[selected.id]; return next; });
     });
   };
   const edit = (field: keyof Draft, value: string) => {
-    if (selected && draft) setDrafts(current => {
-      const next = { ...current, [selected.id]: { title: draft.title, content: draft.content, [field]: value } };
+    if (selected && draft) updateDrafts(current => {
+      const previous = current[selected.id] || selected;
+      const next = { ...current, [selected.id]: { title: previous.title, content: previous.content, [field]: value } };
       if (next[selected.id].title === selected.title && next[selected.id].content === selected.content) delete next[selected.id];
       return next;
     });
@@ -140,6 +179,7 @@ export function PersonalNotes({ userId, onCreateTask, onViewTask, refreshKey = 0
         </div>
       </div>
       {error && <p role="alert" className="mb-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</p>}
+      {storageError && <p role="alert" className="mb-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">Não foi possível guardar o rascunho neste navegador. Salve na sua conta antes de fechar o app.</p>}
       <div className="grid min-h-[65vh] overflow-hidden rounded-lg border border-slate-200 bg-white md:grid-cols-[280px_minmax(0,1fr)]">
         <aside className="border-b border-slate-200 md:border-b-0 md:border-r">
           <div className="relative m-3"><Search size={16} className="absolute left-3 top-3 text-slate-400" /><input aria-label="Buscar notas" placeholder="Buscar notas..." value={query} onChange={event => setQuery(event.target.value)} className="h-10 w-full rounded-md border border-slate-200 bg-slate-50 pl-9 pr-3 text-sm" /></div>
@@ -167,7 +207,7 @@ export function PersonalNotes({ userId, onCreateTask, onViewTask, refreshKey = 0
             </button>
           </div>
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-            <span role="status" className="text-xs text-slate-500">{busy ? 'Salvando...' : dirty ? 'Rascunho neste navegador · salve para sincronizar' : 'Salvo na sua conta'}</span>
+            <span role="status" className="text-xs text-slate-500">{busy ? 'Salvando...' : dirty ? storageError ? 'Rascunho não salvo neste dispositivo' : 'Rascunho salvo neste dispositivo · Salvar sincroniza com a conta' : 'Salvo na sua conta'}</span>
             <div className="flex gap-2"><button type="button" title="Excluir nota" aria-label="Excluir nota" disabled={busy || loading} onClick={remove} className="rounded-md p-2 text-slate-500 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"><Trash2 size={17} /></button><button type="button" disabled={!dirty || busy || loading} onClick={() => void save()} className="flex items-center gap-2 rounded-md bg-teal-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"><Save size={16} /> Salvar</button></div>
           </div>
           <input aria-label="Título da nota" placeholder="Sem título" maxLength={200} disabled={busy} value={draft.title} onChange={event => edit('title', event.target.value)} className="mb-4 w-full border-0 bg-transparent text-xl font-semibold outline-none" />

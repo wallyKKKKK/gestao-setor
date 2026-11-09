@@ -3,6 +3,7 @@ import * as XLSX from "xlsx";
 import { isPricingSector } from "@/lib/permissions";
 import { requireAuthenticatedProfile } from "@/lib/server-auth";
 import { getSupabaseAdmin } from "@/lib/supabase-admin";
+import { expiringClassificationParts } from "@/lib/expiring-classification";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -68,7 +69,7 @@ function normalizeBranchCode(value: unknown) {
   return /^\d$/.test(text) ? `0${text}` : text;
 }
 
-function cell(row: RowMap, names: string[]) {
+function cell(row: RowMap, names: string[], exact = false) {
   const entries = Object.entries(row).map(([key, value]) => ({
     header: normalizeHeader(key),
     compact: normalizeHeaderKey(key),
@@ -87,7 +88,7 @@ function cell(row: RowMap, names: string[]) {
     if (match && match.value !== undefined && match.value !== null && String(match.value).trim() !== "") return match.value;
   }
 
-  for (const name of names) {
+  for (const name of exact ? [] : names) {
     const compactName = normalizeHeaderKey(name);
     if (!compactName || compactName.length < 4) continue;
     const match = entries.find((entry) => entry.compact.includes(compactName) || compactName.includes(entry.compact));
@@ -106,6 +107,13 @@ function numberValue(value: unknown) {
 
 function integerValue(value: unknown) {
   return Math.trunc(numberValue(value));
+}
+
+function priceValue(value: unknown) {
+  if (typeof value === 'number') return numberValue(value);
+  const text = String(value ?? '').replace(/R\$/gi, '').trim();
+  if (/^[+-]?\d+\.\d{1,2}$/.test(text)) return Number(text);
+  return numberValue(text);
 }
 
 function dateValue(value: unknown) {
@@ -144,15 +152,7 @@ function daysUntilExpiration(expirationDate: string | null) {
   if (Number.isNaN(expiration.getTime())) return 0;
   return Math.max(0, Math.ceil((expiration.getTime() - today.getTime()) / 86400000));
 }
-function classificationParts(path: string) {
-  const parts = path.split(">").map((part) => normalizeText(part)).filter(Boolean);
-  const useful = parts[0] === "PRINCIPAL" ? parts.slice(1) : parts;
-  return {
-    line: useful[0] || "",
-    department: useful[1] || "",
-    category: useful[2] || useful[useful.length - 1] || "",
-  };
-}
+const classificationParts = expiringClassificationParts;
 
 function rowKey(input: { branchCode: string; ean: string; lot: string; expirationDate: string | null }) {
   return [input.branchCode, input.ean, input.lot, input.expirationDate || "sem-validade"].join("|");
@@ -210,7 +210,10 @@ export async function POST(request: Request) {
     const parsed = rows.map((row): ParsedExpiringInventoryItem | null => {
       const branchCode = normalizeBranchCode(cell(row, ["Codigo da Un. Neg.", "Codigo Un. Neg.", "Codigo unidade negocio", "Un. Negocio", "Unidade Negocio", "Codigo loja", "Cod loja", "Filial codigo", "Loja"]));
       const branchName = normalizeText(cell(row, ["Nome da Un. Neg.", "Nome Un. Neg.", "Apelido Un. Neg.", "Unidade", "Filial", "Nome loja", "Loja"]));
-      const ean = String(cell(row, ["Cod. Barras/Etiqueta", "Codigo Barras Etiqueta", "Codigo de Barras", "Cod Barras", "Codigo EAN", "EAN", "Barras", "GTIN"])).replace(/\.0$/, "").trim();
+      const barcodeHeaders = ["Cod. Barras/Etiqueta", "Codigo Barras Etiqueta", "Codigo de Barras", "Cod Barras", "Codigo EAN", "EAN", "Barras", "GTIN"];
+      const ean = String(cell(row, barcodeHeaders, true)
+        || cell(row, ["Etiqueta", "Etiqueta do Produto", "Codigo Etiqueta", "Codigo da Etiqueta"], true)
+        || cell(row, barcodeHeaders)).replace(/\.0$/, "").trim();
       const lot = normalizeText(cell(row, ["Lote", "Numero Lote", "Nro Lote", "Num Lote", "Lote Produto"])) || "SEM LOTE";
       const description = normalizeText(cell(row, ["Embalagem", "Produto", "Descricao", "Descricao Produto", "Nome Produto", "Mercadoria", "Item"]));
       const expirationDate = dateValue(cell(row, ["Data Validade", "Validade", "Vencimento", "Data Vencimento", "Dt Validade", "Dt Vencimento"]));
@@ -250,8 +253,8 @@ export async function POST(request: Request) {
         included_at: timestampValue(cell(row, ["Data Hora Inclusao", "Data Hora Inclusão", "Data Inclusao", "Inclusao"])),
         monthly_average: numberValue(cell(row, ["Media Venda Mensal", "Média Venda Mensal", "Media Mensal", "Media Venda"])),
         purchase_demand_30d: numberValue(cell(row, ["Demanda de Compra (Ult. 30 Dias)", "Demanda de Compra (Últ. 30 Dias)", "Demanda Compra 30 Dias", "Demanda Compra"])),
-        cost_price: numberValue(cell(row, ["Custo", "Preco Custo", "Custo Unitario", "Custo Medio", "Custo Real", "Valor Custo", "Custo Produto"])),
-        sale_price: numberValue(cell(row, ["Preco Venda", "Preco de Venda", "Venda", "Valor Venda", "Preco Atual", "Preco Loja", "Preco Produto", "Preco Base"])),
+        cost_price: priceValue(cell(row, ["Custo", "Preco Custo", "Preco de Custo", "Custo Unitario", "Custo Medio", "Custo Real", "Valor Custo", "Custo Produto"], true)),
+        sale_price: priceValue(cell(row, ["Preco Venda", "Preco de Venda", "Venda", "Valor Venda", "Venda Unitaria", "Preco Atual", "Preco Loja", "Preco Produto", "Preco Base"], true)),
         source_file: file.name,
         imported_by: auth.userId,
         imported_at: new Date().toISOString(),

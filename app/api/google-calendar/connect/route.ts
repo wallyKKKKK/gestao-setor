@@ -12,7 +12,7 @@ export async function POST(request: Request) {
     return Response.json({ error: "Google Calendar integration is not configured." }, { status: 503 });
   }
 
-  const auth = await requireSelfOrRole(request, userId, ["admin"]);
+  const auth = await requireSelfOrRole(request, userId, []);
   if (!auth.ok) return auth.response;
 
   return Response.json({ url: buildGoogleAuthUrl(userId) });

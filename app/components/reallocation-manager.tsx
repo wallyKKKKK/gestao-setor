@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
-import { Check, ChevronDown, Clock, Columns3, Database, Download, FileSpreadsheet, Filter, Loader2, Plus, RefreshCcw, RotateCcw, Search, Shuffle, SlidersHorizontal, Trash2, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, Check, ChevronDown, Clock, Columns3, Database, Download, FileSpreadsheet, Filter, Loader2, Plus, RefreshCcw, RotateCcw, Search, Shuffle, SlidersHorizontal, Trash2, X } from 'lucide-react';
 import { countReallocationProducts, fetchLatestReallocationStockSnapshot, fetchPricingBranches, fetchReallocationAttributeOptions, fetchReallocationAttributeSummary, fetchReallocationProducts, fetchReallocationStockItems } from '@/lib/api';
 import { getAuthHeaders } from '@/lib/auth-headers';
 import { getPermissionDeniedMessage } from '@/lib/permissions';
@@ -13,6 +13,8 @@ import { getReallocationRowMarkers, type ReallocationRowMarker } from '@/lib/rea
 import { readHiddenTableColumns } from '@/lib/table-column-visibility';
 import { TableColumnMenu } from './table-column-menu';
 import { ReallocationWorkspaceTabs, type ReallocationWorkspaceView } from './reallocation-workspace-tabs';
+import { nextFilterOptionSort, sortFilterOptions, type FilterOptionSort } from '@/lib/filter-option-sort';
+import { normalizeImportStoreCode } from '@/lib/reallocation-import-filters';
 
 function txtLine(origin: string, destination: string, erpCode: string, quantity: number) {
   return `${origin};${destination};${erpCode};${quantity}`;
@@ -193,12 +195,14 @@ interface TransferSuggestion {
   originStock: number;
   originAvailableStock: number;
   originConfirmedStock: number;
+  originMinimumStock?: number;
   originMonthlyAvgSales: number;
   originCurve: string;
   originConfirmedPurchase: number;
   originConfirmedTransfer: number;
   destinationStock: number;
   destinationConfirmedStock: number;
+  destinationMinimumStock?: number;
   destinationMonthlyAvgSales: number;
   destinationCurve: string;
   destinationConfirmedPurchase: number;
@@ -299,6 +303,7 @@ const SUGGESTION_COLUMNS = [
   { key: 'originName', label: 'Apelido Un. Neg. Orig.', align: 'left', width: 190 },
   { key: 'originStock', label: 'Estoque Orig.', align: 'right', width: 130 },
   { key: 'originConfirmedStock', label: 'Estoque Conf. Orig.', align: 'right', width: 150 },
+  { key: 'originMinimumStock', label: 'Estoque mínimo origem', align: 'right', width: 160 },
   { key: 'originCurve', label: 'Curva Orig.', align: 'center', width: 110 },
   { key: 'originMonthlyAvgSales', label: 'Media Venda Mensal Orig.', align: 'right', width: 190 },
   { key: 'originStockDays', label: 'Dias Orig.', align: 'right', width: 120 },
@@ -307,6 +312,7 @@ const SUGGESTION_COLUMNS = [
   { key: 'destinationName', label: 'Apelido Un. Neg. Dest.', align: 'left', width: 190 },
   { key: 'destinationMonthlyAvgSales', label: 'Media Venda Mensal Dest.', align: 'right', width: 190 },
   { key: 'destinationConfirmedStock', label: 'Estoque Conf. Dest.', align: 'right', width: 150 },
+  { key: 'destinationMinimumStock', label: 'Estoque mínimo destino', align: 'right', width: 160 },
   { key: 'destinationCurve', label: 'Curva Dest.', align: 'center', width: 110 },
   { key: 'destinationStock', label: 'Estoque Dest.', align: 'right', width: 130 },
   { key: 'destinationStockDays', label: 'Dias Dest.', align: 'right', width: 120 },
@@ -513,6 +519,11 @@ function loadReallocationPreferences() {
     const columnOrder = Array.isArray(parsed.suggestionColumnOrder)
       ? parsed.suggestionColumnOrder.filter((key): key is SuggestionColumnKey => validColumnKeys.has(key as SuggestionColumnKey))
       : defaults.suggestionColumnOrder;
+    if (columnOrder.length) {
+      for (const [key, anchor] of [['originMinimumStock', 'originConfirmedStock'], ['destinationMinimumStock', 'destinationConfirmedStock']] as const) {
+        if (!columnOrder.includes(key)) columnOrder.splice(columnOrder.indexOf(anchor) >= 0 ? columnOrder.indexOf(anchor) + 1 : columnOrder.length, 0, key);
+      }
+    }
     const columnWidths = { ...defaults.suggestionColumnWidths };
 
     if (parsed.suggestionColumnWidths && typeof parsed.suggestionColumnWidths === 'object') {
@@ -2514,11 +2525,13 @@ export function ReallocationManager({
       ? 'bg-emerald-50 text-emerald-700 shadow-[inset_0_-2px_0_#10b981]'
       : 'bg-slate-50 text-black';
     const isUtilityColumn = column.key === 'selection' || column.key === 'actions';
+    const isSorted = !isUtilityColumn && suggestionSort?.key === column.key;
 
     return (
       <th
         key={column.key}
         tabIndex={0}
+        aria-sort={isSorted ? suggestionSort?.direction === 'asc' ? 'ascending' : 'descending' : undefined}
         onContextMenu={(event) => {
           event.preventDefault();
           const rect = event.currentTarget.getBoundingClientRect();
@@ -2547,9 +2560,9 @@ export function ReallocationManager({
         onDrop={() => {
           if (!isUtilityColumn) moveSuggestionColumn(column.key);
         }}
-        className={`relative overflow-hidden select-none border-b border-r border-slate-200 ${column.key === 'selection' ? 'px-0' : 'px-1'} py-2.5 text-center text-[10px] font-black uppercase tracking-widest ${highlightClass}`}
+        className={`relative overflow-hidden select-none border-b border-r border-slate-200 ${column.key === 'selection' ? 'px-0' : 'px-1'} py-2.5 text-center text-[10px] font-black uppercase tracking-widest ${isSorted ? 'bg-violet-50 text-violet-700' : highlightClass}`}
         style={{ width: suggestionColumnWidths[column.key] || column.width }}
-        title="Arraste para mover. Puxe a borda direita para ajustar a largura."
+        title={`${!isUtilityColumn && column.key !== 'quantity' ? 'Duplo clique para ordenar. ' : ''}Arraste para mover. Puxe a borda direita para ajustar a largura.`}
       >
         {column.key === 'selection' ? (
           <>
@@ -2569,10 +2582,12 @@ export function ReallocationManager({
           </>
         ) : (
           <>
-            <span className="block truncate pr-2">
-              {column.label}
-              {suggestionSort?.key === column.key && (
-                <span className="ml-1 text-[9px]">{suggestionSort.direction === 'asc' ? 'A-Z' : 'Z-A'}</span>
+            <span className="flex min-w-0 items-center justify-center gap-1 pr-2">
+              <span className="truncate">{column.label}</span>
+              {isSorted && (
+                suggestionSort?.direction === 'asc'
+                  ? <ArrowUp size={11} className="shrink-0" aria-hidden="true" />
+                  : <ArrowDown size={11} className="shrink-0" aria-hidden="true" />
               )}
             </span>
             {!isUtilityColumn && (
@@ -2640,6 +2655,10 @@ export function ReallocationManager({
         return <td key={column.key} className={cellClass}>{decimal(suggestion.originStock)}</td>;
       case 'originConfirmedStock':
         return <td key={column.key} className={cellClass}>{decimal(suggestion.originConfirmedStock)}</td>;
+      case 'originMinimumStock':
+        return <td key={column.key} className={cellClass}>{suggestion.originMinimumStock == null ? '-' : decimal(suggestion.originMinimumStock)}</td>;
+      case 'destinationMinimumStock':
+        return <td key={column.key} className={cellClass}>{suggestion.destinationMinimumStock == null ? '-' : decimal(suggestion.destinationMinimumStock)}</td>;
       case 'originCurve':
         return <td key={column.key} className={`${cellClass} font-bold`}>{suggestion.originCurve || '-'}</td>;
       case 'originMonthlyAvgSales':
@@ -2813,11 +2832,34 @@ export function ReallocationManager({
 
   return (
     <main className="reallocation-workbench flex h-[calc(100dvh-4rem)] w-full max-w-none flex-col overflow-hidden px-2 py-2 sm:px-3 sm:py-2">
-      {importReport && !stockImporting && <ReallocationImportReportDialog report={importReport} onClose={() => setImportReport(null)} />}
+      {importReport && !stockImporting && <ReallocationImportReportDialog report={importReport} onClose={() => setImportReport(null)}
+        currentFilters={{
+          manufacturers: manufacturerFilters.map(item => item.columns[0]),
+          origins: originFilters.map(item => item.id), destinations: destinationFilters.map(item => item.id),
+          otherCount: productFilters.length + classificationFilters.length + classificationLineFilters.length + classificationDepartmentFilters.length + classificationCategoryFilters.length + needTypeFilters.length + lastPurchaseSupplierFilters.length + (searchTerm ? 1 : 0),
+        }}
+        onApplyFilters={selection => {
+          const importedStores = new Map(importReport.stores.map(store => [normalizeImportStoreCode(store.code), store]));
+          const storeOptions = (codes: string[]): QuickFilterItem[] => codes.flatMap(code => {
+            const store = importedStores.get(code);
+            if (!store) return [];
+            return [branchOptions.find(item => normalizeImportStoreCode(item.id) === code) || { id: code, columns: [code, store.name, '-'], searchText: `${code} ${store.name}`.toLowerCase() }];
+          });
+          const manufacturers = new Set(importReport.filterPreview?.manufacturers.map(item => item.name));
+          setManufacturerFilters(selection.manufacturers.filter(name => manufacturers.has(name)).map(name => ({ id: name, columns: [name], searchText: name.toLowerCase() })));
+          setOriginFilters(storeOptions(selection.origins));
+          setDestinationFilters(storeOptions(selection.destinations));
+          if (selection.clearOtherFilters) {
+            setProductFilters([]); setClassificationFilters([]); setClassificationLineFilters([]);
+            setClassificationDepartmentFilters([]); setClassificationCategoryFilters([]);
+            setNeedTypeFilters([]); setLastPurchaseSupplierFilters([]);
+          }
+          setImportReport(null);
+        }} />}
       <input
         ref={stockInputRef}
         type="file"
-        accept=".csv,.xlsx,.xls"
+        accept=".csv,.xlsx,.xls,.xml"
         className="hidden"
         onChange={(event) => {
           const file = event.target.files?.[0];
@@ -2983,39 +3025,9 @@ export function ReallocationManager({
                 onChange={setDestinationCurvePriority}
               />
             </div>
-            <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] font-black uppercase">
-              <button
-                type="button"
-                onClick={() => {
-                  setProductFilters([]);
-                  setOriginFilters([]);
-                  setDestinationFilters([]);
-                  setClassificationFilters([]);
-                  setClassificationLineFilters([]);
-                  setClassificationDepartmentFilters([]);
-                  setClassificationCategoryFilters([]);
-                  setManufacturerFilters([]);
-                  setOriginCurvePriority([]);
-                  setDestinationCurvePriority([]);
-                }}
-                className="h-6 rounded-md border border-slate-200 bg-white px-2 text-[9px] text-violet-700 shadow-sm hover:border-violet-300"
-              >
-                Limpar filtros
-              </button>
-              <span className={activeSuggestionFilterCount > 0 ? 'text-red-600' : 'text-slate-400'}>
-                {activeSuggestionFilterCount} filtros selecionados
-              </span>
-              {hasPendingSuggestionSettings && (
-                <span className="rounded-md bg-amber-50 px-2 py-1 text-amber-700">
-                  pendente: atualizar
-                </span>
-              )}
-              <span className="hidden sm:inline text-slate-400">Perfil: {SUGGESTION_PROFILES[suggestionProfile].label}</span>
-              <span className="hidden sm:inline text-slate-400">Seguranca: {originMinimumDays} dias</span>
-            </div>
           </div>
 
-          <div className="relative grid grid-cols-2 gap-1">
+          <div className="relative grid grid-cols-2 gap-1 self-start">
             <div ref={summaryRef} className={`relative ${showMetricDetails || showDataActions ? 'z-[240]' : ''}`}>
             <button
               type="button"
@@ -3140,8 +3152,35 @@ export function ReallocationManager({
           </header>
         )}
 
-        {suggestionView === 'draft' && (hasPendingSuggestionSettings || stockSnapshotStaleMessage || suggestionExportWarningMessage || suggestionMessage || suggestionDiagnostic || originSummary.length > 0) && (
-          <div className="flex flex-wrap items-center gap-1.5 border-b border-slate-200 bg-white px-3 py-1.5 text-[10px] font-black uppercase">
+        {suggestionView === 'draft' && (showTopPanel || hasPendingSuggestionSettings || stockSnapshotStaleMessage || suggestionExportWarningMessage || suggestionMessage || suggestionDiagnostic || originSummary.length > 0) && (
+          <div className="flex shrink-0 items-center gap-1.5 overflow-x-auto whitespace-nowrap border-b border-slate-200 bg-white px-2 py-1 text-[10px] font-black uppercase [&>*]:shrink-0">
+            {showTopPanel && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setProductFilters([]);
+                    setOriginFilters([]);
+                    setDestinationFilters([]);
+                    setClassificationFilters([]);
+                    setClassificationLineFilters([]);
+                    setClassificationDepartmentFilters([]);
+                    setClassificationCategoryFilters([]);
+                    setManufacturerFilters([]);
+                    setOriginCurvePriority([]);
+                    setDestinationCurvePriority([]);
+                  }}
+                  className="h-6 rounded-md border border-slate-200 bg-white px-2 text-[9px] text-violet-700 shadow-sm hover:border-violet-300"
+                >
+                  Limpar filtros
+                </button>
+                <span className={activeSuggestionFilterCount > 0 ? 'text-red-600' : 'text-slate-400'}>
+                  {activeSuggestionFilterCount} filtros selecionados
+                </span>
+                <span className="hidden sm:inline text-slate-400">Perfil: {SUGGESTION_PROFILES[suggestionProfile].label}</span>
+                <span className="hidden sm:inline text-slate-400">Seguranca: {originMinimumDays} dias</span>
+              </>
+            )}
             {hasPendingSuggestionSettings && (
               <span className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-amber-700">
                 filtros alterados, clique em atualizar
@@ -3242,7 +3281,7 @@ export function ReallocationManager({
               </button>
             )}
             {suggestionView !== 'orders' && (
-            <div role="group" aria-label="Filtrar por tipo de linha" className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 shadow-sm">
+            <div role="group" aria-label="Filtrar por tipo de linha" className="flex flex-wrap items-center gap-2">
               {([
                 { key: 'shared', label: 'Rota compartilhada nos dois lados', tone: 'border-teal-200 bg-teal-50 text-teal-950', swatch: 'border-teal-600 bg-teal-300' },
                 { key: 'multiDestination', label: 'Origem p/ varios destinos', tone: 'border-amber-200 bg-amber-50 text-amber-950', swatch: 'border-amber-500 bg-amber-300' },
@@ -4013,6 +4052,7 @@ function QuickFilterBox({
   const [optionsPickerOpen, setOptionsPickerOpen] = useState(false);
   const [optionsPickerSearch, setOptionsPickerSearch] = useState('');
   const [optionsPickerIds, setOptionsPickerIds] = useState<Set<string>>(() => new Set());
+  const [optionSort, setOptionSort] = useState<FilterOptionSort>(null);
   const normalizedQuickValue = normalizeAutocompleteText(quickValue);
   const normalizedOptionsPickerSearch = normalizeAutocompleteText(optionsPickerSearch);
   const availableOptions = onQuickSearch && normalizedQuickValue ? remoteOptions : options;
@@ -4021,7 +4061,7 @@ function QuickFilterBox({
     return rankAutocompleteOptions(availableOptions, normalizedQuickValue, 18);
   }, [availableOptions, hideInitialOptions, normalizedQuickValue]);
   const selectedIds = useMemo(() => new Set(selected.map((item) => item.id)), [selected]);
-  const listOptions = useMemo(() => selected, [selected]);
+  const listOptions = useMemo(() => sortFilterOptions(selected, optionSort), [selected, optionSort]);
   const searchResultOptions = useMemo(() => visibleOptions.filter((item) => !selectedIds.has(item.id)), [selectedIds, visibleOptions]);
   const visibleSelectedIds = useMemo(() => new Set(listOptions.filter((item) => selectedIds.has(item.id)).map((item) => item.id)), [listOptions, selectedIds]);
   const visibleMarkedIds = useMemo(() => new Set(listOptions.filter((item) => selectedIds.has(item.id) && markedIds.has(item.id)).map((item) => item.id)), [listOptions, markedIds, selectedIds]);
@@ -4031,8 +4071,8 @@ function QuickFilterBox({
     return `24px repeat(${valueColumnCount}, minmax(0, 1fr))`;
   }, [columns.length]);
   const pickerOptions = useMemo(() => (
-    rankAutocompleteOptions(options, normalizedOptionsPickerSearch, Math.max(options.length, 1))
-  ), [normalizedOptionsPickerSearch, options]);
+    sortFilterOptions(rankAutocompleteOptions(options, normalizedOptionsPickerSearch, Math.max(options.length, 1)), optionSort)
+  ), [normalizedOptionsPickerSearch, options, optionSort]);
   const pickerVisibleIds = useMemo(() => new Set(pickerOptions.map((item) => item.id)), [pickerOptions]);
   const selectedPickerVisibleCount = useMemo(() => (
     pickerOptions.filter((item) => optionsPickerIds.has(item.id)).length
@@ -4246,6 +4286,25 @@ function QuickFilterBox({
     : `${selected.length} ${selected.length === 1 ? 'item filtrado' : 'itens filtrados'}`;
   const selectedPreview = selected.slice(0, 2).map((item) => item.columns[0]).join(', ');
   const showSearchResults = expanded && (searching || normalizedQuickValue.length >= 2);
+  const renderOptionHeader = (column: string, index: number, prefix: string) => (
+    <button
+      key={`${prefix}-${column}-${index}`}
+      type="button"
+      onDoubleClick={() => setOptionSort(current => nextFilterOptionSort(current, index))}
+      onKeyDown={event => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          setOptionSort(current => nextFilterOptionSort(current, index));
+        }
+      }}
+      title={`Duplo clique para ordenar por ${column}`}
+      aria-label={`${column}${optionSort?.index === index ? `: ordem ${optionSort.direction === 'asc' ? 'crescente' : 'decrescente'}` : ''}`}
+      className={`flex h-6 min-w-0 select-none items-center gap-1 border-r border-slate-200 px-2 text-left last:border-r-0 hover:bg-violet-50 focus-visible:outline-2 focus-visible:outline-violet-500 ${optionSort?.index === index ? 'bg-violet-50 text-violet-700' : ''}`}
+    >
+      <span className="truncate">{column}</span>
+      {optionSort?.index === index && (optionSort.direction === 'asc' ? <ArrowUp size={11} className="shrink-0" aria-hidden="true" /> : <ArrowDown size={11} className="shrink-0" aria-hidden="true" />)}
+    </button>
+  );
 
   return (
     <div ref={containerRef} className={`relative text-slate-950 ${expanded ? 'z-[220]' : 'z-10'}`}>
@@ -4353,9 +4412,7 @@ function QuickFilterBox({
                   style={{ gridTemplateColumns: optionGridTemplate }}
                 >
                   <span className="h-6 border-r border-slate-200" />
-                  {columns.map((column) => (
-                    <span key={`picker-head-${column}`} className="truncate border-r border-slate-200 px-2 last:border-r-0">{column}</span>
-                  ))}
+                  {columns.map((column, index) => renderOptionHeader(column, index, 'picker-head'))}
                 </div>
 
                 <div className="p-1">
@@ -4447,9 +4504,7 @@ function QuickFilterBox({
                   {visibleMarkedIds.size ? <Check size={10} className="mx-auto mt-[1px] text-white" /> : null}
                 </span>
               </button>
-              {columns.map((column) => (
-                <span key={column} className="truncate border-r border-slate-200 px-2 last:border-r-0">{column}</span>
-              ))}
+              {columns.map((column, index) => renderOptionHeader(column, index, 'selected-head'))}
             </div>
 
             <div className="p-1">

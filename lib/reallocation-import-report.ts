@@ -22,4 +22,17 @@ export interface ReallocationImportReport {
   skippedRows: ReallocationImportIssue[];
   movementColumnsAvailable: boolean;
   erpInventoryWarning: string | null;
+  filterPreview?: ReallocationImportFilterPreview;
+}
+
+export interface ReallocationImportFilterPreview {
+  manufacturers: Array<{ name: string; source: 'file' | 'catalog'; linked: boolean }>;
+  missingManufacturerRows: number;
+}
+
+export interface ReallocationImportFilterSelection {
+  manufacturers: string[];
+  origins: string[];
+  destinations: string[];
+  clearOtherFilters: boolean;
 }
