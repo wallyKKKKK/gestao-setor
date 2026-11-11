@@ -1,5 +1,6 @@
 ﻿'use client';
 
+import { SortableTableHeader, useColumnSort } from '@/app/components/table-sort';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { BadgePercent, Calculator, Check, ChevronDown, Download, Edit3, Save, Search, Trash2, UploadCloud, X } from 'lucide-react';
@@ -515,6 +516,14 @@ export function ExpiringProductsManager() {
     });
   }, [branchFilters, manufacturerFilters, maxDays, query, reportRows]);
 
+  const reportSort = useColumnSort();
+  const excludedSort = useColumnSort();
+  const exportSort = useColumnSort();
+  const sortedVisibleRows = reportSort.sortRowsBy(visibleRows, ({ item, rule, basePrice, price }) => ({
+    description: item.description, branch: item.branch_code, balance: Number(item.balance_quantity || 0),
+    days: item.days_to_expire, expiration: item.expiration_date, manufacturer: item.manufacturer, rule: rule?.name,
+    base: basePrice, offer: price,
+  }));
   const visibleItems = useMemo(() => visibleRows.map((row) => row.item), [visibleRows]);
 
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
@@ -851,10 +860,13 @@ export function ExpiringProductsManager() {
               <div className="min-h-0 flex-1 overflow-auto">
                 <table className="w-full min-w-[850px] text-left text-xs">
                   <thead className="text-slate-600"><tr>
-                    {['Produto / lote', 'Loja', 'Validade', 'Fabricante', 'Classificação', 'Motivo'].map(label => <th key={label} scope="col" className="px-3 py-3">{label}</th>)}
+                    {['Produto / lote', 'Loja', 'Validade', 'Fabricante', 'Classificação', 'Motivo'].map(label => <SortableTableHeader key={label} sort={excludedSort} column={label} className="px-3 py-3" />)}
                   </tr></thead>
                   <tbody>
-                    {excludedRows.map(({ item, exclusionReason, rejectedRule }) => (
+                    {excludedSort.sortRowsBy(excludedRows, ({ item, exclusionReason }) => ({
+                      'Produto / lote': item.description, Loja: item.branch_code, Validade: item.expiration_date,
+                      Fabricante: item.manufacturer, 'Classificação': item.classification_path, Motivo: exclusionReason,
+                    })).map(({ item, exclusionReason, rejectedRule }) => (
                       <tr key={item.id} className="border-t border-slate-100">
                         <td className="px-3 py-3"><strong>{item.description}</strong><p>{item.ean} · {item.lot}</p></td>
                         <td className="px-3 py-3">{item.branch_code}</td>
@@ -889,15 +901,15 @@ export function ExpiringProductsManager() {
                 <thead className="bg-slate-50 text-[10px] uppercase text-slate-500">
                   <tr>
                     <th className="w-10 px-3 py-3 text-left"><input type="checkbox" checked={visibleItems.length > 0 && visibleItems.every((item) => selectedSet.has(item.id))} onChange={toggleAllVisible} /></th>
-                    <th className="px-3 py-3 text-left">Produto / lote</th>
-                    <th className="px-3 py-3 text-left">Loja</th>
-                    <th className="px-3 py-3 text-right">Saldo</th>
-                    <th className="px-3 py-3 text-right">Dias</th>
-                    <th className="px-3 py-3 text-left">Validade</th>
-                    <th className="px-3 py-3 text-left">Fabricante</th>
-                    <th className="px-3 py-3 text-left">Regra</th>
-                    <th className="px-3 py-3 text-right">Preco base</th>
-                    <th className="px-3 py-3 text-right">Oferta</th>
+                    <SortableTableHeader sort={reportSort} column="description" className="px-3 py-3 text-left">Produto / lote</SortableTableHeader>
+                    <SortableTableHeader sort={reportSort} column="branch" className="px-3 py-3 text-left">Loja</SortableTableHeader>
+                    <SortableTableHeader sort={reportSort} column="balance" className="px-3 py-3 text-right">Saldo</SortableTableHeader>
+                    <SortableTableHeader sort={reportSort} column="days" className="px-3 py-3 text-right">Dias</SortableTableHeader>
+                    <SortableTableHeader sort={reportSort} column="expiration" className="px-3 py-3 text-left">Validade</SortableTableHeader>
+                    <SortableTableHeader sort={reportSort} column="manufacturer" className="px-3 py-3 text-left">Fabricante</SortableTableHeader>
+                    <SortableTableHeader sort={reportSort} column="rule" className="px-3 py-3 text-left">Regra</SortableTableHeader>
+                    <SortableTableHeader sort={reportSort} column="base" className="px-3 py-3 text-right">Preco base</SortableTableHeader>
+                    <SortableTableHeader sort={reportSort} column="offer" className="px-3 py-3 text-right">Oferta</SortableTableHeader>
                   </tr>
                 </thead>
                 <tbody>
@@ -905,7 +917,7 @@ export function ExpiringProductsManager() {
                     <tr><td colSpan={10} className="px-4 py-12 text-center font-black uppercase text-slate-300">Carregando...</td></tr>
                   ) : visibleItems.length === 0 ? (
                     <tr><td colSpan={10} className="px-4 py-12 text-center font-black uppercase text-slate-300">{calculatedAt ? 'Nenhum item bateu nas regras ativas' : 'Importe o arquivo e clique em calcular para gerar o relatorio'}</td></tr>
-                  ) : visibleRows.map(({ item, rule, basePrice: base, price }) => (
+                  ) : sortedVisibleRows.map(({ item, rule, basePrice: base, price }) => (
                     <tr key={item.id} className="border-t border-slate-100 odd:bg-white even:bg-slate-50/60">
                       <td className="px-3 py-3"><input type="checkbox" checked={selectedSet.has(item.id)} onChange={() => toggleSelected(item.id)} /></td>
                       <td className="px-3 py-3"><p className="font-black uppercase text-slate-950">{item.description}</p><p className="mt-1 text-[10px] font-bold text-slate-400">EAN {item.ean} - Lote {item.lot}</p></td>
@@ -1148,19 +1160,22 @@ export function ExpiringProductsManager() {
               <table className="w-full min-w-[920px] text-xs">
                 <thead className="bg-slate-50 text-[10px] uppercase text-slate-500">
                   <tr>
-                    <th className="px-3 py-3 text-left">EAN</th>
-                    <th className="px-3 py-3 text-left">Produto</th>
-                    <th className="px-3 py-3 text-left">Loja</th>
-                    <th className="px-3 py-3 text-left">Regra</th>
-                    <th className="px-3 py-3 text-right">Preco</th>
-                    <th className="px-3 py-3 text-right">Tipo / valor</th>
-                    <th className="px-3 py-3 text-left">Linha TXT</th>
+                    <SortableTableHeader sort={exportSort} column="ean" className="px-3 py-3 text-left">EAN</SortableTableHeader>
+                    <SortableTableHeader sort={exportSort} column="description" className="px-3 py-3 text-left">Produto</SortableTableHeader>
+                    <SortableTableHeader sort={exportSort} column="branch" className="px-3 py-3 text-left">Loja</SortableTableHeader>
+                    <SortableTableHeader sort={exportSort} column="rule" className="px-3 py-3 text-left">Regra</SortableTableHeader>
+                    <SortableTableHeader sort={exportSort} column="price" className="px-3 py-3 text-right">Preco</SortableTableHeader>
+                    <SortableTableHeader sort={exportSort} column="discount" className="px-3 py-3 text-right">Tipo / valor</SortableTableHeader>
+                    <SortableTableHeader sort={exportSort} column="line" className="px-3 py-3 text-left">Linha TXT</SortableTableHeader>
                   </tr>
                 </thead>
                 <tbody>
                   {exportableRows.length === 0 ? (
                     <tr><td colSpan={7} className="px-4 py-12 text-center font-black uppercase text-slate-300">Nenhum item pronto para exportar</td></tr>
-                  ) : exportableRows.map(({ item, rule, price, line }) => (
+                  ) : exportSort.sortRowsBy(exportableRows, ({ item, rule, price, line }) => ({
+                    ean: item.ean, description: item.description, branch: item.branch_code, rule: rule?.name, price,
+                    discount: rule ? discountLabel(rule) : '', line,
+                  })).map(({ item, rule, price, line }) => (
                       <tr key={item.id} className="border-t border-slate-100 odd:bg-white even:bg-slate-50/60">
                         <td className="px-3 py-3 font-black">{item.ean}</td>
                         <td className="px-3 py-3 font-bold uppercase text-slate-700">{item.description}</td>

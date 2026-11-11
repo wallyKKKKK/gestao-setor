@@ -18,6 +18,7 @@ import {
   type PricingProductInput,
 } from '@/lib/api';
 import { MultiCheckboxFilter } from '@/app/components/multi-checkbox-filter';
+import { columnSortHeaderProps, SortableGridHeader, TableSortIndicator, useColumnSort } from '@/app/components/table-sort';
 import { getAuthHeaders } from '@/lib/auth-headers';
 import type { DiscountMode, PricingBranch, PricingProduct, PricingRule, PricingRuleBasis, PricingRuleScope, ReallocationProduct } from '@/lib/types';
 
@@ -1846,16 +1847,31 @@ export function PricingManager() {
     setShowExportModal(false);
   };
 
+  const rowSort = useColumnSort();
+  const sortedProductGroups = rowSort.sortRowsBy(visibleProductGroups, group => {
+    const product = primaryProductForGroup(group);
+    const salePrice = displayPrice(product);
+    const cost = finalPrice(product);
+    return {
+      product: group.description, purchase_price: product.purchase_price, sell_in: product.sell_in_value,
+      calculation: product.purchase_price - discount(product.purchase_price, product.sell_in_value, product.sell_in_mode),
+      sell_out: product.sell_out_value, trade: product.trade_value, real_cost: cost, launched_cost: cost,
+      sale_price: salePrice, baby_wednesday_price: product.baby_wednesday_price, month_end_price: product.month_end_price,
+      markup: markup({ ...product, sale_price: salePrice }),
+      ...Object.fromEntries(COMPETITORS.map(name => [`competitor:${name}`, product.competitor_prices?.[name]])),
+      ...Object.fromEntries(tableBranches.map(city => [`branch:${city.code}`, cityPriceForProduct(product, city) || product.sale_price || 0])),
+    };
+  });
   const renderHeader = (label: string, key: string, baseKey = key, align: 'left' | 'right' | 'center' = 'right') => (
-    <th key={key} className={`px-4 py-4 ${align === 'left' ? 'text-left' : align === 'center' ? 'text-center' : 'text-right'}`}>
-      <span className="block truncate pr-1" style={{ color: HEADER_COLORS[baseKey] }}>{label}</span>
+    <th key={key} {...(key !== 'actions' && key !== 'index' ? columnSortHeaderProps(rowSort, key) : {})} className={`px-4 py-4 ${align === 'left' ? 'text-left' : align === 'center' ? 'text-center' : 'text-right'}`}>
+      <span className="block truncate pr-1" style={{ color: HEADER_COLORS[baseKey] }}>{label}<TableSortIndicator sort={rowSort} column={key} /></span>
       <span
         className="column-resizer"
         role="separator"
         aria-orientation="vertical"
         aria-label={`Ajustar largura da coluna ${label}`}
         onMouseDown={(event) => startColumnResize(event, key, baseKey)}
-        onDoubleClick={() => resetColumnWidth(key)}
+        onDoubleClick={event => { event.stopPropagation(); resetColumnWidth(key); }}
       />
     </th>
   );
@@ -2284,7 +2300,7 @@ export function PricingManager() {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {visibleProductGroups.map((group, index) => {
+            {sortedProductGroups.map((group, index) => {
               const product = primaryProductForGroup(group);
               const displayedActive = !isGroupHidden(group);
               const rowSalePrice = displayPrice(product);
@@ -2687,6 +2703,11 @@ function PriceProductFilterBox({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [markedIds, setMarkedIds] = useState<Set<string>>(() => new Set());
+  const selectedSort = useColumnSort();
+  const sortedGroups = selectedSort.sortRowsBy(selectedGroups, group => ({
+    description: group.description, erp: group.erpCodes[0], ean: group.eans[0],
+    brand: group.brand, classification: group.classification,
+  }));
   const markedVisibleCount = selectedGroups.filter((group) => markedIds.has(group.id)).length;
   const summary = selectedGroups.length === 0
     ? 'Nenhum item filtrado.'
@@ -2782,13 +2803,10 @@ function PriceProductFilterBox({
           <div className="max-h-56 min-h-36 overflow-auto border-b border-slate-100 bg-white">
             <div className="sticky top-0 z-10 grid grid-cols-[36px_1.4fr_0.7fr_0.9fr_1fr_1fr] border-b border-slate-200 bg-slate-50 text-[9px] font-black uppercase text-slate-500">
               <span className="border-r border-slate-100 px-2 py-2" />
-              <span className="border-r border-slate-100 px-2 py-2">DescriÃ§Ã£o</span>
-              <span className="border-r border-slate-100 px-2 py-2">CÃ³digo ERP</span>
-              <span className="border-r border-slate-100 px-2 py-2">EAN</span>
-              <span className="border-r border-slate-100 px-2 py-2">Fabricante</span>
-              <span className="px-2 py-2">ClassificaÃ§Ã£o</span>
+              {([['description', 'Descrição'], ['erp', 'Código ERP'], ['ean', 'EAN'], ['brand', 'Fabricante'], ['classification', 'Classificação']] as const).map(([key, label]) =>
+                <SortableGridHeader key={key} sort={selectedSort} column={key} label={label} className="flex min-w-0 items-center border-r border-slate-100 px-2 py-2 text-left last:border-r-0" />)}
             </div>
-            {selectedGroups.map((group) => (
+            {sortedGroups.map((group) => (
               <button
                 key={group.id}
                 type="button"

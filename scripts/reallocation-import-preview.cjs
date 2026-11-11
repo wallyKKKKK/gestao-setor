@@ -10,7 +10,7 @@ async function main() {
   const root = path.resolve(__dirname, '..'), directory = path.join(root, '.next', 'import-preview-qa');
   fs.mkdirSync(directory, { recursive: true });
   const alias = {};
-  for (const file of ['app/components/reallocation-import-report.tsx', 'app/components/reallocation-import-filter-preview.tsx', 'lib/reallocation-import-filters.ts', 'lib/filter-option-sort.ts']) {
+  for (const file of ['app/components/reallocation-import-report.tsx', 'app/components/reallocation-import-filter-preview.tsx', 'app/components/table-sort.tsx', 'lib/reallocation-import-filters.ts', 'lib/reallocation-table-sort.ts']) {
     const target = path.join(directory, path.basename(file).replace(/\.tsx?$/, '.js'));
     fs.writeFileSync(target, ts.transpileModule(fs.readFileSync(path.join(root, file), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, jsx: ts.JsxEmit.ReactJSX } }).outputText);
     alias['@/' + file.replace(/\.tsx?$/, '')] = target;

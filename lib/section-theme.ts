@@ -6,6 +6,7 @@ export type ThemedAppSection =
   | 'TAREFAS'
   | 'REUNIAO'
   | 'COMPRAS_IA'
+  | 'COTACOES'
   | 'CADASTROS'
   | 'ESTOQUE_ERP'
   | 'PRECIFICACAO'
@@ -68,6 +69,14 @@ export const SECTION_THEMES: Record<ThemedAppSection, SectionTheme> = {
     accent: '#059669',
     soft: '#E8FFF5',
     softDark: '#0B2A22',
+  },
+  COTACOES: {
+    helper: 'Cotação externa',
+    gradientClassName: 'from-emerald-800 to-emerald-600',
+    iconClassName: 'bg-emerald-800 text-white',
+    accent: '#047857',
+    soft: '#ecfdf5',
+    softDark: '#0b2920',
   },
   CADASTROS: {
     helper: 'Base mestre',

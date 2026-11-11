@@ -2,12 +2,12 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { BadgePercent, CalendarDays, ClipboardList, Clock3, Database, ListTodo, NotebookPen, PackageSearch, ShoppingCart, Shuffle, SlidersHorizontal, Tags, Truck, Users, Wrench, X } from 'lucide-react';
+import { BadgePercent, CalendarDays, ClipboardList, Clock3, Database, ListTodo, NotebookPen, PackageSearch, ShoppingCart, Shuffle, SlidersHorizontal, Tags, Truck, Users, Wrench, X, FileText } from 'lucide-react';
 import type { UserRole } from '@/lib/types';
 import { getSectionTheme } from '@/lib/section-theme';
 import { supabase } from '@/lib/supabase';
 
-export type AppSection = 'INICIO' | 'TAREFAS' | 'REUNIAO' | 'COMPRAS_IA' | 'CADASTROS' | 'ESTOQUE_ERP' | 'PRECIFICACAO' | 'PRE_VENCIDOS' | 'PRAZOS' | 'TRANSPORTE' | 'BALACUBACO' | 'AUDITORIA' | 'NOTAS' | 'USUARIOS' | 'FERRAMENTAS';
+export type AppSection = 'INICIO' | 'TAREFAS' | 'REUNIAO' | 'COMPRAS_IA' | 'COTACOES' | 'CADASTROS' | 'ESTOQUE_ERP' | 'PRECIFICACAO' | 'PRE_VENCIDOS' | 'PRAZOS' | 'TRANSPORTE' | 'BALACUBACO' | 'AUDITORIA' | 'NOTAS' | 'USUARIOS' | 'FERRAMENTAS';
 
 interface AppSidebarProps {
   activeSection: AppSection;
@@ -25,6 +25,7 @@ const items = [
   { id: 'NOTAS' as const, label: 'Notas', icon: NotebookPen },
   { id: 'FERRAMENTAS' as const, label: 'Ferramentas', icon: Wrench },
   { id: 'COMPRAS_IA' as const, label: 'Compras IA', icon: ShoppingCart },
+  { id: 'COTACOES' as const, label: 'Cotações', icon: FileText },
   { id: 'CADASTROS' as const, label: 'Cadastros', icon: Database },
   { id: 'ESTOQUE_ERP' as const, label: 'Estoque', icon: PackageSearch },
   { id: 'PRECIFICACAO' as const, label: 'Price', icon: Tags },

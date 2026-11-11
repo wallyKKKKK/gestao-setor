@@ -1,5 +1,7 @@
 'use client';
 
+import { SortableTableHeader, useColumnSort } from '@/app/components/table-sort';
+
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, ChevronLeft, ChevronRight, Download, Search, X } from 'lucide-react';
 import type { ReallocationImportFilterSelection, ReallocationImportReport } from '@/lib/reallocation-import-report';
@@ -27,7 +29,9 @@ export function ReallocationImportReportDialog({ report, onClose, currentFilters
   }, [rows, search]);
   const pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const currentPage = Math.min(page, pages - 1);
-  const visible = filtered.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE);
+  const rowSort = useColumnSort();
+  const sorted = rowSort.sortRowsBy(filtered, row => ({ Linha: row.line, Loja: `${row.storeCode} ${row.storeName}`, EAN: row.ean, Produto: row.product, Motivo: row.reason }));
+  const visible = sorted.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE);
 
   const download = () => {
     const escape = (value: unknown) => {
@@ -100,7 +104,7 @@ export function ReallocationImportReportDialog({ report, onClose, currentFilters
           </div>
           <div id="import-report-rows" className="min-h-0 flex-1 overflow-auto border-y border-slate-200">
             {visible.length ? <table className="w-full min-w-[720px] border-collapse text-left text-xs">
-              <thead className="sticky top-0 bg-slate-50 text-[10px] uppercase text-slate-500"><tr>{['Linha', 'Loja', 'EAN', 'Produto', 'Motivo'].map((label) => <th key={label} className="px-4 py-3 font-bold">{label}</th>)}</tr></thead>
+              <thead className="sticky top-0 bg-slate-50 text-[10px] uppercase text-slate-500"><tr>{['Linha', 'Loja', 'EAN', 'Produto', 'Motivo'].map((label) => <SortableTableHeader key={label} column={label} sort={rowSort} className={"px-4 py-3 font-bold"} />)}</tr></thead>
               <tbody>{visible.map((row) => <tr key={row.line} className="border-t border-slate-100 even:bg-slate-50/60"><td className="px-4 py-3">{row.line}</td><td className="px-4 py-3">{[row.storeCode, row.storeName].filter(Boolean).join(' - ') || '-'}</td><td className="px-4 py-3">{row.ean || '-'}</td><td className="max-w-80 break-words px-4 py-3 font-semibold">{row.product || '-'}</td><td className="max-w-72 break-words px-4 py-3 text-slate-500">{row.reason}</td></tr>)}</tbody>
             </table> : <p className="flex h-full items-center justify-center px-5 py-4 text-center text-sm text-slate-500">{search ? 'Nenhum resultado para a busca.' : tab === 'unmatched' ? 'Nenhum item sem vínculo ERP.' : 'Nenhuma linha ignorada.'}</p>}
           </div>

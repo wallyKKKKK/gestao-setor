@@ -38,6 +38,51 @@ function run(stockItems, overrides = {}) {
 const origin = (stock = 20, overrides = {}) => item('01', { stock, confirmed_stock: stock, ...overrides });
 const destination = (overrides = {}) => item('02', { stock: 7, confirmed_stock: 7, min_stock: 10, ...overrides });
 
+test('the origin reserve is strict even when the displayed days would round up to the profile', () => {
+  const row = run([
+    origin(4, { monthly_avg_sales: 0.67 }),
+    destination({ stock: 0, confirmed_stock: 0, monthly_avg_sales: 2.33 }),
+  ], { rules: { originMinimumDays: 90, destinationTargetDays: 90, considerMinimumStock: false } })[0];
+  assert.equal(row.quantity, 1);
+  const coverageWithTwo = 2 / row.originDailySales;
+  assert.ok(coverageWithTwo < 90);
+  assert.equal(Math.round(coverageWithTwo), 90);
+});
+
+test('destination gets a unit when going over the target is closer than staying below it', () => {
+  const rows = run([
+    origin(20), destination({ stock: 1, confirmed_stock: 1, monthly_avg_sales: 0.60 }),
+  ], { rules: { originMinimumDays: 90, destinationTargetDays: 90, considerMinimumStock: false } });
+  assert.equal(1 / (0.60 / 30), 50);
+  assert.equal(2 / (0.60 / 30), 100);
+  assert.equal(rows[0].quantity, 1);
+  assert.equal(rows[0].destinationStockDays + rows[0].quantity / rows[0].destinationDailySales, 100);
+});
+
+test('an exactly available unit is not lost to floating-point noise in the origin reserve', () => {
+  const rows = run([
+    origin(95, { monthly_avg_sales: 31 }),
+    destination({ stock: 0, confirmed_stock: 0, monthly_avg_sales: 2.33 }),
+  ], { rules: { originMinimumDays: 90, destinationTargetDays: 90, considerMinimumStock: false } });
+  assert.equal(rows[0].quantity, 2);
+});
+
+test('destination ties favor fewer units, and being already closer below does not create a transfer', () => {
+  const rows = [origin(20), destination({ stock: 1, confirmed_stock: 1, monthly_avg_sales: 0.60 })];
+  for (const target of [70, 75]) {
+    assert.equal(run(rows, { rules: { destinationTargetDays: target, considerMinimumStock: false } }).length, 0);
+  }
+  assert.equal(run(rows, { rules: { destinationTargetDays: 125, considerMinimumStock: false } })[0].quantity, 1);
+});
+
+test('nearest destination coverage never overrides the origin reserve or the stock floor', () => {
+  const rows = run([
+    origin(4, { monthly_avg_sales: 0.67 }),
+    destination({ stock: 1, confirmed_stock: 1, monthly_avg_sales: 0.60 }),
+  ], { rules: { originMinimumDays: 90, destinationTargetDays: 90, stockFloor: 4, considerMinimumStock: false } });
+  assert.equal(rows.length, 0);
+});
+
 test('disabled or absent option preserves the normal calculation', () => {
   const rows = [origin(), destination()];
   assert.equal(run(rows, { rules: { considerMinimumStock: false } }).length, 0);

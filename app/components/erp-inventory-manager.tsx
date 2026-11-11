@@ -3,6 +3,7 @@
 import { type MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Ban, Boxes, RefreshCw, Search, X } from 'lucide-react';
 import { getAuthHeaders } from '@/lib/auth-headers';
+import { columnSortHeaderProps, TableSortIndicator, useColumnSort } from '@/app/components/table-sort';
 
 interface ErpInventoryViewItem {
   id: string;
@@ -64,7 +65,6 @@ interface ErpInventoryFilterOptionsResponse {
 
 type FilterKey = 'branch' | 'manufacturer' | 'line' | 'department' | 'category' | 'curve';
 type FilterOptionsState = Record<'branches' | 'manufacturers' | 'lines' | 'departments' | 'categories' | 'curves', FilterOption[]>;
-type SortDirection = 'asc' | 'desc';
 type SuspendedFilterMode = 'yes' | 'no' | 'all';
 type ColumnKey = 'branch' | 'ean' | 'erpCode' | 'product' | 'manufacturer' | 'classification' | 'stock' | 'available' | 'monthlySales' | 'stockDays' | 'curve' | 'purchaseStatus' | 'cost' | 'salePrice' | 'lastSale' | 'lastPurchase';
 
@@ -238,7 +238,7 @@ export function ErpInventoryManager() {
   const [missingTable, setMissingTable] = useState(false);
   const [columnOrder, setColumnOrder] = useState<ColumnKey[]>(DEFAULT_COLUMN_ORDER);
   const [columnWidths, setColumnWidths] = useState<Record<ColumnKey, number>>(DEFAULT_COLUMN_WIDTHS);
-  const [sortConfig, setSortConfig] = useState<{ key: ColumnKey; direction: SortDirection } | null>(null);
+  const rowSort = useColumnSort();
   const [draggedColumn, setDraggedColumn] = useState<ColumnKey | null>(null);
 
   const loadFilterOptions = useCallback(async () => {
@@ -334,23 +334,7 @@ export function ErpInventoryManager() {
 
   const tableWidth = useMemo(() => orderedColumns.reduce((sum, column) => sum + (columnWidths[column.key] || column.defaultWidth), 42), [columnWidths, orderedColumns]);
 
-  const sortedItems = useMemo(() => {
-    if (!sortConfig) return items;
-    const column = columnByKey.get(sortConfig.key);
-    if (!column) return items;
-
-    return [...items].sort((a, b) => {
-      const left = column.sortValue(a);
-      const right = column.sortValue(b);
-      const direction = sortConfig.direction === 'asc' ? 1 : -1;
-
-      if (typeof left === 'number' && typeof right === 'number') {
-        return (left - right) * direction;
-      }
-
-      return String(left || '').localeCompare(String(right || ''), 'pt-BR', { numeric: true, sensitivity: 'base' }) * direction;
-    });
-  }, [columnByKey, items, sortConfig]);
+  const sortedItems = rowSort.sortRows(items, (item, key) => columnByKey.get(key as ColumnKey)?.sortValue(item));
 
   const selectedItems = useMemo(() => items.filter((item) => selectedRowKeys.has(inventoryRowKey(item))), [items, selectedRowKeys]);
   const allVisibleSelected = sortedItems.length > 0 && sortedItems.every((item) => selectedRowKeys.has(inventoryRowKey(item)));
@@ -432,14 +416,6 @@ export function ErpInventoryManager() {
     }
   }
 
-  function toggleSort(key: ColumnKey) {
-    setSortConfig((current) => {
-      if (!current || current.key !== key) return { key, direction: 'asc' };
-      if (current.direction === 'asc') return { key, direction: 'desc' };
-      return null;
-    });
-  }
-
   function moveColumn(source: ColumnKey, target: ColumnKey) {
     if (source === target) return;
     setColumnOrder((current) => {
@@ -478,7 +454,7 @@ export function ErpInventoryManager() {
   function resetColumns() {
     setColumnOrder(DEFAULT_COLUMN_ORDER);
     setColumnWidths(DEFAULT_COLUMN_WIDTHS);
-    setSortConfig(null);
+    rowSort.clear();
   }
 
   return (
@@ -616,13 +592,13 @@ export function ErpInventoryManager() {
                   />
                 </th>
                 {orderedColumns.map((column) => {
-                  const isSorted = sortConfig?.key === column.key;
                   const alignment = column.align === 'right' ? 'text-right' : column.align === 'center' ? 'text-center' : 'text-left';
-                  const sortIcon = isSorted ? (sortConfig.direction === 'asc' ? 'â–²' : 'â–¼') : 'â†•';
 
                   return (
                     <th
                       key={column.key}
+                      {...columnSortHeaderProps(rowSort, column.key)}
+                      tabIndex={undefined}
                       draggable
                       onDragStart={(event) => {
                         setDraggedColumn(column.key);
@@ -638,20 +614,21 @@ export function ErpInventoryManager() {
                       }}
                       onDragEnd={() => setDraggedColumn(null)}
                       className={`relative border-b border-r border-slate-300 bg-slate-100 px-0 py-0 ${alignment} ${draggedColumn === column.key ? 'opacity-50' : ''}`}
-                      title="Clique para ordenar, arraste para realocar ou puxe a borda para expandir."
                     >
                       <button
                         type="button"
-                        onClick={() => toggleSort(column.key)}
+                        onClick={event => { if (event.detail === 0) rowSort.toggle(column.key); }}
+                        onKeyDown={event => { if (event.key === 'Escape' && rowSort.rules.length) { event.stopPropagation(); rowSort.clear(); } }}
                         className={`flex h-8 w-full items-center gap-1 px-2 text-[9px] font-black uppercase tracking-wide text-slate-600 hover:bg-blue-50 hover:text-blue-700 ${column.align === 'right' ? 'justify-end' : column.align === 'center' ? 'justify-center' : 'justify-start'}`}
                       >
                         <span className="truncate">{column.label}</span>
-                        <span className={isSorted ? 'text-blue-700' : 'text-slate-300'}>{sortIcon}</span>
+                        <TableSortIndicator sort={rowSort} column={column.key} />
                       </button>
                       <button
                         type="button"
                         aria-label={`Redimensionar coluna ${column.label}`}
                         onMouseDown={(event) => startColumnResize(event, column)}
+                        onDoubleClick={event => event.stopPropagation()}
                         className="absolute right-0 top-0 h-full w-1 cursor-col-resize bg-transparent hover:bg-blue-500/70"
                       />
                     </th>

@@ -1,7 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
-import { ArrowDown, ArrowUp, Check, ChevronDown, Clock, Columns3, Database, Download, FileSpreadsheet, Filter, Loader2, Plus, RefreshCcw, RotateCcw, Search, Shuffle, SlidersHorizontal, Trash2, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, Check, ChevronDown, Clock, Columns3, Database, Download, FileSpreadsheet, Filter, Plus, RefreshCcw, RotateCcw, Search, Shuffle, SlidersHorizontal, Trash2, X } from 'lucide-react';
+import { AppLoadingOverlay } from '@/app/components/app-loading-overlay';
 import { countReallocationProducts, fetchLatestReallocationStockSnapshot, fetchPricingBranches, fetchReallocationAttributeOptions, fetchReallocationAttributeSummary, fetchReallocationProducts, fetchReallocationStockItems } from '@/lib/api';
 import { getAuthHeaders } from '@/lib/auth-headers';
 import { getPermissionDeniedMessage } from '@/lib/permissions';
@@ -13,7 +14,8 @@ import { getReallocationRowMarkers, type ReallocationRowMarker } from '@/lib/rea
 import { readHiddenTableColumns } from '@/lib/table-column-visibility';
 import { TableColumnMenu } from './table-column-menu';
 import { ReallocationWorkspaceTabs, type ReallocationWorkspaceView } from './reallocation-workspace-tabs';
-import { nextFilterOptionSort, sortFilterOptions, type FilterOptionSort } from '@/lib/filter-option-sort';
+import { SortableGridHeader, useColumnSort } from '@/app/components/table-sort';
+import { nextReallocationSort, readReallocationSort, sortReallocationRows, type ReallocationSortRule } from '@/lib/reallocation-table-sort';
 import { normalizeImportStoreCode } from '@/lib/reallocation-import-filters';
 
 function txtLine(origin: string, destination: string, erpCode: string, quantity: number) {
@@ -327,10 +329,10 @@ const SUGGESTION_COLUMNS = [
 type SuggestionColumnKey = typeof SUGGESTION_COLUMNS[number]['key'];
 type SuggestionColumn = typeof SUGGESTION_COLUMNS[number];
 type SuggestionView = ReallocationWorkspaceView;
-type SuggestionSort = {
-  key: SuggestionColumnKey;
-  direction: 'asc' | 'desc';
-} | null;
+type SuggestionSort = ReallocationSortRule<SuggestionColumnKey>[];
+const sortableSuggestionKeys = new Set<SuggestionColumnKey>(
+  SUGGESTION_COLUMNS.map(column => column.key).filter(key => key !== 'selection' && key !== 'actions'),
+);
 
 interface ReallocationPreferences {
   productFilters: QuickFilterItem[];
@@ -503,7 +505,7 @@ function defaultReallocationPreferences(): ReallocationPreferences {
     suggestionColumnOrder: SUGGESTION_COLUMNS.map((column) => column.key),
     suggestionColumnWidths: defaultSuggestionColumnWidths(),
     hiddenSuggestionColumns: [],
-    suggestionSort: null,
+    suggestionSort: [],
   };
 }
 
@@ -513,7 +515,7 @@ function loadReallocationPreferences() {
   try {
     const stored = window.localStorage.getItem(REALLOCATION_PREFERENCES_STORAGE_KEY);
     if (!stored) return defaultReallocationPreferences();
-    const parsed = JSON.parse(stored) as Partial<ReallocationPreferences> & { considerMinimumStock?: boolean };
+    const parsed = JSON.parse(stored) as Partial<Omit<ReallocationPreferences, 'suggestionSort'>> & { suggestionSort?: unknown; considerMinimumStock?: boolean };
     const defaults = defaultReallocationPreferences();
     const validColumnKeys = new Set(SUGGESTION_COLUMNS.map((column) => column.key));
     const columnOrder = Array.isArray(parsed.suggestionColumnOrder)
@@ -536,10 +538,7 @@ function loadReallocationPreferences() {
     const profile = parsed.suggestionProfile && parsed.suggestionProfile in SUGGESTION_PROFILES
       ? parsed.suggestionProfile
       : DEFAULT_SUGGESTION_PROFILE;
-    const sortKey = parsed.suggestionSort?.key;
-    const suggestionSort = sortKey && validColumnKeys.has(sortKey) && (parsed.suggestionSort?.direction === 'asc' || parsed.suggestionSort?.direction === 'desc')
-      ? parsed.suggestionSort
-      : null;
+    const suggestionSort = readReallocationSort(parsed.suggestionSort, sortableSuggestionKeys);
 
     const legacyClassificationFilters = readQuickFilterItems(parsed.classificationFilters);
     const parsedLineFilters = readQuickFilterItems(parsed.classificationLineFilters);
@@ -593,8 +592,10 @@ function getSuggestionSortValue(
     case 'selection':
     case 'actions':
       return '';
-    default:
-      return suggestion[key as keyof TransferSuggestion] ?? '';
+    default: {
+      const value = suggestion[key as keyof TransferSuggestion];
+      return typeof value === 'number' ? value : String(value ?? '');
+    }
   }
 }
 
@@ -812,6 +813,7 @@ export function ReallocationManager({
   const [stockLoading, setStockLoading] = useState(true);
   const [generatingSuggestions, setGeneratingSuggestions] = useState(false);
   const [stockImporting, setStockImporting] = useState(false);
+  const showBusyOverlay = stockImporting || generatingSuggestions;
   const [importReport, setImportReport] = useState<ReallocationImportReport | null>(null);
   const [errorMessage, setErrorMessage] = useState('');
   const [suggestionMarker, setSuggestionMarker] = useState<ReallocationRowMarker | null>(null);
@@ -2048,20 +2050,12 @@ export function ReallocationManager({
       return normalizeAutocompleteText(searchable).includes(query);
     });
   }, [markerFilteredSuggestions, suggestionTableSearch]);
-  const sortedTransferSuggestions = [...displayedTransferSuggestions];
-  if (suggestionSort && suggestionSort.key !== 'actions') {
-    const directionFactor = suggestionSort.direction === 'asc' ? 1 : -1;
-    sortedTransferSuggestions.sort((left, right) => {
-      const leftValue = getSuggestionSortValue(left, suggestionSort.key);
-      const rightValue = getSuggestionSortValue(right, suggestionSort.key);
-
-      if (typeof leftValue === 'number' && typeof rightValue === 'number') {
-        return (leftValue - rightValue) * directionFactor;
-      }
-
-      return String(leftValue).localeCompare(String(rightValue), 'pt-BR', { numeric: true, sensitivity: 'base' }) * directionFactor;
-    });
-  }
+  const sortedTransferSuggestions = useMemo(
+    () => sortReallocationRows(displayedTransferSuggestions, suggestionSort, (row, key) =>
+      key === 'adjustedOriginDays' ? adjustedOriginDays(row)
+        : key === 'adjustedDestinationDays' ? adjustedDestinationDays(row) : getSuggestionSortValue(row, key)),
+    [adjustedDestinationDays, adjustedOriginDays, displayedTransferSuggestions, suggestionSort],
+  );
   const displayedTransferOrders = useMemo(() => {
     const query = normalizeAutocompleteText(suggestionTableSearch);
     if (!query) return transferOrders;
@@ -2525,13 +2519,17 @@ export function ReallocationManager({
       ? 'bg-emerald-50 text-emerald-700 shadow-[inset_0_-2px_0_#10b981]'
       : 'bg-slate-50 text-black';
     const isUtilityColumn = column.key === 'selection' || column.key === 'actions';
-    const isSorted = !isUtilityColumn && suggestionSort?.key === column.key;
+    const sortIndex = suggestionSort.findIndex(rule => rule.key === column.key);
+    const sortRule = suggestionSort[sortIndex];
+    const canToggleSort = !isUtilityColumn;
+    const sortDescription = sortRule ? `Prioridade ${sortIndex + 1}: ordem ${sortRule.direction === 'asc' ? 'crescente' : 'decrescente'}. ` : '';
+    const toggleSort = () => setSuggestionSort(current => nextReallocationSort(current, column.key));
 
     return (
       <th
         key={column.key}
         tabIndex={0}
-        aria-sort={isSorted ? suggestionSort?.direction === 'asc' ? 'ascending' : 'descending' : undefined}
+        aria-sort={sortIndex === 0 ? sortRule.direction === 'asc' ? 'ascending' : 'descending' : undefined}
         onContextMenu={(event) => {
           event.preventDefault();
           const rect = event.currentTarget.getBoundingClientRect();
@@ -2542,16 +2540,17 @@ export function ReallocationManager({
             event.preventDefault();
             const rect = event.currentTarget.getBoundingClientRect();
             setColumnContext({ key: column.key, x: rect.left, y: rect.bottom });
+          } else if (canToggleSort && event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
+            event.preventDefault();
+            toggleSort();
+          } else if (event.target === event.currentTarget && event.key === 'Escape' && suggestionSort.length) {
+            event.preventDefault();
+            event.stopPropagation();
+            setSuggestionSort([]);
           }
         }}
         draggable={!isUtilityColumn}
-        onDoubleClick={() => {
-          if (isUtilityColumn || column.key === 'quantity') return;
-          setSuggestionSort((current) => ({
-            key: column.key,
-            direction: current?.key === column.key && current.direction === 'asc' ? 'desc' : 'asc',
-          }));
-        }}
+        onDoubleClick={canToggleSort ? toggleSort : undefined}
         onDragStart={() => {
           if (isUtilityColumn) return;
           draggedSuggestionColumnRef.current = column.key;
@@ -2560,9 +2559,9 @@ export function ReallocationManager({
         onDrop={() => {
           if (!isUtilityColumn) moveSuggestionColumn(column.key);
         }}
-        className={`relative overflow-hidden select-none border-b border-r border-slate-200 ${column.key === 'selection' ? 'px-0' : 'px-1'} py-2.5 text-center text-[10px] font-black uppercase tracking-widest ${isSorted ? 'bg-violet-50 text-violet-700' : highlightClass}`}
+        className={`relative overflow-hidden select-none border-b border-r border-slate-200 ${column.key === 'selection' ? 'px-0' : 'px-1'} py-2.5 text-center text-[10px] font-black uppercase tracking-widest ${sortRule ? 'bg-violet-50 text-violet-700' : highlightClass}`}
         style={{ width: suggestionColumnWidths[column.key] || column.width }}
-        title={`${!isUtilityColumn && column.key !== 'quantity' ? 'Duplo clique para ordenar. ' : ''}Arraste para mover. Puxe a borda direita para ajustar a largura.`}
+        title={`${sortDescription}${canToggleSort ? 'Duplo clique para ordenar. Esc para limpar. ' : ''}Arraste para mover. Puxe a borda direita para ajustar a largura.`}
       >
         {column.key === 'selection' ? (
           <>
@@ -2584,10 +2583,14 @@ export function ReallocationManager({
           <>
             <span className="flex min-w-0 items-center justify-center gap-1 pr-2">
               <span className="truncate">{column.label}</span>
-              {isSorted && (
-                suggestionSort?.direction === 'asc'
-                  ? <ArrowUp size={11} className="shrink-0" aria-hidden="true" />
-                  : <ArrowDown size={11} className="shrink-0" aria-hidden="true" />
+              {sortRule && (
+                <>
+                  <span className="inline-flex shrink-0 items-center gap-0.5 tracking-normal" aria-hidden="true">
+                    {sortRule.direction === 'asc' ? <ArrowUp size={11} /> : <ArrowDown size={11} />}
+                    <span>{sortIndex + 1}</span>
+                  </span>
+                  <span className="sr-only">{sortDescription}</span>
+                </>
               )}
             </span>
             {!isUtilityColumn && (
@@ -2664,7 +2667,7 @@ export function ReallocationManager({
       case 'originMonthlyAvgSales':
         return <td key={column.key} className={cellClass}>{decimal(suggestion.originMonthlyAvgSales)}</td>;
       case 'originStockDays':
-        return <td key={column.key} className={`${cellClass} font-bold`}>{wholeNumber(suggestion.originStockDays)}</td>;
+        return <td key={column.key} className={`${cellClass} font-bold`}>{decimal(suggestion.originStockDays)}</td>;
       case 'adjustedOriginDays': {
         const allocation = getOriginAllocation(suggestion);
         return (
@@ -2673,7 +2676,7 @@ export function ReallocationManager({
             className={`${cellClass} font-black`}
             title={allocation ? `Considera ${wholeNumber(allocation.allocated)} un. totais saindo desta origem/produto` : undefined}
           >
-            {wholeNumber(adjustedOriginDays(suggestion))}
+            {decimal(adjustedOriginDays(suggestion))}
           </td>
         );
       }
@@ -2749,7 +2752,7 @@ export function ReallocationManager({
       case 'destinationStock':
         return <td key={column.key} className={cellClass}>{decimal(suggestion.destinationStock)}</td>;
       case 'destinationStockDays':
-        return <td key={column.key} className={`${cellClass} font-bold`}>{wholeNumber(suggestion.destinationStockDays)}</td>;
+        return <td key={column.key} className={`${cellClass} font-bold`}>{decimal(suggestion.destinationStockDays)}</td>;
       case 'adjustedDestinationDays': {
         const allocation = getDestinationAllocation(suggestion);
         return (
@@ -2758,7 +2761,7 @@ export function ReallocationManager({
             className={`${cellClass} font-black`}
             title={allocation ? `Considera ${wholeNumber(allocation.allocated)} un. totais chegando neste destino/produto` : undefined}
           >
-            {wholeNumber(adjustedDestinationDays(suggestion))}
+            {decimal(adjustedDestinationDays(suggestion))}
           </td>
         );
       }
@@ -2824,7 +2827,6 @@ export function ReallocationManager({
   const canExportGeneratedSuggestion = Boolean(stockSnapshot) && !suggestionExportBlockMessage;
   const generateButtonTitle = generatePermissionTitle || stockSnapshotBlockedTitle;
   const exportButtonTitle = exportPermissionTitle || suggestionExportBlockMessage || suggestionExportWarningMessage || undefined;
-  const showBusyOverlay = stockImporting || generatingSuggestions;
   const busyOverlayTitle = stockImporting ? 'Importando estoque' : 'Atualizando sugestoes';
   const busyOverlayMessage = stockImporting
     ? 'Lendo o arquivo e atualizando a base de estoque.'
@@ -2867,25 +2869,7 @@ export function ReallocationManager({
         }}
       />
 
-      {showBusyOverlay && (
-        <div
-          className="fixed inset-0 z-[140] flex items-center justify-center bg-white/80 p-4 backdrop-blur-[2px]"
-          role="status"
-          aria-live="polite"
-          aria-label={busyOverlayTitle}
-        >
-          <div className="flex w-full max-w-[360px] flex-col items-center rounded-2xl border border-slate-200 bg-white px-8 py-7 text-center shadow-[0_22px_60px_rgba(15,23,42,0.18)]">
-            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-violet-600 text-white shadow-lg shadow-violet-200">
-              <Loader2 size={28} className="animate-spin" />
-            </div>
-            <p className="text-sm font-black uppercase tracking-[0.18em] text-slate-900">{busyOverlayTitle}</p>
-            <p className="mt-2 text-xs font-bold leading-relaxed text-slate-500">{busyOverlayMessage}</p>
-            <div className="mt-5 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
-              <div className="h-full w-full animate-pulse rounded-full bg-violet-600" />
-            </div>
-          </div>
-        </div>
-      )}
+      {showBusyOverlay && <AppLoadingOverlay title={busyOverlayTitle} description={busyOverlayMessage} />}
 
       {errorMessage && (
         <div className="mb-5 rounded-2xl border-2 border-amber-200 bg-amber-50 p-4 text-sm font-bold text-amber-800">
@@ -3427,10 +3411,12 @@ export function ReallocationManager({
           column={allSuggestionColumns.find((column) => column.key === columnContext.key) || null}
           columns={allSuggestionColumns}
           hidden={hiddenSuggestionColumns}
-          canSort={columnContext.key !== null && columnContext.key !== 'selection'}
+          canSort={columnContext.key !== null && sortableSuggestionKeys.has(columnContext.key)}
           onSort={(direction) => {
-            if (columnContext.key && columnContext.key !== 'selection') setSuggestionSort({ key: columnContext.key, direction });
+            const key = columnContext.key;
+            if (key && sortableSuggestionKeys.has(key)) setSuggestionSort(current => nextReallocationSort(current, key, direction));
           }}
+          onClearSort={suggestionSort.length ? () => setSuggestionSort([]) : undefined}
           onRestoreWidth={() => {
             const column = allSuggestionColumns.find((item) => item.key === columnContext.key);
             if (column) setSuggestionColumnWidths((current) => ({ ...current, [column.key]: column.width }));
@@ -4052,7 +4038,7 @@ function QuickFilterBox({
   const [optionsPickerOpen, setOptionsPickerOpen] = useState(false);
   const [optionsPickerSearch, setOptionsPickerSearch] = useState('');
   const [optionsPickerIds, setOptionsPickerIds] = useState<Set<string>>(() => new Set());
-  const [optionSort, setOptionSort] = useState<FilterOptionSort>(null);
+  const optionSort = useColumnSort();
   const normalizedQuickValue = normalizeAutocompleteText(quickValue);
   const normalizedOptionsPickerSearch = normalizeAutocompleteText(optionsPickerSearch);
   const availableOptions = onQuickSearch && normalizedQuickValue ? remoteOptions : options;
@@ -4061,7 +4047,7 @@ function QuickFilterBox({
     return rankAutocompleteOptions(availableOptions, normalizedQuickValue, 18);
   }, [availableOptions, hideInitialOptions, normalizedQuickValue]);
   const selectedIds = useMemo(() => new Set(selected.map((item) => item.id)), [selected]);
-  const listOptions = useMemo(() => sortFilterOptions(selected, optionSort), [selected, optionSort]);
+  const listOptions = optionSort.sortRows(selected, (item, key) => item.columns[Number(key)]);
   const searchResultOptions = useMemo(() => visibleOptions.filter((item) => !selectedIds.has(item.id)), [selectedIds, visibleOptions]);
   const visibleSelectedIds = useMemo(() => new Set(listOptions.filter((item) => selectedIds.has(item.id)).map((item) => item.id)), [listOptions, selectedIds]);
   const visibleMarkedIds = useMemo(() => new Set(listOptions.filter((item) => selectedIds.has(item.id) && markedIds.has(item.id)).map((item) => item.id)), [listOptions, markedIds, selectedIds]);
@@ -4070,9 +4056,8 @@ function QuickFilterBox({
     if (valueColumnCount === 1) return '24px minmax(0, 1fr)';
     return `24px repeat(${valueColumnCount}, minmax(0, 1fr))`;
   }, [columns.length]);
-  const pickerOptions = useMemo(() => (
-    sortFilterOptions(rankAutocompleteOptions(options, normalizedOptionsPickerSearch, Math.max(options.length, 1)), optionSort)
-  ), [normalizedOptionsPickerSearch, options, optionSort]);
+  const rankedPickerOptions = useMemo(() => rankAutocompleteOptions(options, normalizedOptionsPickerSearch, Math.max(options.length, 1)), [normalizedOptionsPickerSearch, options]);
+  const pickerOptions = optionSort.sortRows(rankedPickerOptions, (item, key) => item.columns[Number(key)]);
   const pickerVisibleIds = useMemo(() => new Set(pickerOptions.map((item) => item.id)), [pickerOptions]);
   const selectedPickerVisibleCount = useMemo(() => (
     pickerOptions.filter((item) => optionsPickerIds.has(item.id)).length
@@ -4287,23 +4272,13 @@ function QuickFilterBox({
   const selectedPreview = selected.slice(0, 2).map((item) => item.columns[0]).join(', ');
   const showSearchResults = expanded && (searching || normalizedQuickValue.length >= 2);
   const renderOptionHeader = (column: string, index: number, prefix: string) => (
-    <button
+    <SortableGridHeader
       key={`${prefix}-${column}-${index}`}
-      type="button"
-      onDoubleClick={() => setOptionSort(current => nextFilterOptionSort(current, index))}
-      onKeyDown={event => {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault();
-          setOptionSort(current => nextFilterOptionSort(current, index));
-        }
-      }}
-      title={`Duplo clique para ordenar por ${column}`}
-      aria-label={`${column}${optionSort?.index === index ? `: ordem ${optionSort.direction === 'asc' ? 'crescente' : 'decrescente'}` : ''}`}
-      className={`flex h-6 min-w-0 select-none items-center gap-1 border-r border-slate-200 px-2 text-left last:border-r-0 hover:bg-violet-50 focus-visible:outline-2 focus-visible:outline-violet-500 ${optionSort?.index === index ? 'bg-violet-50 text-violet-700' : ''}`}
-    >
-      <span className="truncate">{column}</span>
-      {optionSort?.index === index && (optionSort.direction === 'asc' ? <ArrowUp size={11} className="shrink-0" aria-hidden="true" /> : <ArrowDown size={11} className="shrink-0" aria-hidden="true" />)}
-    </button>
+      sort={optionSort}
+      column={String(index)}
+      label={column}
+      className={`flex h-6 min-w-0 select-none items-center gap-1 border-r border-slate-200 px-2 text-left last:border-r-0 hover:bg-violet-50 focus-visible:outline-2 focus-visible:outline-violet-500 ${optionSort.rules.some(rule => rule.key === String(index)) ? 'bg-violet-50 text-violet-700' : ''}`}
+    />
   );
 
   return (

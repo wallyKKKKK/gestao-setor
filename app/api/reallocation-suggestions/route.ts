@@ -199,10 +199,22 @@ function effectiveStockDays(item: StockItem, dailySales: number) {
   return stockDays > 0 ? stockDays : 0;
 }
 
-function destinationNeedQuantity(stockDays: number, dailySales: number, targetDays: number) {
-  const exactNeed = (targetDays - stockDays) * dailySales;
+function stockArithmeticTolerance(left: number, right: number) {
+  return 8 * Number.EPSILON * Math.max(1, Math.abs(left), Math.abs(right));
+}
+
+function transferableSurplus(stock: number, protectedStock: number) {
+  // An integer surplus must not lose a unit to floating-point noise.
+  return Math.max(0, Math.floor(stock - protectedStock + stockArithmeticTolerance(stock, protectedStock)));
+}
+
+function destinationNeedQuantity(stock: number, dailySales: number, targetDays: number) {
+  const targetStock = dailySales * targetDays;
+  const exactNeed = targetStock - stock;
   if (exactNeed <= 0) return 0;
-  return Math.max(0, Math.floor(exactNeed + 0.000001));
+  const lower = Math.floor(exactNeed);
+  // Each unit adds the same coverage, so an exact tie favors the smaller move.
+  return exactNeed - lower > 0.5 + stockArithmeticTolerance(targetStock, stock) ? lower + 1 : lower;
 }
 
 function routePriority(originItem: StockItem, destinationItem: StockItem, branchLogistics: BranchLogistics) {
@@ -319,7 +331,7 @@ function buildSuggestion(
     quantity,
     maxQuantity: quantity,
     originStock: numberValue(originItem.stock),
-    originAvailableStock: Math.max(0, Math.floor(origin.availableStock - origin.stockFloor)),
+    originAvailableStock: transferableSurplus(origin.availableStock, origin.stockFloor),
     originConfirmedStock: numberValue(originItem.confirmed_stock),
     originMinimumStock: numberValue(originItem.min_stock),
     originMonthlyAvgSales: normalizeMonthlyAvgSales(numberValue(originItem.monthly_avg_sales)),
@@ -482,7 +494,7 @@ function calculate(payload: {
       const stockDays = dailySales > 0 ? stock / dailySales : numberValue(item.stock_days);
       const originFloor = Math.max(stockFloor, rules.considerOriginMinimumStock === true ? Math.max(0, Math.ceil(numberValue(item.min_stock))) : 0);
       const protectedStock = Math.max(originFloor, dailySales > 0 ? dailySales * originMinimumDays : 0);
-      const remaining = Math.max(0, Math.floor(stock - protectedStock));
+      const remaining = transferableSurplus(stock, protectedStock);
       if (remaining > 0) {
         origins.push({
           item: {
@@ -514,7 +526,7 @@ function calculate(payload: {
       const stockDays = effectiveStockDays(item, dailySales);
       if (dailySales <= 0 || stockDays >= destinationTargetDays) continue;
 
-      const need = destinationNeedQuantity(stockDays, dailySales, destinationTargetDays);
+      const need = destinationNeedQuantity(stock, dailySales, destinationTargetDays);
       if (need > 0) {
         destinations.push({
           item: {
@@ -668,7 +680,7 @@ function calculate(payload: {
           // Preserve legacy requests; explicit origin/destination switches are independent.
           const minimum = (rules.considerOriginMinimumStock ?? rules.considerMinimumStock) === true
             ? Math.max(0, numberValue(origin.item.min_stock)) : 0;
-          const surplusAboveMinimum = Math.max(0, Math.floor(origin.availableStock - sent - Math.max(origin.stockFloor, minimum)));
+          const surplusAboveMinimum = transferableSurplus(origin.availableStock, sent + Math.max(origin.stockFloor, minimum));
           const quantity = Math.min(origin.remaining, surplusAboveMinimum, openNeed);
           if (quantity <= 0) continue;
 

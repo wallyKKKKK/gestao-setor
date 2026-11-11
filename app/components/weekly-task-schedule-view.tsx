@@ -3,10 +3,11 @@
 import * as XLSX from 'xlsx-js-style';
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import { useState } from 'react';
-import { CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clock, Download, UserRound } from 'lucide-react';
+import { CalendarDays, CalendarArrowUp, CheckCircle2, ChevronLeft, ChevronRight, Clock, Download, UserRound } from 'lucide-react';
 import { getTaskCardTone, taskCardSurfaceClass, taskCardToneClasses } from '@/lib/task-card-tone';
 import { taskPriorityBadgeClassName, taskPriorityLabel } from '@/lib/task-priority';
 import { monthlyWeekdayOccursOnDate, parseMonthlyWeekdayRepeats } from '@/lib/task-recurrence';
+import { weeklyTaskAdvanceBlockedReason } from '@/lib/task-selectors';
 import type { ProcessedTask, Profile } from '@/lib/types';
 
 interface WeeklyTaskScheduleViewProps {
@@ -14,6 +15,7 @@ interface WeeklyTaskScheduleViewProps {
   profiles: Profile[];
   selectedUserIds: string[];
   onView: (task: ProcessedTask) => void;
+  onAdvance: (task: ProcessedTask) => void;
 }
 
 interface WeekDayInfo {
@@ -247,7 +249,7 @@ function buildUserWeekRows(
 
   return rows;
 }
-export function WeeklyTaskScheduleView({ tasks, profiles, selectedUserIds, onView }: WeeklyTaskScheduleViewProps) {
+export function WeeklyTaskScheduleView({ tasks, profiles, selectedUserIds, onView, onAdvance }: WeeklyTaskScheduleViewProps) {
   const [weekOffset, setWeekOffset] = useState(0);
   const weekLabel = weekOffset === 0 ? 'Esta semana'
     : weekOffset === -1 ? 'Semana anterior'
@@ -360,8 +362,10 @@ export function WeeklyTaskScheduleView({ tasks, profiles, selectedUserIds, onVie
                       : task.schedule_override_date === day.date ? task.schedule_override_type ?? 'default'
                       : 'default';
                     const strongFill = tone === 'done' || tone === 'late';
+                    const advanceBlockedReason = weeklyTaskAdvanceBlockedReason(task, day.date, today);
                     return (
-                      <button key={day.id + '-' + task.id} type="button" title={task.title} onClick={() => onView(task)} className={`w-full rounded-md p-3 text-left transition hover:brightness-95 focus-visible:outline-2 focus-visible:outline-blue-600 [--task-shadow-offset:2px] ${taskCardSurfaceClass} ${taskCardToneClasses[tone]} ${strongFill ? 'text-slate-950' : 'text-slate-900'}`}>
+                      <div key={day.id + '-' + task.id} className={`relative rounded-md [--task-shadow-offset:2px] ${taskCardSurfaceClass} ${taskCardToneClasses[tone]} ${strongFill ? 'text-slate-950' : 'text-slate-900'}`}>
+                      <button type="button" title={task.title} onClick={() => onView(task)} className={`block w-full rounded-md p-3 text-left transition hover:bg-black/5 focus-visible:outline-2 focus-visible:outline-blue-600 ${!done ? 'pr-12' : ''}`}>
                         <p className="break-words text-[13px] font-semibold leading-snug">{task.title}</p>
                         <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1">
                           <span className={'inline-flex items-center gap-1 text-[11px] font-medium ' + (strongFill ? '' : inProgress ? 'text-blue-700' : 'text-slate-600')}>{done ? <CheckCircle2 size={12} /> : <Clock size={12} />}{done ? 'Concluída' : status}</span>
@@ -369,6 +373,12 @@ export function WeeklyTaskScheduleView({ tasks, profiles, selectedUserIds, onVie
                         </div>
                         <div className={`mt-2 flex min-w-0 items-center gap-1.5 text-[11px] ${strongFill ? '' : 'text-slate-600'}`}><UserRound size={12} className="shrink-0" /><span className="truncate">{profile?.full_name || 'Sem usuário'}</span></div>
                       </button>
+                      {!done && (
+                        <button type="button" title={advanceBlockedReason ?? 'Adiantar para hoje'} aria-label={advanceBlockedReason ?? `Adiantar ${task.title} para hoje`} disabled={Boolean(advanceBlockedReason)} onClick={() => onAdvance(task)} className="absolute right-2 top-2 inline-flex size-8 items-center justify-center rounded-md border border-orange-300 bg-orange-50 text-orange-800 transition enabled:hover:bg-orange-100 focus-visible:outline-2 focus-visible:outline-orange-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-orange-700 dark:bg-orange-950 dark:text-orange-200">
+                          <CalendarArrowUp size={16} aria-hidden="true" />
+                        </button>
+                      )}
+                      </div>
                     );
                   })}
                 </div>

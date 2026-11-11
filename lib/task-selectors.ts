@@ -34,6 +34,12 @@ function isActionableTask(task: ProcessedTask, today: string) {
   return task.lastOcc !== "1970-01-01" && task.lastOcc <= today;
 }
 
+export function weeklyTaskAdvanceBlockedReason(task: ProcessedTask, date: string, today: string) {
+  if (task.last_done_date && task.last_done_date >= today) return 'Tarefa já concluída hoje';
+  if (date === today || task.lastOcc === today) return 'Tarefa já agendada para hoje';
+  return null;
+}
+
 const WORKFLOW_ORDER: Record<TaskWorkflowStatus, number> = {
   em_andamento: 0,
   pendente: 1,

@@ -1,8 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { ArrowDown, ArrowUp, Search } from 'lucide-react';
-import { nextFilterOptionSort, sortFilterOptions, type FilterOptionSort } from '@/lib/filter-option-sort';
+import { Search } from 'lucide-react';
+import { SortableGridHeader, useColumnSort } from '@/app/components/table-sort';
 import type { ReallocationImportFilterSelection, ReallocationImportReport } from '@/lib/reallocation-import-report';
 import { initialImportFilterSelection, normalizeImportStoreCode } from '@/lib/reallocation-import-filters';
 
@@ -16,7 +16,7 @@ export function ReallocationImportFilterPreview({ report, current, onApply, onDi
   const [selection, setSelection] = useState(() => initialImportFilterSelection(report, current.destinations));
   const [manufacturerSearch, setManufacturerSearch] = useState('');
   const [storeSearch, setStoreSearch] = useState('');
-  const [storeSort, setStoreSort] = useState<FilterOptionSort>(null);
+  const storeSort = useColumnSort();
   const manufacturers = report.filterPreview?.manufacturers || [];
   const normalize = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
   const visibleManufacturers = manufacturers.filter(item => normalize(item.name).includes(normalize(manufacturerSearch)));
@@ -24,8 +24,9 @@ export function ReallocationImportFilterPreview({ report, current, onApply, onDi
     const code = normalizeImportStoreCode(store.code);
     return { ...store, code, columns: [code, store.name] };
   });
-  const visibleStores = sortFilterOptions(stores.filter(store => normalize(`${store.code} ${store.name}`).includes(normalize(storeSearch))), storeSort);
-  const sortStores = (index: number) => setStoreSort(current => nextFilterOptionSort(current, index));
+  const visibleStores = storeSort.sortRows(stores.filter(store => normalize(`${store.code} ${store.name}`).includes(normalize(storeSearch))),
+    (store, key) => key === 'code' ? store.code : key === 'name' ? store.name
+      : Number(selection[key === 'origin' ? 'origins' : 'destinations'].includes(store.code)));
   const outsideStores = [...new Set([...current.origins, ...current.destinations].map(normalizeImportStoreCode))].filter(code => !stores.some(store => store.code === code));
   const outsideManufacturers = current.manufacturers.filter(name => !manufacturers.some(item => normalize(item.name) === normalize(name)));
   const toggle = (field: 'manufacturers' | 'origins' | 'destinations', value: string) => setSelection(current => ({ ...current, [field]: current[field].includes(value) ? current[field].filter(item => item !== value) : [...current[field], value] }));
@@ -45,14 +46,8 @@ export function ReallocationImportFilterPreview({ report, current, onApply, onDi
         <button type="button" onClick={() => toggleAll('origins', visibleStores.map(store => store.code))} className="shrink-0 self-start text-xs font-semibold text-violet-700">Marcar / desmarcar origens</button>
         <div className="min-h-0 flex-1 overflow-auto rounded-md border border-slate-200">
           <div className="sticky top-0 grid grid-cols-[56px_minmax(0,1fr)_56px_56px] items-center gap-1 border-b bg-slate-50 px-2 py-2 text-xs font-bold">
-            {['Código', 'Loja'].map((label, index) => {
-              const direction = storeSort?.index === index ? storeSort.direction : null;
-              return <button key={label} type="button" title={`Duplo clique para ordenar por ${label}`} aria-label={direction ? `${label}: ordem ${direction === 'asc' ? 'crescente' : 'decrescente'}` : label} onDoubleClick={() => sortStores(index)} onClick={event => { if (event.detail === 0) sortStores(index); }} className={`flex min-w-0 select-none items-center gap-0.5 text-left hover:text-violet-700 ${direction ? 'text-violet-700' : ''}`}>
-                <span className="truncate">{label}</span>
-                {direction === 'asc' ? <ArrowUp size={11} className="shrink-0" aria-hidden="true" /> : direction === 'desc' ? <ArrowDown size={11} className="shrink-0" aria-hidden="true" /> : null}
-              </button>;
-            })}
-            <span className="text-center">Origem</span><span className="text-center">Destino</span>
+            {([['code', 'Código'], ['name', 'Loja'], ['origin', 'Origem'], ['destination', 'Destino']] as const).map(([key, label]) =>
+              <SortableGridHeader key={key} sort={storeSort} column={key} label={label} className="flex min-w-0 select-none items-center gap-0.5 text-left hover:text-violet-700" />)}
           </div>
           {visibleStores.map(store => (
             <div key={store.code} className="grid grid-cols-[56px_minmax(0,1fr)_56px_56px] items-center gap-1 border-b border-slate-100 px-2 py-2 text-sm last:border-0">

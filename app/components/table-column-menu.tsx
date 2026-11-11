@@ -12,6 +12,7 @@ interface TableColumnMenuProps<Key extends string> {
   configure?: boolean;
   canSort: boolean;
   onSort: (direction: 'asc' | 'desc') => void;
+  onClearSort?: () => void;
   onRestoreWidth: () => void;
   onRestoreAll: () => void;
   onToggle: (key: Key) => void;
@@ -62,6 +63,7 @@ export function TableColumnMenu<Key extends string>(props: TableColumnMenuProps<
         {view === 'menu' && <div className="py-1">
           <button type="button" disabled={!props.canSort} className={commandClass} onClick={() => { props.onSort('asc'); props.onClose(); }}><ArrowUp size={15} /> Ordenar crescente</button>
           <button type="button" disabled={!props.canSort} className={commandClass} onClick={() => { props.onSort('desc'); props.onClose(); }}><ArrowDown size={15} /> Ordenar decrescente</button>
+          {props.onClearSort && <button type="button" className={commandClass} onClick={() => { props.onClearSort?.(); props.onClose(); }}><X size={15} /> Limpar ordenação</button>}
           <button type="button" disabled={!props.column} className={commandClass} onClick={() => { props.onRestoreWidth(); props.onClose(); }}><RotateCcw size={15} /> Restaurar largura desta coluna</button>
           <button type="button" className={commandClass} onClick={() => setView('columns')}><Columns3 size={15} /> Configurar colunas</button>
           <button type="button" className={`${commandClass} border-t border-slate-100 text-slate-500`} onClick={() => setView('confirm')}><RotateCcw size={15} /> Restaurar todas as colunas</button>

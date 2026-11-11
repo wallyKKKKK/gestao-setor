@@ -57,10 +57,19 @@ test('the real table header renders the same arrows and active color as filter h
   const compiled = ts.transpileModule(`export const renderHeader = ${expression};`, { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } }).outputText;
   for (const direction of ['asc', 'desc']) {
     const exports = {};
-    vm.runInNewContext(compiled, { exports, require, ...require('lucide-react'), suggestionSort: { key: 'product', direction }, suggestionColumnWidths: {} });
+    vm.runInNewContext(compiled, { exports, require, ...require('lucide-react'), suggestionSort: [
+      { key: 'description', direction }, { key: 'originName', direction: 'desc' },
+    ], suggestionColumnWidths: {} });
     const React = require('react');
-    const html = require('react-dom/server').renderToStaticMarkup(React.createElement('table', null, React.createElement('thead', null, React.createElement('tr', null, exports.renderHeader({ key: 'product', label: 'Produto', width: 120 })))));
+    const html = require('react-dom/server').renderToStaticMarkup(React.createElement('table', null, React.createElement('thead', null, React.createElement('tr', null,
+      exports.renderHeader({ key: 'description', label: 'Produto', width: 120 }),
+      exports.renderHeader({ key: 'originName', label: 'Apelido', width: 120 }),
+    ))));
     assert.match(html, new RegExp(`aria-sort="${direction === 'asc' ? 'ascending' : 'descending'}"`));
+    assert.equal((html.match(/aria-sort=/g) || []).length, 1);
+    assert.match(html, /<span>1<\/span>/);
+    assert.match(html, /<span>2<\/span>/);
+    assert.match(html, /Prioridade 2: ordem decrescente/);
     assert.match(html, /bg-violet-50 text-violet-700/);
     assert.match(html, new RegExp(direction === 'asc' ? 'lucide-arrow-up' : 'lucide-arrow-down'));
     assert.doesNotMatch(html, /A-Z|Z-A/);

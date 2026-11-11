@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic'
 import { AnnouncementBoard } from '@/app/components/announcement-board'
 import { AppSection, AppSidebar } from '@/app/components/app-sidebar'
 import { AppShellNav } from '@/app/components/app-shell-nav'
+import { isAppLoadingOverlayOpen } from '@/app/components/app-loading-overlay'
 import { CreateTaskModal } from '@/app/components/create-task-modal'
 import { DashboardView } from '@/app/components/dashboard-view'
 import { EditTaskModal } from '@/app/components/edit-task-modal'
@@ -13,6 +14,7 @@ import { Login } from '@/app/components/login'
 import { ModuleHome } from '@/app/components/module-home'
 import { ProfileModal } from '@/app/components/profile-modal'
 import { PurchaseAssistant } from '@/app/components/purchase-assistant'
+import { PurchaseQuotation } from '@/app/components/purchase-quotation'
 import { SettingsModal } from '@/app/components/settings-modal'
 import { TaskDrawer } from '@/app/components/task-drawer'
 import { TaskListView } from '@/app/components/task-list-view'
@@ -21,6 +23,7 @@ import { WeeklyTaskScheduleView } from '@/app/components/weekly-task-schedule-vi
 import { showSystemToast } from '@/app/components/system-toast'
 import { NAV_CATEGORIES } from '@/app/constants'
 import { getSectionTheme } from '@/lib/section-theme'
+import type { QuotationDraftSession } from '@/lib/purchase-quotation-draft'
 import { useAnnouncementActions } from '@/app/hooks/use-announcement-actions'
 import { useProfileActions } from '@/app/hooks/use-profile-actions'
 import {
@@ -150,6 +153,7 @@ const SECTION_LABELS: Record<AppSection, string> = {
   USUARIOS: 'Usuários e permissões',
   TAREFAS: 'Tarefas',
   COMPRAS_IA: 'Compras IA',
+  COTACOES: 'Cotações de Compras',
   REUNIAO: 'Agenda',
   CADASTROS: 'Cadastros',
   ESTOQUE_ERP: 'Estoque ERP',
@@ -258,6 +262,15 @@ export default function App() {
   const [preferencesReady, setPreferencesReady] = useState(false)
   
   const [activeSection, setActiveSection] = useState<AppSection>('INICIO')
+  const [quotationDraft, setQuotationDraft] = useState<{ owner: string; session: QuotationDraftSession } | null>(null)
+  const quotationOwner = user?.id
+  const changeQuotationSession = useCallback((update: (current: QuotationDraftSession | null) => QuotationDraftSession | null) => {
+    if (!quotationOwner) return
+    setQuotationDraft(current => {
+      const session = update(current?.owner === quotationOwner ? current.session : null)
+      return session ? { owner: quotationOwner, session } : current?.owner === quotationOwner ? null : current
+    })
+  }, [quotationOwner])
   const [activeTab, setActiveTab] = useState('HOJE')
   const [taskLegendTarget, setTaskLegendTarget] = useState<HTMLDivElement | null>(null)
   const [dashFilter, setDashFilter] = useState<'HOJE' | 'SEMANAL'>('HOJE')
@@ -459,7 +472,7 @@ useEffect(() => {
 
 useEffect(() => {
   const handleEscape = (event: KeyboardEvent) => {
-    if (event.key !== 'Escape') return;
+    if (event.key !== 'Escape' || isAppLoadingOverlayOpen()) return;
 
     if (showGlobalSearch) {
       setShowGlobalSearch(false);
@@ -513,6 +526,7 @@ useEffect(() => {
   const handleGlobalShortcut = (event: KeyboardEvent) => {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
       event.preventDefault();
+      if (isAppLoadingOverlayOpen()) return;
       setShowGlobalSearch(true);
     }
   };
@@ -1014,6 +1028,9 @@ const scheduleTaskOverride = useCallback(async (task: ProcessedTask, action: 'ad
 
   try {
     await updateTaskScheduleOverride(task.id, overrideDate, overrideType);
+    if (action === 'advance' && activeTab === 'SEMANA') {
+      showSystemToast({ tone: 'success', title: 'Tarefa adiantada para hoje', description: task.title });
+    }
     await addAudit(
       action === 'advance' ? 'task_advanced' : action === 'postpone' ? 'task_postponed' : 'task_schedule_restored',
       'task',
@@ -1591,7 +1608,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
     ((activeSection === 'AUDITORIA' || activeSection === 'USUARIOS') && userRole !== 'admin') ||
     (activeSection === 'CADASTROS' && !canAccessRegistries) ||
     (activeSection === 'ESTOQUE_ERP' && !canAccessErpInventory) ||
-    (activeSection === 'COMPRAS_IA' && !canAccessPaymentTerms) ||
+    ((activeSection === 'COMPRAS_IA' || activeSection === 'COTACOES') && !canAccessPaymentTerms) ||
     (activeSection === 'PRECIFICACAO' && !canAccessPricing) ||
     (activeSection === 'PRE_VENCIDOS' && !canAccessPricing) ||
     (activeSection === 'PRAZOS' && !canAccessPaymentTerms) ||
@@ -1610,7 +1627,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
   const availableSections = useMemo<AppSection[]>(() => {
     const sections: AppSection[] = ['TAREFAS', 'REUNIAO', 'NOTAS', 'FERRAMENTAS', 'CADASTROS', 'BALACUBACO'];
     if (canAccessErpInventory) sections.push('ESTOQUE_ERP');
-    if (canAccessPaymentTerms) sections.push('COMPRAS_IA', 'PRAZOS');
+    if (canAccessPaymentTerms) sections.push('COMPRAS_IA', 'COTACOES', 'PRAZOS');
     if (canAccessPricing) sections.push('PRECIFICACAO', 'PRE_VENCIDOS');
     if (canAccessTransport) sections.push('TRANSPORTE');
     if (userRole === 'admin') sections.push('AUDITORIA', 'USUARIOS');
@@ -1637,6 +1654,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
     if (canAccessRegistries) items.push({ id: 'module:CADASTROS', title: 'Cadastros', description: 'Produtos, lojas e fornecedores', section: 'CADASTROS', type: 'Modulo', keywords: 'cadastros produtos lojas fornecedores' });
     if (canAccessErpInventory) items.push({ id: 'module:ESTOQUE_ERP', title: 'Estoque ERP', description: 'Saldo atual e consulta de produtos', section: 'ESTOQUE_ERP', type: 'Modulo', keywords: 'estoque erp saldo atual produtos ean loja mercadinho' });
     if (canAccessPaymentTerms) items.push({ id: 'module:COMPRAS_IA', title: 'Compras IA', description: 'Assistente inteligente para compras', section: 'COMPRAS_IA', type: 'Modulo', keywords: 'compras ia assistente inteligencia artificial fornecedores produtos pedido cotacao' });
+    if (canAccessPaymentTerms) items.push({ id: 'module:COTACOES', title: 'Cotações de Compras', description: 'Cotação externa do A7 e conferência de custos', section: 'COTACOES', type: 'Modulo', keywords: 'cotacao compras a7 cotefacil pedido custos fornecedores' });
     if (canAccessPricing) items.push({ id: 'module:PRE_VENCIDOS', title: 'Pre-vencidos', description: 'Regras e TXT de desconto para validade', section: 'PRE_VENCIDOS', type: 'Modulo', keywords: 'pre vencidos validade desconto regras exportar txt' });
     if (canAccessPricing) items.push({ id: 'module:PRECIFICACAO', title: 'Price', description: 'Negociações, custos e preços', section: 'PRECIFICACAO', type: 'Modulo', keywords: 'price precificacao negociacoes custos ofertas precos' });
     if (canAccessPaymentTerms) items.push({ id: 'module:PRAZOS', title: 'Prazos', description: 'Prazos de boleto e regras comerciais', section: 'PRAZOS', type: 'Modulo', keywords: 'prazos fornecedores boleto regras comerciais' });
@@ -1969,6 +1987,7 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
           profiles={profiles}
           selectedUserIds={filterUsers}
           onView={setViewingTask}
+          onAdvance={(task) => void scheduleTaskOverride(task, 'advance')}
         />
       ) : (
         <TaskListView
@@ -2039,6 +2058,12 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
           }} />
       ) : visibleSection === 'COMPRAS_IA' ? (
         <PurchaseAssistant />
+      ) : visibleSection === 'COTACOES' ? (
+        <PurchaseQuotation
+          key={user.id}
+          session={quotationDraft?.owner === user.id ? quotationDraft.session : null}
+          onSessionChange={changeQuotationSession}
+        />
       ) : visibleSection === 'CADASTROS' ? (
         <RegistrationsManager
           canManageBranches={canManageBranches}

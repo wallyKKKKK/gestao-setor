@@ -1,5 +1,6 @@
 'use client';
 
+import { SortableTableHeader, useColumnSort } from '@/app/components/table-sort';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Building2, Check, ChevronDown, Factory, Layers3, PackageSearch, Pencil, Plus, Save, Search, Trash2, Truck, Upload, X } from 'lucide-react';
@@ -122,6 +123,11 @@ export function RegistrationsManager({ canManageBranches, canManageProducts, can
   const [errorMessage, setErrorMessage] = useState('');
   const productFileRef = useRef<HTMLInputElement>(null);
   const marginFileRef = useRef<HTMLInputElement>(null);
+  const productSort = useColumnSort();
+  const manufacturerSort = useColumnSort();
+  const classificationSort = useColumnSort();
+  const marginSort = useColumnSort();
+  const supplierSort = useColumnSort();
   const visibleTabs = useMemo<RegistryTab[]>(
     () => (canManageBranches ? ALL_REGISTRY_TABS : ['PRODUTOS', 'FABRICANTES', 'CLASSIFICACOES', 'MARGENS', 'LOJAS']),
     [canManageBranches],
@@ -275,6 +281,7 @@ export function RegistrationsManager({ canManageBranches, canManageProducts, can
   const productManufacturerOptions = useMemo(() => manufacturers.map((item) => item.value), [manufacturers]);
   const productClassificationOptions = useMemo(() => classifications.map((item) => item.value), [classifications]);
   const hasProductCatalogFilters = Boolean(productSearch || productManufacturerFilter || productClassificationFilter);
+  const attributeSort = activeTab === 'FABRICANTES' ? manufacturerSort : classificationSort;
   const activeAttributeField: ReallocationProductAttributeField = activeTab === 'CLASSIFICACOES' ? 'classification' : 'manufacturer';
   const activeAttributeRows = activeAttributeField === 'manufacturer' ? manufacturers : classifications;
   const activeAttributeLabel = activeAttributeField === 'manufacturer' ? 'fabricante' : 'classificacao';
@@ -648,16 +655,16 @@ export function RegistrationsManager({ canManageBranches, canManageProducts, can
             <DataTable emptyText={loading ? 'Carregando...' : hasProductCatalogFilters ? 'Nenhum produto encontrado para os filtros' : 'Nenhum produto cadastrado'}>
             <thead className="bg-slate-100 text-[10px] uppercase text-slate-600">
               <tr>
-                <th className="border border-slate-300 px-3 py-3 text-left">Codigo ERP</th>
-                <th className="border border-slate-300 px-3 py-3 text-left">EAN</th>
-                <th className="border border-slate-300 px-3 py-3 text-left">Produto</th>
-                <th className="border border-slate-300 px-3 py-3 text-left">Fabricante</th>
-                <th className="border border-slate-300 px-3 py-3 text-left">Classificacao</th>
+                <SortableTableHeader sort={productSort} column="erp_code" className="border border-slate-300 px-3 py-3 text-left">Codigo ERP</SortableTableHeader>
+                <SortableTableHeader sort={productSort} column="ean" className="border border-slate-300 px-3 py-3 text-left">EAN</SortableTableHeader>
+                <SortableTableHeader sort={productSort} column="description" className="border border-slate-300 px-3 py-3 text-left">Produto</SortableTableHeader>
+                <SortableTableHeader sort={productSort} column="manufacturer" className="border border-slate-300 px-3 py-3 text-left">Fabricante</SortableTableHeader>
+                <SortableTableHeader sort={productSort} column="classification" className="border border-slate-300 px-3 py-3 text-left">Classificacao</SortableTableHeader>
                 {canManageProducts && <th className="border border-slate-300 px-3 py-3 text-center">Acoes</th>}
               </tr>
             </thead>
             <tbody>
-              {products.map((product) => (
+              {productSort.sortRows(products, (product, key) => String(product[key as keyof typeof product] ?? '')).map((product) => (
                 <tr key={product.id} className="even:bg-slate-50">
                   <td className="border border-slate-200 px-3 py-3 font-black">{product.erp_code}</td>
                   <td className="border border-slate-200 px-3 py-3 font-mono">{product.ean || '-'}</td>
@@ -723,9 +730,9 @@ export function RegistrationsManager({ canManageBranches, canManageProducts, can
           <DataTable emptyText={`Nenhum ${activeAttributeLabel} encontrado`}>
             <thead className="bg-slate-100 text-[10px] uppercase text-slate-600">
               <tr>
-                <th className="border border-slate-300 px-3 py-3 text-left">{activeTab === 'FABRICANTES' ? 'Fabricante' : 'Classificacao'}</th>
-                <th className="border border-slate-300 px-3 py-3 text-right">Produtos vinculados</th>
-                <th className="border border-slate-300 px-3 py-3 text-left">Participacao na base</th>
+                <SortableTableHeader sort={attributeSort} column="value" className="border border-slate-300 px-3 py-3 text-left">{activeTab === 'FABRICANTES' ? 'Fabricante' : 'Classificacao'}</SortableTableHeader>
+                <SortableTableHeader sort={attributeSort} column="count" className="border border-slate-300 px-3 py-3 text-right">Produtos vinculados</SortableTableHeader>
+                <SortableTableHeader sort={attributeSort} column="ratio" className="border border-slate-300 px-3 py-3 text-left">Participacao na base</SortableTableHeader>
                 <th className="border border-slate-300 px-3 py-3 text-center">Acoes</th>
               </tr>
             </thead>
@@ -737,7 +744,7 @@ export function RegistrationsManager({ canManageBranches, canManageProducts, can
                   </td>
                 </tr>
               )}
-              {filteredAttributes.map((item) => {
+              {attributeSort.sortRows(filteredAttributes, (item, key) => key === 'value' ? item.value : item.count).map((item) => {
                 const ratio = totalProducts ? item.count / totalProducts : 0;
                 const barWidth = Math.min(100, Math.max(4, ratio * 100));
                 return (
@@ -858,16 +865,16 @@ export function RegistrationsManager({ canManageBranches, canManageProducts, can
             <DataTable emptyText="Nenhuma regra de margem cadastrada">
               <thead className="bg-slate-100 text-[10px] uppercase text-slate-600">
                 <tr>
-                  <th className="border border-slate-300 px-3 py-3 text-left">Linha</th>
-                  <th className="border border-slate-300 px-3 py-3 text-left">Departamento</th>
-                  <th className="border border-slate-300 px-3 py-3 text-left">Categoria</th>
-                  <th className="border border-slate-300 px-3 py-3 text-right">Margem desejada %</th>
-                  <th className="border border-slate-300 px-3 py-3 text-right">Markup desejado %</th>
+                  <SortableTableHeader sort={marginSort} column="line" className="border border-slate-300 px-3 py-3 text-left">Linha</SortableTableHeader>
+                  <SortableTableHeader sort={marginSort} column="department" className="border border-slate-300 px-3 py-3 text-left">Departamento</SortableTableHeader>
+                  <SortableTableHeader sort={marginSort} column="category" className="border border-slate-300 px-3 py-3 text-left">Categoria</SortableTableHeader>
+                  <SortableTableHeader sort={marginSort} column="desired_margin_percent" className="border border-slate-300 px-3 py-3 text-right">Margem desejada %</SortableTableHeader>
+                  <SortableTableHeader sort={marginSort} column="desired_markup_percent" className="border border-slate-300 px-3 py-3 text-right">Markup desejado %</SortableTableHeader>
                   {canManageMargins && <th className="border border-slate-300 px-3 py-3 text-center">Acoes</th>}
                 </tr>
               </thead>
               <tbody>
-                {filteredMarginRules.map((rule) => (
+                {marginSort.sortRows(filteredMarginRules, (rule, key) => { const value = rule[key as keyof typeof rule]; return typeof value === 'number' || typeof value === 'string' ? value : ''; }).map((rule) => (
                   <tr key={rule.id} className="even:bg-slate-50">
                     <td className="border border-slate-200 px-3 py-3 font-bold uppercase">{rule.line || '-'}</td>
                     <td className="border border-slate-200 px-3 py-3 uppercase">{rule.department || '-'}</td>
@@ -940,15 +947,15 @@ export function RegistrationsManager({ canManageBranches, canManageProducts, can
           <DataTable emptyText="Nenhum fornecedor cadastrado">
             <thead className="bg-slate-100 text-[10px] uppercase text-slate-600">
               <tr>
-                <th className="border border-slate-300 px-3 py-3 text-left">Fornecedor</th>
-                <th className="border border-slate-300 px-3 py-3 text-left">Prazos</th>
-                <th className="border border-slate-300 px-3 py-3 text-left">Categoria</th>
-                <th className="border border-slate-300 px-3 py-3 text-left">Contato</th>
+                <SortableTableHeader sort={supplierSort} column="supplier_name" className="border border-slate-300 px-3 py-3 text-left">Fornecedor</SortableTableHeader>
+                <SortableTableHeader sort={supplierSort} column="payment_terms" className="border border-slate-300 px-3 py-3 text-left">Prazos</SortableTableHeader>
+                <SortableTableHeader sort={supplierSort} column="category" className="border border-slate-300 px-3 py-3 text-left">Categoria</SortableTableHeader>
+                <SortableTableHeader sort={supplierSort} column="contact" className="border border-slate-300 px-3 py-3 text-left">Contato</SortableTableHeader>
                 <th className="border border-slate-300 px-3 py-3 text-center">Ações</th>
               </tr>
             </thead>
             <tbody>
-              {suppliers.map((supplier) => (
+              {supplierSort.sortRows(suppliers, (supplier, key) => { const value = key === 'contact' ? supplier.contact_name || supplier.phone || supplier.email : supplier[key as keyof typeof supplier]; return typeof value === 'string' ? value : ''; }).map((supplier) => (
                 <tr key={supplier.id} className="even:bg-slate-50">
                   <td className="border border-slate-200 px-3 py-3 font-black">{supplier.supplier_name}</td>
                   <td className="border border-slate-200 px-3 py-3">{supplier.payment_terms || '-'}</td>

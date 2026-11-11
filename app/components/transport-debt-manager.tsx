@@ -4,6 +4,7 @@ import { Children, isValidElement, useCallback, useEffect, useMemo, useRef, useS
 import { AlertTriangle, CheckCircle2, ChevronDown, Download, FileSpreadsheet, MoreHorizontal, Pencil, Plus, Search, Trash2, Upload, XCircle } from 'lucide-react';
 import { fetchSupplierPaymentTerms } from '@/lib/api';
 import { getPermissionDeniedMessage } from '@/lib/permissions';
+import { columnSortHeaderProps, TableSortIndicator, useColumnSort } from '@/app/components/table-sort';
 
 type DebtNature = 'divida' | 'credito';
 type PaymentStatus = 'aberto' | 'pago';
@@ -948,6 +949,12 @@ export function TransportDebtManager({
   const filteredEntries = useMemo(() => (
     effectiveShowOnlyAlerts ? baseFilteredEntries.filter((entry) => alertEntryIds.has(entry.id)) : baseFilteredEntries
   ), [alertEntryIds, baseFilteredEntries, effectiveShowOnlyAlerts]);
+  const rowSort = useColumnSort();
+  const sortedEntries = rowSort.sortRowsBy(filteredEntries, entry => ({
+    month: entry.debtMonth, supplier: entry.supplier, document: entry.invoice, value: entry.value,
+    balance: entryOpenAmount(entry) || entry.fee, nature: entry.nature,
+    payment: entry.status === 'aberto' && entryPaidAmount(entry) > 0 ? 'parcial' : entry.status,
+  }));
   const filteredEntryIds = useMemo(() => filteredEntries.map((entry) => entry.id), [filteredEntries]);
   const selectedVisibleCount = useMemo(() => filteredEntryIds.filter((id) => selectedEntryIds.includes(id)).length, [filteredEntryIds, selectedEntryIds]);
   const allVisibleSelected = filteredEntryIds.length > 0 && selectedVisibleCount === filteredEntryIds.length;
@@ -2489,6 +2496,7 @@ export function TransportDebtManager({
                       return (
                         <th
                           key={column.key}
+                          {...(column.key !== 'select' && column.key !== 'actions' ? columnSortHeaderProps(rowSort, column.key) : {})}
                           className={`relative border-b border-slate-200 px-2 py-2.5 ${alignClass}`}
                           style={{ width: getTransportColumnWidth(column.key) }}
                         >
@@ -2502,7 +2510,7 @@ export function TransportDebtManager({
                               aria-label="Selecionar lançamentos visíveis"
                             />
                           ) : (
-                            <span className="block truncate">{column.label}</span>
+                            <span className="block truncate">{column.label}<TableSortIndicator sort={rowSort} column={column.key} /></span>
                           )}
                           {column.resizable && (
                             <span
@@ -2510,7 +2518,7 @@ export function TransportDebtManager({
                               title="Ajustar largura"
                               className="absolute right-0 top-1/2 h-5 w-2 -translate-y-1/2 cursor-col-resize rounded-full transition hover:bg-blue-200"
                               onMouseDown={(event) => startTransportColumnResize(event, column.key)}
-                              onDoubleClick={() => setTransportColumnWidths((current) => ({ ...current, [column.key]: column.width }))}
+                              onDoubleClick={event => { event.stopPropagation(); setTransportColumnWidths(current => ({ ...current, [column.key]: column.width })); }}
                             />
                           )}
                         </th>
@@ -2519,7 +2527,7 @@ export function TransportDebtManager({
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredEntries.map((entry) => (
+                  {sortedEntries.map((entry) => (
                     <tr
                       key={entry.id}
                       className={`group transition-colors ${

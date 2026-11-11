@@ -9,6 +9,7 @@ import {
   type SupplierPaymentTermInput,
 } from '@/lib/api';
 import { MultiCheckboxFilter } from '@/app/components/multi-checkbox-filter';
+import { columnSortHeaderProps, TableSortIndicator, useColumnSort } from '@/app/components/table-sort';
 import type { SupplierPaymentTerm } from '@/lib/types';
 
 const blankTerm: SupplierPaymentTermInput = {
@@ -343,16 +344,22 @@ export function PaymentTermsManager() {
     window.print();
   };
 
+  const rowSort = useColumnSort();
+  const sortedTerms = rowSort.sortRows(filteredTerms, (term, key) => {
+    if (key === 'status') return term.is_active ? 'Ativo' : 'Inativo';
+    const value = term[key as keyof SupplierPaymentTerm];
+    return typeof value === 'string' || typeof value === 'number' ? value : '';
+  });
   const renderHeader = (label: string, key: string, align: 'left' | 'right' | 'center' = 'left') => (
-    <th key={key} className={`${key === 'actions' ? 'payment-print-hidden' : ''} px-3 py-3 ${align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left'}`}>
-      <span className="block truncate pr-1">{label}</span>
+    <th key={key} {...(key !== 'actions' ? columnSortHeaderProps(rowSort, key) : {})} className={`${key === 'actions' ? 'payment-print-hidden' : ''} px-3 py-3 ${align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left'}`}>
+      <span className="block truncate pr-1">{label}<TableSortIndicator sort={rowSort} column={key} /></span>
       <span
         className="column-resizer payment-print-hidden"
         role="separator"
         aria-orientation="vertical"
         aria-label={`Ajustar largura da coluna ${label}`}
         onMouseDown={(event) => startColumnResize(event, key)}
-        onDoubleClick={() => resetColumnWidth(key)}
+        onDoubleClick={event => { event.stopPropagation(); resetColumnWidth(key); }}
       />
     </th>
   );
@@ -502,7 +509,7 @@ export function PaymentTermsManager() {
             </tr>
           </thead>
           <tbody>
-            {filteredTerms.map((term) => (
+            {sortedTerms.map((term) => (
               <tr key={term.id} className="even:bg-slate-50 hover:bg-emerald-50/70">
                 {visibleTableColumns.map((column) => (
                   <Fragment key={column.value}>

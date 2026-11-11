@@ -36,7 +36,7 @@ function load(file) {
 }
 
 const { getPreviousIncompleteOccurrence, getLastOccurrence } = load('lib/task-recurrence.ts');
-const { processTasks, filterTasks } = load('lib/task-selectors.ts');
+const { weeklyTaskAdvanceBlockedReason, processTasks, filterTasks } = load('lib/task-selectors.ts');
 const base = {
   id: 'test', title: 'Conferir estoque', notes: '', assigned_to: 'user', category: 'Geral',
   status: 'pendente', last_done_date: null, repeat_days: 'ter', repeat_interval: 1,
@@ -49,6 +49,49 @@ test('weekly task identifies previous date, including when nothing was ever comp
   assert.equal(getLastOccurrence(base), '2026-10-27');
   assert.equal(getPreviousIncompleteOccurrence(base, '2026-10-27'), '2026-10-20');
   assert.equal(getPreviousIncompleteOccurrence({ ...base, last_done_date: '2026-10-13' }, '2026-10-27'), '2026-10-20');
+});
+
+test('weekly calendar can bring any pending occurrence into Hoje without duplicating it', () => {
+  const today = '2026-10-27';
+  const nextDate = '2026-10-30';
+  const tasks = [
+    { ...base, repeat_days: '', is_one_off: true, due_date: nextDate },
+    { ...base, repeat_days: 'sex', last_done_date: '2026-10-23' },
+  ];
+
+  for (const source of tasks) {
+    const [task] = processTasks([source]);
+    assert.equal(weeklyTaskAdvanceBlockedReason(task, nextDate, today), null);
+    assert.equal(weeklyTaskAdvanceBlockedReason(task, '2026-11-06', today), null);
+    assert.equal(weeklyTaskAdvanceBlockedReason(task, '2026-10-20', today), null);
+    assert.ok(weeklyTaskAdvanceBlockedReason(task, today, today));
+    assert.ok(weeklyTaskAdvanceBlockedReason({ ...task, last_done_date: today }, nextDate, today));
+    assert.ok(weeklyTaskAdvanceBlockedReason({ ...task, lastOcc: today }, nextDate, today));
+
+    const [advanced] = processTasks([{ ...source, schedule_override_date: today, schedule_override_type: 'advanced' }]);
+    assert.equal(advanced.lastOcc, today);
+    assert.ok(weeklyTaskAdvanceBlockedReason(advanced, nextDate, today));
+    assert.equal(filterTasks({ tasks: [advanced], activeTab: 'HOJE', filterUsers: [], userRole: 'admin', userSector: 'Geral', searchTerm: '' })[0]?.id, source.id);
+    assert.equal(advanced.repeat_days, source.repeat_days);
+    assert.equal(advanced.due_date, source.due_date);
+  }
+});
+
+test('weekly pending cards show a separate advance button, disabled when already scheduled today', () => {
+  const React = require('react');
+  const { renderToStaticMarkup } = require('react-dom/server');
+  const { WeeklyTaskScheduleView } = load('app/components/weekly-task-schedule-view.tsx');
+  const tasks = processTasks([
+    { ...base, id: 'future', title: 'Tarefa futura', repeat_days: '', is_one_off: true, due_date: '2026-10-30' },
+    { ...base, id: 'today', title: 'Tarefa de hoje' },
+    { ...base, id: 'later', title: 'Outra ocorrência', repeat_days: 'qua,sex' },
+    { ...base, id: 'done', title: 'Tarefa concluída', repeat_days: '', is_one_off: true, due_date: '2026-10-30', last_done_date: '2026-10-27' },
+  ]);
+  const html = renderToStaticMarkup(React.createElement(WeeklyTaskScheduleView, { tasks, profiles: [], selectedUserIds: [], onAdvance() {}, onView() {} }));
+  assert.match(html, /<\/button><button[^>]+aria-label="Adiantar Tarefa futura para hoje"/);
+  assert.equal((html.match(/aria-label="Adiantar Outra ocorrência para hoje"/g) || []).length, 2);
+  assert.match(html, /aria-label="Tarefa já agendada para hoje" disabled/);
+  assert.doesNotMatch(html, /aria-label="Adiantar Tarefa concluída/);
 });
 
 test('completion on or after previous occurrence suppresses the warning', () => {
@@ -179,7 +222,7 @@ test('task card renders warning and original workflow together, without affectin
   const warned = render(processTasks([{ ...base, workflow_status: 'bloqueada' }])[0]);
   assert.match(warned, /Ver pendência da ocorrência anterior/);
   assert.doesNotMatch(warned, /Última ocorrência não concluída/);
-  assert.match(warned, /border-amber-400/);
+  assert.match(warned, /--task-card-edge:var\(--color-amber-400\)/);
   assert.match(warned, /bg-amber-500/);
   assert.match(warned, /Bloqueada/);
   const normal = render(processTasks([{ ...base, last_done_date: '2026-10-20' }])[0]);
