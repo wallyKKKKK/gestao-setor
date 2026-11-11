@@ -2667,7 +2667,7 @@ export function ReallocationManager({
       case 'originMonthlyAvgSales':
         return <td key={column.key} className={cellClass}>{decimal(suggestion.originMonthlyAvgSales)}</td>;
       case 'originStockDays':
-        return <td key={column.key} className={`${cellClass} font-bold`}>{decimal(suggestion.originStockDays)}</td>;
+        return <td key={column.key} className={`${cellClass} font-bold`}>{wholeNumber(suggestion.originStockDays)}</td>;
       case 'adjustedOriginDays': {
         const allocation = getOriginAllocation(suggestion);
         return (
@@ -2676,7 +2676,7 @@ export function ReallocationManager({
             className={`${cellClass} font-black`}
             title={allocation ? `Considera ${wholeNumber(allocation.allocated)} un. totais saindo desta origem/produto` : undefined}
           >
-            {decimal(adjustedOriginDays(suggestion))}
+            {wholeNumber(adjustedOriginDays(suggestion))}
           </td>
         );
       }
@@ -2752,7 +2752,7 @@ export function ReallocationManager({
       case 'destinationStock':
         return <td key={column.key} className={cellClass}>{decimal(suggestion.destinationStock)}</td>;
       case 'destinationStockDays':
-        return <td key={column.key} className={`${cellClass} font-bold`}>{decimal(suggestion.destinationStockDays)}</td>;
+        return <td key={column.key} className={`${cellClass} font-bold`}>{wholeNumber(suggestion.destinationStockDays)}</td>;
       case 'adjustedDestinationDays': {
         const allocation = getDestinationAllocation(suggestion);
         return (
@@ -2761,7 +2761,7 @@ export function ReallocationManager({
             className={`${cellClass} font-black`}
             title={allocation ? `Considera ${wholeNumber(allocation.allocated)} un. totais chegando neste destino/produto` : undefined}
           >
-            {decimal(adjustedDestinationDays(suggestion))}
+            {wholeNumber(adjustedDestinationDays(suggestion))}
           </td>
         );
       }

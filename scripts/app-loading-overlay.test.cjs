@@ -33,6 +33,9 @@ test('the shared overlay opens a modal, rejects cancellation and releases it on 
 
   const view = exports.AppLoadingOverlay({ title: 'Importando estoque', description: 'Lendo arquivo' });
   assert.equal(view.type, 'dialog');
+  const [icon, , , progress] = view.props.children.props.children;
+  assert.equal(icon.props.children.props.className, 'animate-spin');
+  assert.match(progress.props.children.props.className, /\bmotion-safe:animate-pulse\b/);
   assert.equal(exports.isAppLoadingOverlayOpen(), true);
   assert.equal(selector, '[data-app-loading-overlay]:modal');
   let prevented = false;

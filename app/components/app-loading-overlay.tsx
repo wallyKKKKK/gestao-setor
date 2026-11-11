@@ -30,7 +30,7 @@ export function AppLoadingOverlay({ title, description }: { title: string; descr
     >
       <div role="status" className="flex flex-col items-center px-8 py-7 text-center">
         <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-600 text-white shadow-lg">
-          <Loader2 size={28} aria-hidden="true" className="motion-safe:animate-spin" />
+          <Loader2 size={28} aria-hidden="true" className="animate-spin" />
         </div>
         <p id={titleId} className="text-sm font-black uppercase tracking-widest">{title}</p>
         <p id={descriptionId} className="mt-2 text-xs font-bold leading-relaxed text-slate-600">{description}</p>
