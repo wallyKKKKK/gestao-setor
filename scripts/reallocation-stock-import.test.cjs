@@ -23,7 +23,17 @@ function loadRoute(failure) {
         update(values) { call.operation = 'retire'; call.rows = values; return query; },
         single() { return Promise.resolve({ data: { id: 'new-snapshot' }, error: null }); },
         then(resolve, reject) {
-          return Promise.resolve({ data: [], error: failure === 'insert' && table === 'reallocation_stock_items' ? new Error('Insert failed') : null }).then(resolve, reject);
+          let error = null;
+          if (table === 'reallocation_stock_items' && call.operation === 'insert') {
+            if (failure === 'insert') error = new Error('Insert failed');
+            else if (failure === 'insert-timeout' || (failure === 'large-insert-timeout' && call.rows.length > 250)) {
+              error = { code: '57014', message: 'canceling statement due to statement timeout' };
+            } else if (failure === 'ambiguous-insert-timeout') {
+              error = { message: 'request timed out' };
+            }
+          }
+          call.error = error;
+          return Promise.resolve({ data: [], error }).then(resolve, reject);
         },
       };
       return query;
@@ -57,6 +67,37 @@ function request(csv = 'Un. Neg.;Apelido Un. Neg.;Cod. de Barras;Produto;Estoque
   return new Request('http://localhost/api/reallocation/stock/import', { method: 'POST', body: form });
 }
 
+function bulkStockRequest(size) {
+  return request([
+    'Un. Neg.;Apelido Un. Neg.;Cod. de Barras;Produto;Estoque;Media venda mensal',
+    ...Array.from({ length: size }, (_, index) => `01;Loja;${7890000000000 + index};Produto;5;30`),
+  ].join('\n'));
+}
+
+test('a canceled stock batch is retried smaller without skipping or duplicating rows', async () => {
+  const route = loadRoute('large-insert-timeout');
+  const response = await route.POST(bulkStockRequest(1100));
+  assert.equal(response.status, 200);
+  const writes = route.calls.filter(call => call.table === 'reallocation_stock_items' && call.operation === 'insert');
+  assert.deepEqual(writes.map(call => call.rows.length), [1000, 500, 250, 250, 250, 250, 100]);
+  const committed = writes.filter(call => !call.error).flatMap(call => Array.from(call.rows, row => row.ean));
+  assert.equal(committed.length, 1100);
+  assert.equal(new Set(committed).size, 1100);
+  assert.equal(route.calls.find(call => call.operation === 'publish').args.p_expected_rows, 1100);
+});
+
+test('persistent cancellation stops at the minimum batch and an ambiguous timeout is not retried', async () => {
+  for (const [failure, sizes] of [['insert-timeout', [1000, 500, 250, 125]], ['ambiguous-insert-timeout', [1000]]]) {
+    const route = loadRoute(failure);
+    const response = await route.POST(bulkStockRequest(1100));
+    assert.equal(response.status, 400);
+    assert.match((await response.json()).error, /salvar linhas de estoque.*base anterior foi preservada/i);
+    const writes = route.calls.filter(call => call.table === 'reallocation_stock_items' && call.operation === 'insert');
+    assert.deepEqual(writes.map(call => call.rows.length), sizes);
+    assert.equal(route.calls.some(call => call.operation === 'publish'), false);
+  }
+});
+
 test('import creates a separate pending base and publishes only after saving its rows', async () => {
   const route = loadRoute();
   const response = await route.POST(request());
@@ -79,6 +120,46 @@ test('import creates a separate pending base and publishes only after saving its
   assert.equal(route.calls[publishIndex].args.p_expected_rows, 1);
   assert.equal(route.calls.some((call) => call.operation === 'delete'), false);
   assert.equal(route.afterTasks.length, 1);
+});
+
+test('stock import preserves explicit confirmed zero and falls back to physical for missing or invalid balances', async () => {
+  const route = loadRoute();
+  const response = await route.POST(request([
+    'Un. Neg.;Apelido Un. Neg.;Cod. de Barras;Produto;Estoque;Media venda mensal;Estoque Confirmado',
+    '01;Loja;789123;Produto;5;30;',
+    '02;Loja;789123;Produto;5;30;0',
+    '03;Loja;789123;Produto;5;30;invalido',
+    '04;Loja;789123;Produto;5;30;2,5',
+  ].join('\n')));
+  assert.equal(response.status, 200);
+  const rows = route.calls.find((call) => call.table === 'reallocation_stock_items').rows;
+  assert.equal(Array.from(rows, (row) => row.confirmed_stock).join(','), '5,0,5,2.5');
+});
+
+test('A7 movement columns keep zero and blank distinct and do not read dates or supplier names', async () => {
+  const route = loadRoute();
+  const response = await route.POST(request([
+    'Un. Neg.;Apelido Un. Neg.;Cod. de Barras;Produto;Estoque;Media venda mensal;Fornecedor última compra;Data última venda;Últ. Venda (Dias);Últ. Compra (Dias)',
+    '01;Loja;789123;Produto;5;30;Fornecedor 195;11/11/2026;7;195',
+    '02;Loja;789123;Produto;5;30;Fornecedor 85;11/11/2026;0;85',
+    '03;Loja;789123;Produto;5;30;Fornecedor 10;11/11/2026;;',
+    '04;Loja;789123;Produto;5;30;Fornecedor 99;11/11/2026;1.095;–',
+  ].join('\n')));
+  assert.equal(response.status, 200);
+  const rows = route.calls.find((call) => call.table === 'reallocation_stock_items').rows;
+  assert.deepEqual(Array.from(rows, row => [row.last_sale_days, row.last_purchase_days]), [[7,195],[0,85],[null,null],[1095,null]]);
+});
+
+test('A7 short movement headers are accepted, but a supplier column alone never becomes a purchase age', async () => {
+  const header = 'Un. Neg.;Apelido Un. Neg.;Cod. de Barras;Produto;Estoque;Media venda mensal;Fornecedor última compra;Últ. V.';
+  for (const includePurchase of [true, false]) {
+    const route = loadRoute();
+    const response = await route.POST(request(`${header}${includePurchase ? ';Últ. C.' : ''}\n01;Loja;789123;Produto;5;30;Fornecedor 55;14${includePurchase ? ';26' : ''}`));
+    assert.equal(response.status, 200);
+    const [row] = route.calls.find((call) => call.table === 'reallocation_stock_items').rows;
+    assert.equal(row.last_sale_days, 14);
+    assert.equal(row.last_purchase_days, includePurchase ? 26 : null);
+  }
 });
 
 test('SpreadsheetML XML import exposes only valid file manufacturers and stores in the preview', async () => {

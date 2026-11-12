@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react'
 
 const FOCUSED_ROW_CLASS = 'wally-table-focused-row'
 const FOCUSED_CELL_CLASS = 'wally-table-focused-cell'
+export const TABLE_ROW_FOCUS_CHANGE = 'wally-table-row-focus-change'
 
 function isInteractiveElement(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) return false
@@ -58,7 +59,7 @@ export function TableFocusController() {
   const focusedCellIndexRef = useRef(0)
 
   useEffect(() => {
-    const clearFocus = () => {
+    const clearFocus = (notify = true) => {
       const currentRow = focusedRowRef.current
       const currentCell = focusedCellRef.current
 
@@ -69,14 +70,18 @@ export function TableFocusController() {
 
       focusedRowRef.current = null
       focusedCellRef.current = null
+      if (notify && currentRow) {
+        document.dispatchEvent(new CustomEvent(TABLE_ROW_FOCUS_CHANGE, { detail: null }))
+      }
     }
 
     const setFocusedRow = (row: HTMLTableRowElement, cell: HTMLTableCellElement | null, shouldMoveDomFocus = false) => {
       const nextCell = cell ?? row.cells[0] ?? null
       if (!nextCell) return
 
-      if (focusedRowRef.current !== row) {
-        clearFocus()
+      const rowChanged = focusedRowRef.current !== row
+      if (rowChanged) {
+        clearFocus(false)
         focusedRowRef.current = row
         row.classList.add(FOCUSED_ROW_CLASS)
         row.setAttribute('aria-selected', 'true')
@@ -87,6 +92,10 @@ export function TableFocusController() {
       focusedCellRef.current = nextCell
       focusedCellIndexRef.current = nextCell.cellIndex
       nextCell.classList.add(FOCUSED_CELL_CLASS)
+
+      if (rowChanged) {
+        document.dispatchEvent(new CustomEvent(TABLE_ROW_FOCUS_CHANGE, { detail: row }))
+      }
 
       if (shouldMoveDomFocus) {
         row.focus({ preventScroll: true })

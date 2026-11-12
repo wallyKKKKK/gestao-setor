@@ -1,7 +1,8 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
-import { ArrowDown, ArrowUp, Check, ChevronDown, Clock, Columns3, Database, Download, FileSpreadsheet, Filter, Plus, RefreshCcw, RotateCcw, Search, Shuffle, SlidersHorizontal, Trash2, X } from 'lucide-react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { createPortal } from 'react-dom';
+import { ArrowDown, ArrowUp, Check, ChevronDown, CircleAlert, Clock, Columns3, Database, Download, FileSpreadsheet, Filter, Info, Plus, RefreshCcw, RotateCcw, Search, ScanLine, Shuffle, SlidersHorizontal, Trash2, X } from 'lucide-react';
 import { AppLoadingOverlay } from '@/app/components/app-loading-overlay';
 import { countReallocationProducts, fetchLatestReallocationStockSnapshot, fetchPricingBranches, fetchReallocationAttributeOptions, fetchReallocationAttributeSummary, fetchReallocationProducts, fetchReallocationStockItems } from '@/lib/api';
 import { getAuthHeaders } from '@/lib/auth-headers';
@@ -10,13 +11,16 @@ import { normalizeReallocationSector } from '@/lib/reallocation-sector';
 import type { PricingBranch, ReallocationProduct, ReallocationStockItem, ReallocationStockSnapshot } from '@/lib/types';
 import type { ReallocationImportReport } from '@/lib/reallocation-import-report';
 import { ReallocationImportReportDialog } from './reallocation-import-report';
-import { getReallocationRowMarkers, type ReallocationRowMarker } from '@/lib/reallocation-row-markers';
+import { getReallocationRowMarkers, hasAutomaticSplit, type ReallocationRowMarker } from '@/lib/reallocation-row-markers';
 import { readHiddenTableColumns } from '@/lib/table-column-visibility';
 import { TableColumnMenu } from './table-column-menu';
 import { ReallocationWorkspaceTabs, type ReallocationWorkspaceView } from './reallocation-workspace-tabs';
 import { SortableGridHeader, useColumnSort } from '@/app/components/table-sort';
 import { nextReallocationSort, readReallocationSort, sortReallocationRows, type ReallocationSortRule } from '@/lib/reallocation-table-sort';
 import { normalizeImportStoreCode } from '@/lib/reallocation-import-filters';
+import type { ReallocationNeedsReport } from '@/lib/reallocation-needs';
+import { ReallocationRowInspection, ReallocationUnmetNeeds } from './reallocation-analysis';
+import { TABLE_ROW_FOCUS_CHANGE } from '@/app/components/table-focus-controller';
 
 function txtLine(origin: string, destination: string, erpCode: string, quantity: number) {
   return `${origin};${destination};${erpCode};${quantity}`;
@@ -196,9 +200,13 @@ interface TransferSuggestion {
   maxQuantity: number;
   originStock: number;
   originAvailableStock: number;
+  originProtectedStock?: number;
+  originSurplusBeforeAllocation?: number;
   originConfirmedStock: number;
   originMinimumStock?: number;
   originMonthlyAvgSales: number;
+  originLastSaleDays?: number | null;
+  originLastPurchaseDays?: number | null;
   originCurve: string;
   originConfirmedPurchase: number;
   originConfirmedTransfer: number;
@@ -206,6 +214,8 @@ interface TransferSuggestion {
   destinationConfirmedStock: number;
   destinationMinimumStock?: number;
   destinationMonthlyAvgSales: number;
+  destinationLastSaleDays?: number | null;
+  destinationLastPurchaseDays?: number | null;
   destinationCurve: string;
   destinationConfirmedPurchase: number;
   destinationConfirmedTransfer: number;
@@ -216,11 +226,10 @@ interface TransferSuggestion {
   destinationNeed: number;
   minimumStockQuantity?: number;
   routePriority: number;
+  automaticSplitDestinations?: number;
+  automaticSplitGroups?: string[];
   decisionRequired?: boolean;
   decisionResolved?: boolean;
-  decisionReason?: string;
-  decisionGroupKey?: string;
-  tieCandidateCount?: number;
 }
 
 interface SuggestionDiagnostic {
@@ -258,6 +267,7 @@ interface ReallocationSuggestionDraft {
   suggestionView: SuggestionView;
   appliedSuggestionSignature: string;
   suggestionGenerationContext: SuggestionGenerationContext | null;
+  unmetNeeds?: ReallocationNeedsReport | null;
 }
 
 interface ExportValidationIssue {
@@ -294,7 +304,7 @@ const REALLOCATION_TRANSFER_ORDERS_STORAGE_KEY = 'reallocation-transfer-orders-v
 const REALLOCATION_PREFERENCES_STORAGE_KEY = 'reallocation-preferences-v1';
 const REALLOCATION_SUGGESTION_DRAFT_STORAGE_KEY = 'reallocation-suggestion-draft-v1';
 const reallocationSuggestionDraftMemory = new Map<string, ReallocationSuggestionDraft>();
-const REALLOCATION_API_VERSION = 'reallocation-api-2026-06-19-v4';
+const REALLOCATION_API_VERSION = 'reallocation-api-v8';
 const REALLOCATION_CLIENT_VERSION = 'reallocation-front-2026-06-19-v5';
 const MIN_SUGGESTION_COLUMN_WIDTH = 10;
 
@@ -352,6 +362,7 @@ interface ReallocationPreferences {
   showAdvancedRules: boolean;
   originMinimumDays: number;
   destinationTargetDays: number;
+  destinationTriggerDays: number;
   maxRoutePriority: number;
   lastSaleMaxDays: number;
   lastPurchaseMaxDays: number;
@@ -394,7 +405,7 @@ function isTransferSuggestion(value: unknown): value is TransferSuggestion {
 }
 
 function isSuggestionView(value: unknown): value is SuggestionView {
-  return value === 'draft' || value === 'confirmed' || value === 'orders';
+  return value === 'draft' || value === 'confirmed' || value === 'orders' || value === 'unmet';
 }
 
 function getSuggestionDraftStorageKey(sector: string, snapshotId: string) {
@@ -438,6 +449,7 @@ function readSuggestionDraft(storageKey: string) {
       suggestionView: isSuggestionView(parsed.suggestionView) ? parsed.suggestionView : 'draft',
       appliedSuggestionSignature: typeof parsed.appliedSuggestionSignature === 'string' ? parsed.appliedSuggestionSignature : '',
       suggestionGenerationContext: parsed.suggestionGenerationContext || null,
+      unmetNeeds: Array.isArray(parsed.unmetNeeds?.rows) ? parsed.unmetNeeds : null,
     } satisfies ReallocationSuggestionDraft;
   } catch {
     window.localStorage.removeItem(storageKey);
@@ -453,7 +465,11 @@ function writeSuggestionDraft(storageKey: string, draft: ReallocationSuggestionD
   try {
     window.localStorage.setItem(storageKey, JSON.stringify(draft));
   } catch {
-    window.localStorage.removeItem(storageKey);
+    try {
+      window.localStorage.setItem(storageKey, JSON.stringify({ ...draft, unmetNeeds: null }));
+    } catch {
+      window.localStorage.removeItem(storageKey);
+    }
   }
 }
 
@@ -496,6 +512,7 @@ function defaultReallocationPreferences(): ReallocationPreferences {
     showAdvancedRules: false,
     originMinimumDays: preset.originMinimumDays,
     destinationTargetDays: preset.destinationTargetDays,
+    destinationTriggerDays: 0,
     maxRoutePriority: preset.maxRoutePriority,
     lastSaleMaxDays: 0,
     lastPurchaseMaxDays: 0,
@@ -563,6 +580,10 @@ function loadReallocationPreferences() {
       showAdvancedRules: Boolean(parsed.showAdvancedRules),
       originMinimumDays: clampPreferenceNumber(parsed.originMinimumDays, defaults.originMinimumDays),
       destinationTargetDays: clampPreferenceNumber(parsed.destinationTargetDays, defaults.destinationTargetDays),
+      destinationTriggerDays: Math.min(
+        clampPreferenceNumber(parsed.destinationTriggerDays, defaults.destinationTriggerDays),
+        clampPreferenceNumber(parsed.destinationTargetDays, defaults.destinationTargetDays),
+      ),
       maxRoutePriority: Math.max(1, Math.min(5, clampPreferenceNumber(parsed.maxRoutePriority, defaults.maxRoutePriority))),
       lastSaleMaxDays: clampPreferenceNumber(parsed.lastSaleMaxDays, defaults.lastSaleMaxDays),
       lastPurchaseMaxDays: clampPreferenceNumber(parsed.lastPurchaseMaxDays, defaults.lastPurchaseMaxDays),
@@ -712,8 +733,8 @@ function getSuggestionExportIssues(
   if (unresolvedDecisions.length > 0) {
     issues.push({
       id: 'decision-tie',
-      title: 'Empate para decidir',
-      detail: `${unresolvedDecisions.length} linha${unresolvedDecisions.length === 1 ? '' : 's'} com empate de calculo precisa${unresolvedDecisions.length === 1 ? '' : 'm'} ser aceita${unresolvedDecisions.length === 1 ? '' : 's'} ou ajustada${unresolvedDecisions.length === 1 ? '' : 's'} manualmente antes de exportar.`,
+      title: 'Cálculo anterior ao rateio',
+      detail: 'Recalcule as sugestões com estoque atualizado antes de exportar essas linhas.',
       severity: 'block',
     });
   }
@@ -792,6 +813,17 @@ export function ReallocationManager({
   const [confirmedSuggestions, setConfirmedSuggestions] = useState<TransferSuggestion[]>([]);
   const [transferOrders, setTransferOrders] = useState<ReallocationTransferOrder[]>(loadReallocationTransferOrders);
   const [suggestionView, setSuggestionView] = useState<SuggestionView>('draft');
+  const [unmetNeeds, setUnmetNeeds] = useState<ReallocationNeedsReport | null>(null);
+  const [showInspection, setShowInspection] = useState(true);
+  const [focusedSuggestionId, setFocusedSuggestionId] = useState<string>();
+  useEffect(() => {
+    const onTableFocusChange = (event: Event) => {
+      const row = (event as CustomEvent<HTMLTableRowElement | null>).detail;
+      setFocusedSuggestionId(row?.dataset.reallocationSuggestionId);
+    };
+    document.addEventListener(TABLE_ROW_FOCUS_CHANGE, onTableFocusChange);
+    return () => document.removeEventListener(TABLE_ROW_FOCUS_CHANGE, onTableFocusChange);
+  }, []);
   const [selectedSuggestionIds, setSelectedSuggestionIds] = useState<string[]>([]);
   const [suggestionMessage, setSuggestionMessage] = useState('');
   const [suggestionDiagnostic, setSuggestionDiagnostic] = useState<SuggestionDiagnostic | null>(null);
@@ -805,6 +837,7 @@ export function ReallocationManager({
   const [showAdvancedRules, setShowAdvancedRules] = useState(initialPreferences.showAdvancedRules);
   const [originMinimumDays, setOriginMinimumDays] = useState(initialPreferences.originMinimumDays);
   const [destinationTargetDays, setDestinationTargetDays] = useState(initialPreferences.destinationTargetDays);
+  const [destinationTriggerDays, setDestinationTriggerDays] = useState(initialPreferences.destinationTriggerDays);
   const [maxRoutePriority, setMaxRoutePriority] = useState(initialPreferences.maxRoutePriority);
   const [lastSaleMaxDays, setLastSaleMaxDays] = useState(initialPreferences.lastSaleMaxDays);
   const [lastPurchaseMaxDays, setLastPurchaseMaxDays] = useState(initialPreferences.lastPurchaseMaxDays);
@@ -851,7 +884,7 @@ export function ReallocationManager({
   }, [showMetricDetails, showDataActions]);
   const [reallocationAuditLog, setReallocationAuditLog] = useState<ReallocationAuditLog[]>(loadReallocationAuditLog);
   const [suggestionTableSearch, setSuggestionTableSearch] = useState(initialPreferences.suggestionTableSearch);
-  const searchByViewRef = useRef<Record<SuggestionView, string>>({ draft: initialPreferences.suggestionTableSearch, confirmed: '', orders: '' });
+  const searchByViewRef = useRef<Record<SuggestionView, string>>({ draft: initialPreferences.suggestionTableSearch, confirmed: '', orders: '', unmet: '' });
   const [suggestionColumnOrder, setSuggestionColumnOrder] = useState<SuggestionColumnKey[]>(initialPreferences.suggestionColumnOrder);
   const [suggestionColumnWidths, setSuggestionColumnWidths] = useState<Record<SuggestionColumnKey, number>>(initialPreferences.suggestionColumnWidths);
   const [hiddenSuggestionColumns, setHiddenSuggestionColumns] = useState<SuggestionColumnKey[]>(initialPreferences.hiddenSuggestionColumns);
@@ -987,6 +1020,7 @@ export function ReallocationManager({
       showAdvancedRules,
       originMinimumDays,
       destinationTargetDays,
+      destinationTriggerDays,
       maxRoutePriority,
       lastSaleMaxDays,
       lastPurchaseMaxDays,
@@ -1008,6 +1042,7 @@ export function ReallocationManager({
     destinationCurvePriority,
     destinationFilters,
     destinationTargetDays,
+    destinationTriggerDays,
     lastPurchaseMaxDays,
     lastSaleMaxDays,
     lastPurchaseSupplierFilters,
@@ -1170,6 +1205,7 @@ export function ReallocationManager({
         setSuggestionMessage('');
         setAppliedSuggestionSignature('');
         setSuggestionGenerationContext(null);
+        setUnmetNeeds(null);
         setSuggestionDraftReady(true);
         return;
       }
@@ -1188,6 +1224,7 @@ export function ReallocationManager({
         setSuggestionMessage('');
         setAppliedSuggestionSignature('');
         setSuggestionGenerationContext(null);
+        setUnmetNeeds(null);
         restoredDraftIdentityRef.current = suggestionDraftIdentity;
         setSuggestionDraftReady(true);
         return;
@@ -1200,6 +1237,7 @@ export function ReallocationManager({
       if (draft.suggestionView === 'confirmed') setSuggestionTableSearch('');
       setAppliedSuggestionSignature(draft.appliedSuggestionSignature);
       setSuggestionGenerationContext(draft.suggestionGenerationContext);
+      setUnmetNeeds(draft.unmetNeeds ?? null);
       setSuggestionMessage(
         draft.transferSuggestions.length || draft.confirmedSuggestions.length
           ? 'Rascunho de sugestoes restaurado. Seus ajustes manuais foram mantidos.'
@@ -1235,6 +1273,7 @@ export function ReallocationManager({
       suggestionView,
       appliedSuggestionSignature,
       suggestionGenerationContext,
+      unmetNeeds,
     });
   }, [
     activeStockSector,
@@ -1248,6 +1287,7 @@ export function ReallocationManager({
     suggestionGenerationContext,
     suggestionView,
     transferSuggestions,
+    unmetNeeds,
   ]);
 
   useEffect(() => {
@@ -1340,7 +1380,7 @@ export function ReallocationManager({
   ), [classificationHierarchyRows, selectedClassificationDepartmentValues, selectedClassificationLineValues]);
   const activeSuggestionRows = useMemo(() => {
     if (suggestionView === 'confirmed') return confirmedSuggestions;
-    if (suggestionView === 'orders') return [];
+    if (suggestionView === 'orders' || suggestionView === 'unmet') return [];
     return transferSuggestions;
   }, [confirmedSuggestions, suggestionView, transferSuggestions]);
   const selectedSuggestionIdSet = useMemo(() => new Set(selectedSuggestionIds), [selectedSuggestionIds]);
@@ -1474,11 +1514,9 @@ export function ReallocationManager({
 
     return ids;
   }, [activeSuggestionRows, maxRoutePriority, overAllocatedOrigins]);
-  const suggestionMarkersById = useMemo(() => new Map(activeSuggestionRows.map((row) => [row.id, getReallocationRowMarkers(
-    row,
-    originAllocationByProduct.get(`${row.ean}:${row.originCode}`)?.destinationCodes.size || 0,
-    destinationAllocationByProduct.get(`${row.ean}:${row.destinationCode}`)?.originCodes.size || 0,
-  )])), [activeSuggestionRows, originAllocationByProduct, destinationAllocationByProduct]);
+  const suggestionMarkersById = useMemo(() => new Map(activeSuggestionRows.map((row) => [
+    row.id, getReallocationRowMarkers(row),
+  ])), [activeSuggestionRows]);
   const markerFilteredSuggestions = useMemo(() => suggestionMarker
     ? activeSuggestionRows.filter((row) => suggestionMarkersById.get(row.id)?.includes(suggestionMarker))
     : activeSuggestionRows, [activeSuggestionRows, suggestionMarker, suggestionMarkersById]);
@@ -1541,6 +1579,7 @@ export function ReallocationManager({
     destinationCurves: destinationCurvePriority,
     originMinimumDays,
     destinationTargetDays,
+    destinationTriggerDays,
     maxRoutePriority,
     lastSaleMaxDays,
     lastPurchaseMaxDays,
@@ -1555,6 +1594,7 @@ export function ReallocationManager({
     destinationCurvePriority,
     destinationFilters,
     destinationTargetDays,
+    destinationTriggerDays,
     lastPurchaseMaxDays,
     lastPurchaseSupplierFilters,
     lastSaleMaxDays,
@@ -1592,11 +1632,16 @@ export function ReallocationManager({
   const orderedSuggestionColumns = useMemo(() => allSuggestionColumns.filter((column) => !hiddenSuggestionColumns.includes(column.key)), [allSuggestionColumns, hiddenSuggestionColumns]);
   const suggestionTableWidth = useMemo(() => orderedSuggestionColumns.reduce((sum, column) => sum + (suggestionColumnWidths[column.key] || column.width), 0), [orderedSuggestionColumns, suggestionColumnWidths]);
 
+  const updateDestinationTargetDays = (days: number) => {
+    setDestinationTargetDays(days);
+    setDestinationTriggerDays((current) => Math.min(current, days));
+  };
+
   const applySuggestionProfile = (profile: SuggestionProfile) => {
     const preset = SUGGESTION_PROFILES[profile];
     setSuggestionProfile(profile);
     setOriginMinimumDays(preset.originMinimumDays);
-    setDestinationTargetDays(preset.destinationTargetDays);
+    updateDestinationTargetDays(preset.destinationTargetDays);
     setMaxRoutePriority(preset.maxRoutePriority);
   };
 
@@ -1660,6 +1705,7 @@ export function ReallocationManager({
       setSelectedSuggestionIds([]);
       setAppliedSuggestionSignature('');
       setSuggestionGenerationContext(null);
+      setUnmetNeeds(null);
       await loadStockSnapshot('', true);
     } catch (error) {
       const message = getNetworkErrorMessage(error, 'Erro desconhecido');
@@ -1787,6 +1833,7 @@ export function ReallocationManager({
         setTransferSuggestions([]);
         setAppliedSuggestionSignature('');
         setSuggestionGenerationContext(null);
+        setUnmetNeeds(null);
         setSuggestionMessage('Importe um estoque antes de gerar sugestões.');
         return;
       }
@@ -1826,6 +1873,7 @@ export function ReallocationManager({
             stockFloor,
             originMinimumDays,
             destinationTargetDays,
+            destinationTriggerDays,
             maxRoutePriority,
             originCurves: originCurvePriority,
             destinationCurves: destinationCurvePriority,
@@ -1884,6 +1932,7 @@ export function ReallocationManager({
       }
 
       setTransferSuggestions(nextSuggestions);
+      setUnmetNeeds(data.unmetNeeds);
       setSuggestionView('draft');
       setSuggestionMarker(null);
       setSelectedSuggestionIds([]);
@@ -1927,6 +1976,7 @@ export function ReallocationManager({
       setTransferSuggestions([]);
       setAppliedSuggestionSignature('');
       setSuggestionGenerationContext(null);
+      setUnmetNeeds(null);
       setSuggestionMessage(getNetworkErrorMessage(error, 'Não foi possível gerar sugestões.'));
     } finally {
       setGeneratingSuggestions(false);
@@ -1943,36 +1993,11 @@ export function ReallocationManager({
   };
 
   const updateSuggestionQuantity = (suggestionId: string, quantity: number) => {
-    updateActiveSuggestions((current) => {
-      const target = current.find((suggestion) => suggestion.id === suggestionId);
-      const decisionGroupKey = target?.decisionGroupKey;
-
-      return current.map((suggestion) => {
-        if (suggestion.id === suggestionId) {
-          const nextQuantity = clampSuggestionQuantity(current, suggestion, quantity);
-          return { ...suggestion, quantity: nextQuantity, decisionResolved: suggestion.decisionRequired ? true : suggestion.decisionResolved };
-        }
-
-        if (decisionGroupKey && suggestion.decisionGroupKey === decisionGroupKey) {
-          return { ...suggestion, decisionResolved: true };
-        }
-
-        return suggestion;
-      });
-    });
-  };
-
-  const acceptSuggestionDecision = (suggestionId: string) => {
-    updateActiveSuggestions((current) => {
-      const target = current.find((suggestion) => suggestion.id === suggestionId);
-      const decisionGroupKey = target?.decisionGroupKey;
-
-      return current.map((suggestion) => (
-        suggestion.id === suggestionId || (decisionGroupKey && suggestion.decisionGroupKey === decisionGroupKey)
-          ? { ...suggestion, decisionResolved: true }
-          : suggestion
-      ));
-    });
+    updateActiveSuggestions((current) => current.map((suggestion) => (
+      suggestion.id === suggestionId
+        ? { ...suggestion, quantity: clampSuggestionQuantity(current, suggestion, quantity) }
+        : suggestion
+    )));
   };
 
   const focusSuggestionCell = (suggestionIndex: number) => {
@@ -2001,7 +2026,7 @@ export function ReallocationManager({
         if (!target) continue;
         const nextQuantity = clampSuggestionQuantity(nextSuggestions, target, requestedById.get(targetId) || 0);
         nextSuggestions = nextSuggestions.map((suggestion) => (
-          suggestion.id === targetId ? { ...suggestion, quantity: nextQuantity, decisionResolved: suggestion.decisionRequired ? true : suggestion.decisionResolved } : suggestion
+          suggestion.id === targetId ? { ...suggestion, quantity: nextQuantity } : suggestion
         ));
       }
 
@@ -2079,6 +2104,27 @@ export function ReallocationManager({
     });
   }, [suggestionTableSearch, transferOrders]);
   const visibleSuggestionIds = sortedTransferSuggestions.map((suggestion) => suggestion.id);
+  const inspectionRow = showInspection && focusedSuggestionId
+    ? sortedTransferSuggestions.find((suggestion) => suggestion.id === focusedSuggestionId)
+    : undefined;
+  const inspectionRoutes = useMemo(() => {
+    if (!inspectionRow) return [];
+    const byRoute = new Map<string, TransferSuggestion>();
+    const include = (row: TransferSuggestion) => {
+      if (row.ean === inspectionRow.ean && (hasAutomaticSplit(inspectionRow) || row.destinationCode === inspectionRow.destinationCode)) {
+        byRoute.set(suggestionIdentityKey(row), row);
+      }
+    };
+    if (suggestionGenerationContext) {
+      for (const order of transferOrders) {
+        if (order.suggestionGeneratedAt === suggestionGenerationContext.generatedAt) order.rows.forEach(include);
+      }
+    }
+    transferSuggestions.forEach(include);
+    confirmedSuggestions.forEach(include);
+    include(inspectionRow);
+    return Array.from(byRoute.values());
+  }, [confirmedSuggestions, inspectionRow, suggestionGenerationContext, transferOrders, transferSuggestions]);
   const selectedVisibleSuggestionCount = visibleSuggestionIds.filter((id) => selectedSuggestionIdSet.has(id)).length;
   const allVisibleSuggestionsSelected = visibleSuggestionIds.length > 0 && selectedVisibleSuggestionCount === visibleSuggestionIds.length;
   const equalizeTargetIds = selectedSuggestionIds.length > 0 ? selectedSuggestionIds : visibleSuggestionIds;
@@ -2173,7 +2219,7 @@ export function ReallocationManager({
 
     const unresolvedRows = selectedRows.filter((suggestion) => suggestion.decisionRequired && !suggestion.decisionResolved);
     if (unresolvedRows.length > 0) {
-      alert(`Resolva ${unresolvedRows.length} empate${unresolvedRows.length === 1 ? '' : 's'} de calculo antes de confirmar. Eles continuam em sugestoes para ajuste.`);
+      alert('Estas linhas vieram de um cálculo anterior. Clique em Atualizar para aplicar o rateio automático antes de confirmar.');
       return;
     }
 
@@ -2244,16 +2290,11 @@ export function ReallocationManager({
   };
   const getOriginAllocation = (suggestion: TransferSuggestion) => originAllocationByProduct.get(`${suggestion.ean}:${suggestion.originCode}`);
   const getDestinationAllocation = (suggestion: TransferSuggestion) => destinationAllocationByProduct.get(`${suggestion.ean}:${suggestion.destinationCode}`);
-  const isSuggestionMultiDestination = (suggestion: TransferSuggestion) => (getOriginAllocation(suggestion)?.destinationCodes.size || 0) > 1;
-  const isSuggestionMultiOrigin = (suggestion: TransferSuggestion) => (getDestinationAllocation(suggestion)?.originCodes.size || 0) > 1;
   const isSuggestionOverAllocated = (suggestion: TransferSuggestion) => {
     const allocation = getOriginAllocation(suggestion);
     return Boolean(allocation && allocation.allocated > allocation.stock);
   };
   const getSuggestionRowClass = (suggestion: TransferSuggestion) => {
-    const multiDestination = isSuggestionMultiDestination(suggestion);
-    const multiOrigin = isSuggestionMultiOrigin(suggestion);
-
     if (isSuggestionOverAllocated(suggestion)) {
       return 'shadow-[inset_4px_0_0_#dc2626]';
     }
@@ -2266,24 +2307,13 @@ export function ReallocationManager({
       return 'shadow-[inset_4px_0_0_#65a30d]';
     }
 
-    if (multiDestination && multiOrigin) {
-      return 'shadow-[inset_4px_0_0_#0f766e]';
-    }
-
-    if (multiDestination) {
-      return 'shadow-[inset_4px_0_0_#f59e0b]';
-    }
-
-    if (multiOrigin) {
-      return 'shadow-[inset_4px_0_0_#2563eb]';
+    if (hasAutomaticSplit(suggestion)) {
+      return 'shadow-[inset_4px_0_0_var(--color-orange-500)]';
     }
 
     return '';
   };
   const getSuggestionCellToneClass = (suggestion: TransferSuggestion) => {
-    const multiDestination = isSuggestionMultiDestination(suggestion);
-    const multiOrigin = isSuggestionMultiOrigin(suggestion);
-
     if (isSuggestionOverAllocated(suggestion)) {
       return 'bg-[#fecaca] group-hover:bg-[#fca5a5]';
     }
@@ -2300,22 +2330,14 @@ export function ReallocationManager({
       return 'bg-[#ecfccb] group-hover:bg-[#d9f99d]';
     }
 
-    if (multiDestination && multiOrigin) {
-      return 'bg-[#99f6e4] group-hover:bg-[#5eead4]';
-    }
-
-    if (multiDestination) {
-      return 'bg-[#fde68a] group-hover:bg-[#fcd34d]';
-    }
-
-    if (multiOrigin) {
-      return 'bg-[#bae6fd] group-hover:bg-[#7dd3fc]';
+    if (hasAutomaticSplit(suggestion)) {
+      return 'bg-orange-200 group-hover:bg-orange-300';
     }
 
     return 'bg-white group-hover:bg-[#f8fafc]';
   };
   const markerCounts = useMemo(() => {
-    const counts: Record<ReallocationRowMarker, number> = { shared: 0, multiDestination: 0, multiOrigin: 0, manual: 0, minimum: 0, tie: 0 };
+    const counts: Record<ReallocationRowMarker, number> = { manual: 0, minimum: 0, split: 0 };
     for (const markers of suggestionMarkersById.values()) for (const marker of markers) counts[marker]++;
     return counts;
   }, [suggestionMarkersById]);
@@ -2459,7 +2481,8 @@ export function ReallocationManager({
           !suggestion.erpCode && suggestion.quantity > 0 ? 'SEM_ERP' : '',
           suggestion.quantity !== suggestion.maxQuantity ? 'MANUAL' : '',
           maxRoutePriority > 1 && suggestion.routePriority >= maxRoutePriority && suggestion.quantity > 0 ? 'ROTA_LIMITE' : '',
-          suggestion.decisionRequired && !suggestion.decisionResolved ? 'EMPATE_DECISAO' : '',
+          hasAutomaticSplit(suggestion) ? 'RATEIO_AUTOMATICO' : '',
+          suggestion.decisionRequired && !suggestion.decisionResolved ? 'RECALCULAR' : '',
           problemSuggestionIds.has(suggestion.id) ? 'REVISAR' : 'OK',
         ].filter(Boolean).join('|'),
       ]),
@@ -2680,55 +2703,55 @@ export function ReallocationManager({
           </td>
         );
       }
-      case 'quantity':
+      case 'quantity': {
         const allocation = getOriginAllocation(suggestion);
         const isOverAllocated = isSuggestionOverAllocated(suggestion);
+        const isManual = isSuggestionManuallyChanged(suggestion);
+        const quantityTone = isOverAllocated ? 'text-red-700' : isManual ? 'text-violet-700' : 'text-emerald-700';
+        const quantityPadding = isManual && isOverAllocated ? 'pb-[20px]' : isManual || isOverAllocated ? 'pb-[10px]' : '';
         return (
-          <td key={column.key} className={`border-b border-r border-slate-100 px-2.5 py-1 text-center ${cellToneClass}`}>
-            <div className={`mx-auto w-20 rounded-md border bg-transparent shadow-none transition focus-within:bg-white/70 focus-within:ring-2 ${isOverAllocated ? 'border-red-600 focus-within:border-red-700 focus-within:ring-red-200' : isSuggestionManuallyChanged(suggestion) ? 'border-violet-600 focus-within:border-violet-700 focus-within:ring-violet-200' : 'border-emerald-600 focus-within:border-emerald-700 focus-within:ring-emerald-200'}`}>
-              <input
-                data-transfer-index={suggestionIndex}
-                type="text"
-                inputMode="numeric"
-                value={suggestion.quantity}
-                onFocus={(event) => event.currentTarget.select()}
-                onChange={(event) => updateSuggestionQuantity(suggestion.id, Number(event.target.value.replace(/\D/g, '')))}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' || event.key === 'ArrowDown') {
-                    event.preventDefault();
-                    focusSuggestionCell(Math.min(suggestionIndex + 1, sortedTransferSuggestions.length - 1));
-                  }
-
-                  if (event.key === 'ArrowUp') {
-                    event.preventDefault();
-                    focusSuggestionCell(Math.max(suggestionIndex - 1, 0));
-                  }
-
-                  if (event.key === 'Escape') {
-                    event.currentTarget.blur();
-                  }
-                }}
-                onPaste={(event) => {
-                  const pastedText = event.clipboardData.getData('text');
-                  if (!pastedText.includes('\n') && !pastedText.includes('\t') && !pastedText.includes(';')) return;
+          <td key={column.key} className={`relative border-b border-r border-slate-100 p-0 text-center align-bottom ${quantityTone} ${cellToneClass}`}>
+            <input
+              data-transfer-index={suggestionIndex}
+              type="text"
+              inputMode="numeric"
+              value={suggestion.quantity}
+              onFocus={(event) => event.currentTarget.select()}
+              onChange={(event) => updateSuggestionQuantity(suggestion.id, Number(event.target.value.replace(/\D/g, '')))}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === 'ArrowDown') {
                   event.preventDefault();
-                  pasteSuggestionQuantities(suggestionIndex, pastedText);
-                }}
-                className={`h-5 w-full bg-transparent px-2 text-center font-black leading-none outline-none ${isOverAllocated ? 'text-red-700' : isSuggestionManuallyChanged(suggestion) ? 'text-violet-700' : 'text-emerald-700'}`}
-              />
+                  focusSuggestionCell(Math.min(suggestionIndex + 1, sortedTransferSuggestions.length - 1));
+                }
+
+                if (event.key === 'ArrowUp') {
+                  event.preventDefault();
+                  focusSuggestionCell(Math.max(suggestionIndex - 1, 0));
+                }
+
+                if (event.key === 'Escape') {
+                  event.currentTarget.blur();
+                }
+              }}
+              onPaste={(event) => {
+                const pastedText = event.clipboardData.getData('text');
+                if (!pastedText.includes('\n') && !pastedText.includes('\t') && !pastedText.includes(';')) return;
+                event.preventDefault();
+                pasteSuggestionQuantities(suggestionIndex, pastedText);
+              }}
+              className={`absolute inset-0 block h-full w-full min-w-0 cursor-text rounded-none border border-slate-400/60 bg-white/40 text-center font-black leading-none tabular-nums outline-none hover:border-slate-500 focus:border-slate-400 ${quantityPadding}`}
+            />
+            <div className="pointer-events-none relative pt-6 text-[8px] font-black uppercase leading-[10px]">
+              {isManual && (
+                <p className="truncate text-violet-700">Sugestão {wholeNumber(suggestion.maxQuantity)}</p>
+              )}
+              {isOverAllocated && (
+                <p className="truncate text-red-700">Excede {wholeNumber((allocation?.allocated || 0) - (allocation?.stock || 0))}</p>
+              )}
             </div>
-            {isSuggestionManuallyChanged(suggestion) && (
-              <p className="mt-0.5 whitespace-normal text-[8px] font-black uppercase leading-tight text-violet-700">
-                Manual · Sugestão {wholeNumber(suggestion.maxQuantity)}
-              </p>
-            )}
-            {isOverAllocated && (
-              <p className="mt-0.5 whitespace-normal text-[8px] font-black uppercase leading-tight text-red-700">
-                Excede {wholeNumber((allocation?.allocated || 0) - (allocation?.stock || 0))}
-              </p>
-            )}
           </td>
         );
+      }
       case 'destinationName': {
         const allocation = getDestinationAllocation(suggestion);
         const originCount = allocation?.originCodes.size || 0;
@@ -2776,7 +2799,7 @@ export function ReallocationManager({
           <td
             key={column.key}
             className={`${cellClass} ${maxRoutePriority > 1 && suggestion.routePriority >= maxRoutePriority && suggestion.quantity > 0 ? 'font-black' : ''}`}
-            title={suggestion.decisionRequired && !suggestion.decisionResolved ? suggestion.decisionReason : undefined}
+            title={hasAutomaticSplit(suggestion) ? 'Rateio automático' : undefined}
           >
             {suggestion.routePriority}
           </td>
@@ -2785,16 +2808,6 @@ export function ReallocationManager({
         return (
           <td key={column.key} className={`border-b border-r border-slate-100 px-2 py-1 text-center ${cellToneClass}`}>
             <div className="flex items-center justify-center gap-1">
-              {suggestion.decisionRequired && !suggestion.decisionResolved && (
-                <button
-                  type="button"
-                  onClick={() => acceptSuggestionDecision(suggestion.id)}
-                  className="inline-flex h-6 w-6 items-center justify-center rounded-lg bg-orange-50 text-orange-700 transition hover:bg-orange-600 hover:text-white"
-                  title={suggestion.decisionReason || 'Aceitar decisao sugerida para este empate'}
-                >
-                  <Check size={13} />
-                </button>
-              )}
               {isSuggestionManuallyChanged(suggestion) && (
                 <button
                   type="button"
@@ -2823,6 +2836,10 @@ export function ReallocationManager({
   const generatePermissionTitle = canGenerateSuggestions ? undefined : getPermissionDeniedMessage('gerar sugestoes de remanejamento inteligente', 'perfumePurchasingOrSupreme');
   const exportPermissionTitle = canExport ? undefined : getPermissionDeniedMessage('exportar remanejamento inteligente', 'perfumePurchasingOrSupreme');
   const stockSnapshotBlockedTitle = stockSnapshotStaleMessage || undefined;
+  const compactSuggestionMessage = suggestionMessage.replace(/\s+pelo motor [^.]+/i, '');
+  const suggestionNoticeLabel = compactSuggestionMessage.startsWith('Rascunho de sugestoes restaurado')
+    ? 'Rascunho restaurado'
+    : compactSuggestionMessage.split('. ')[0];
   const canUseStockSnapshot = Boolean(stockSnapshot) && !stockSnapshotStaleMessage;
   const canExportGeneratedSuggestion = Boolean(stockSnapshot) && !suggestionExportBlockMessage;
   const generateButtonTitle = generatePermissionTitle || stockSnapshotBlockedTitle;
@@ -2877,10 +2894,78 @@ export function ReallocationManager({
         </div>
       )}
 
-      <ReallocationWorkspaceTabs value={suggestionView} counts={{ draft: transferSuggestions.length, confirmed: confirmedSuggestions.length, orders: transferOrders.length }} onChange={changeSuggestionView} />
+      <div className="relative flex shrink-0 flex-wrap items-center justify-between gap-x-2 border-b border-slate-200 bg-white">
+        <ReallocationWorkspaceTabs value={suggestionView} counts={{ draft: transferSuggestions.length, confirmed: confirmedSuggestions.length, orders: transferOrders.length, unmet: unmetNeeds?.total ?? 0 }} onChange={changeSuggestionView} />
+        {suggestionView === 'draft' && <div role="group" aria-label="Ações de sugestões" className="relative ml-auto flex shrink-0 items-center gap-1.5 px-1.5 py-1">
+          <div ref={summaryRef}>
+              <button
+                type="button"
+                aria-expanded={showMetricDetails || showDataActions}
+                aria-controls={showMetricDetails ? 'reallocation-summary-panel' : 'reallocation-options-panel'}
+                onClick={() => {
+                  setShowDataActions(!showDataActions && !showMetricDetails);
+                  setShowMetricDetails(false);
+                }}
+                className="flex h-9 w-full items-center justify-center gap-1 rounded-md border border-slate-200 bg-white px-2 text-[10px] font-black uppercase text-violet-700 shadow-sm hover:border-violet-300 hover:bg-violet-50"
+              >
+                Opções <ChevronDown size={13} className={showMetricDetails || showDataActions ? 'rotate-180' : ''} />
+                {suggestionExportStats.missingErpCodeLines + overAllocatedOrigins.length > 0 && (
+                  <span className="rounded bg-amber-100 px-1 text-amber-800">{suggestionExportStats.missingErpCodeLines + overAllocatedOrigins.length}</span>
+                )}
+              </button>
+              {showDataActions && (
+                <div id="reallocation-options-panel" role="region" aria-label="Opcoes do remanejamento" className="absolute right-0 top-[calc(100%+4px)] z-[240] w-60 max-w-[calc(100vw_-_24px)] max-h-[65dvh] overflow-auto rounded-md border border-slate-200 bg-white p-1.5 shadow-xl">
+                  <button type="button" onClick={() => { setShowDataActions(false); setShowMetricDetails(true); }} className="flex h-9 w-full items-center gap-2 rounded px-3 text-left text-xs font-bold text-slate-700 hover:bg-violet-50"><Columns3 size={14} /> Resumo</button>
+                  <div className="mt-1 border-t border-slate-100 pt-1">
+                    <p className="px-3 py-1 text-[10px] font-bold uppercase text-slate-400">Dados</p>
+                    <button type="button" onClick={() => { setShowDataActions(false); stockInputRef.current?.click(); }} disabled={stockImporting || !canImportData} title={dataImportPermissionTitle} className="flex h-9 w-full items-center gap-2 rounded px-3 text-left text-xs font-bold text-slate-700 hover:bg-violet-50 disabled:opacity-40"><Database size={14} /> Importar estoque</button>
+                    <button type="button" onClick={() => { setShowDataActions(false); loadProducts(searchTerm); }} className="flex h-9 w-full items-center gap-2 rounded px-3 text-left text-xs font-bold text-slate-700 hover:bg-violet-50"><RefreshCcw size={14} /> Atualizar base</button>
+                    <button type="button" onClick={() => { setShowDataActions(false); exportExampleTxt(); }} className="flex h-9 w-full items-center gap-2 rounded px-3 text-left text-xs font-bold text-slate-700 hover:bg-violet-50"><Download size={14} /> Modelo TXT</button>
+                  </div>
+                  <button type="button" onClick={() => { setShowDataActions(false); setShowTopPanel(current => !current); }} className="mt-1 flex h-9 w-full items-center gap-2 rounded border-t border-slate-100 px-3 text-left text-xs font-bold text-slate-500 hover:bg-violet-50"><X size={14} /> {showTopPanel ? 'Ocultar filtros' : 'Mostrar filtros'}</button>
+                </div>
+              )}
+              {showMetricDetails && (
+                <div id="reallocation-summary-panel" role="region" aria-labelledby="reallocation-summary-title" className="absolute right-0 top-[calc(100%+4px)] z-[240] w-[min(420px,calc(100vw-2rem))] overflow-hidden rounded-[6px] border border-slate-400 bg-white shadow-[0_18px_38px_rgba(15,23,42,0.22)]">
+                  <div className="flex h-7 items-center justify-between border-b border-slate-300 bg-slate-100 px-2">
+                    <h2 id="reallocation-summary-title" className="text-xs font-bold text-slate-900">Resumo do remanejamento</h2>
+                    <button type="button" onClick={() => { setShowMetricDetails(false); summaryRef.current?.querySelector('button')?.focus(); }} aria-label="Fechar resumo" className="h-5 w-5 rounded border border-slate-300 bg-white text-slate-500 hover:text-red-600"><X size={12} className="mx-auto" /></button>
+                  </div>
+                  <div className="grid max-h-[min(380px,60dvh)] grid-cols-2 gap-1 overflow-auto p-2 sm:grid-cols-3">
+                    <StatusMetric label="Exportaveis" value={suggestionExportStats.exportableLines.toLocaleString('pt-BR')} helper={`${suggestionExportStats.exportableUnits.toLocaleString('pt-BR')} un.`} tone="emerald" compact />
+                    <StatusMetric label="Sem ERP" value={suggestionExportStats.missingErpCodeLines.toLocaleString('pt-BR')} helper="fora TXT" tone="amber" compact />
+                    <StatusMetric label="Excedidas" value={overAllocatedOrigins.length.toLocaleString('pt-BR')} helper="bloqueia" tone="red" compact />
+                    <StatusMetric label="Sugestões" value={transferSuggestions.length.toLocaleString('pt-BR')} tone="violet" compact />
+                    <StatusMetric label="Confirmadas" value={confirmedSuggestions.length.toLocaleString('pt-BR')} tone="emerald" compact />
+                    <StatusMetric label="Pedidos" value={transferOrders.length.toLocaleString('pt-BR')} tone="indigo" compact />
+                    <StatusMetric label="Estoque" value={stockItems.length.toLocaleString('pt-BR')} tone="indigo" compact />
+                    <StatusMetric label="Produtos mov." value={new Set(transferSuggestions.map((item) => item.ean)).size.toLocaleString('pt-BR')} tone="violet" compact />
+                    <StatusMetric label="Produtos" value={totalProducts.toLocaleString('pt-BR')} compact />
+                  </div>
+                </div>
+              )}
+          </div>
+          <button
+            type="button"
+            onClick={() => { setShowDataActions(false); setShowMetricDetails(false); setShowAdvancedRules(true); }}
+            className="h-9 rounded-md border border-slate-200 bg-white px-2 text-[10px] font-black uppercase text-slate-700 shadow-sm hover:border-violet-300 hover:text-violet-700"
+          >
+            <SlidersHorizontal size={13} className="mr-1 inline-block" /> Perfil
+          </button>
+          <button
+            type="button"
+            onClick={() => { setShowDataActions(false); setShowMetricDetails(false); requestGenerateTransferSuggestions(); }}
+            disabled={!canGenerateSuggestions || !canUseStockSnapshot || stockLoading || generatingSuggestions}
+            title={generateButtonTitle}
+            className="h-9 rounded-md bg-violet-600 px-3 text-[10px] font-black uppercase text-white shadow-sm disabled:opacity-40"
+          >
+            <Shuffle size={13} className="mr-1 inline-block" /> {stockLoading ? 'Carregando' : generatingSuggestions ? 'Gerando' : 'Atualizar'}
+          </button>
+        </div>}
+      </div>
       <section id={`reallocation-panel-${suggestionView}`} role="tabpanel" aria-labelledby={`reallocation-tab-${suggestionView}`} className="flex min-h-0 flex-1 flex-col overflow-visible border border-t-0 border-slate-200 bg-white">
         {suggestionView === 'draft' && (showTopPanel ? (
-        <div className="relative z-[90] grid gap-1.5 border-b border-slate-300 bg-slate-100/80 p-1.5 xl:grid-cols-[minmax(0,1fr)_150px]">
+        <div className="relative z-[90] border-b border-slate-300 bg-slate-100/80 p-1.5">
           <div className="min-w-0">
             <div className="grid grid-cols-1 items-start gap-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-11">
               <QuickFilterBox
@@ -3011,72 +3096,6 @@ export function ReallocationManager({
             </div>
           </div>
 
-          <div className="relative grid grid-cols-2 gap-1 self-start">
-            <div ref={summaryRef} className={`relative ${showMetricDetails || showDataActions ? 'z-[240]' : ''}`}>
-            <button
-              type="button"
-              aria-expanded={showMetricDetails || showDataActions}
-              aria-controls={showMetricDetails ? 'reallocation-summary-panel' : 'reallocation-options-panel'}
-              onClick={() => {
-                setShowDataActions(!showDataActions && !showMetricDetails);
-                setShowMetricDetails(false);
-              }}
-              className="flex h-9 w-full items-center justify-center gap-1 rounded-md border border-slate-200 bg-white px-2 text-[10px] font-black uppercase text-violet-700 shadow-sm hover:border-violet-300 hover:bg-violet-50"
-            >
-              Opções <ChevronDown size={13} className={showMetricDetails || showDataActions ? 'rotate-180' : ''} />
-              {suggestionExportStats.missingErpCodeLines + overAllocatedOrigins.length > 0 && (
-                <span className="rounded bg-amber-100 px-1 text-amber-800">{suggestionExportStats.missingErpCodeLines + overAllocatedOrigins.length}</span>
-              )}
-            </button>
-            {showDataActions && (
-              <div id="reallocation-options-panel" role="region" aria-label="Opcoes do remanejamento" className="absolute right-0 top-[calc(100%+4px)] z-[240] w-60 max-w-[calc(100vw_-_24px)] max-h-[65dvh] overflow-auto rounded-md border border-slate-200 bg-white p-1.5 shadow-xl">
-                <button type="button" onClick={() => { setShowDataActions(false); setShowMetricDetails(true); }} className="flex h-9 w-full items-center gap-2 rounded px-3 text-left text-xs font-bold text-slate-700 hover:bg-violet-50"><Columns3 size={14} /> Resumo</button>
-                <div className="mt-1 border-t border-slate-100 pt-1">
-                  <p className="px-3 py-1 text-[10px] font-bold uppercase text-slate-400">Dados</p>
-                  <button type="button" onClick={() => { setShowDataActions(false); stockInputRef.current?.click(); }} disabled={stockImporting || !canImportData} title={dataImportPermissionTitle} className="flex h-9 w-full items-center gap-2 rounded px-3 text-left text-xs font-bold text-slate-700 hover:bg-violet-50 disabled:opacity-40"><Database size={14} /> Importar estoque</button>
-                  <button type="button" onClick={() => { setShowDataActions(false); loadProducts(searchTerm); }} className="flex h-9 w-full items-center gap-2 rounded px-3 text-left text-xs font-bold text-slate-700 hover:bg-violet-50"><RefreshCcw size={14} /> Atualizar base</button>
-                  <button type="button" onClick={() => { setShowDataActions(false); exportExampleTxt(); }} className="flex h-9 w-full items-center gap-2 rounded px-3 text-left text-xs font-bold text-slate-700 hover:bg-violet-50"><Download size={14} /> Modelo TXT</button>
-                </div>
-                <button type="button" onClick={() => { setShowDataActions(false); setShowTopPanel(false); }} className="mt-1 flex h-9 w-full items-center gap-2 rounded border-t border-slate-100 px-3 text-left text-xs font-bold text-slate-500 hover:bg-violet-50"><X size={14} /> Ocultar filtros</button>
-              </div>
-            )}
-            {showMetricDetails && (
-              <div id="reallocation-summary-panel" role="region" aria-labelledby="reallocation-summary-title" className="absolute right-0 top-[calc(100%+4px)] z-[240] w-[min(420px,calc(100vw-2rem))] overflow-hidden rounded-[6px] border border-slate-400 bg-white shadow-[0_18px_38px_rgba(15,23,42,0.22)]">
-                <div className="flex h-7 items-center justify-between border-b border-slate-300 bg-slate-100 px-2">
-                  <h2 id="reallocation-summary-title" className="text-xs font-bold text-slate-900">Resumo do remanejamento</h2>
-                  <button type="button" onClick={() => { setShowMetricDetails(false); summaryRef.current?.querySelector('button')?.focus(); }} aria-label="Fechar resumo" className="h-5 w-5 rounded border border-slate-300 bg-white text-slate-500 hover:text-red-600"><X size={12} className="mx-auto" /></button>
-                </div>
-                <div className="grid max-h-[min(380px,60dvh)] grid-cols-2 gap-1 overflow-auto p-2 sm:grid-cols-3">
-                  <StatusMetric label="Exportaveis" value={suggestionExportStats.exportableLines.toLocaleString('pt-BR')} helper={`${suggestionExportStats.exportableUnits.toLocaleString('pt-BR')} un.`} tone="emerald" compact />
-                  <StatusMetric label="Sem ERP" value={suggestionExportStats.missingErpCodeLines.toLocaleString('pt-BR')} helper="fora TXT" tone="amber" compact />
-                  <StatusMetric label="Excedidas" value={overAllocatedOrigins.length.toLocaleString('pt-BR')} helper="bloqueia" tone="red" compact />
-                  <StatusMetric label="Sugestões" value={transferSuggestions.length.toLocaleString('pt-BR')} tone="violet" compact />
-                  <StatusMetric label="Confirmadas" value={confirmedSuggestions.length.toLocaleString('pt-BR')} tone="emerald" compact />
-                  <StatusMetric label="Pedidos" value={transferOrders.length.toLocaleString('pt-BR')} tone="indigo" compact />
-                  <StatusMetric label="Estoque" value={stockItems.length.toLocaleString('pt-BR')} tone="indigo" compact />
-                  <StatusMetric label="Produtos mov." value={new Set(transferSuggestions.map((item) => item.ean)).size.toLocaleString('pt-BR')} tone="violet" compact />
-                  <StatusMetric label="Produtos" value={totalProducts.toLocaleString('pt-BR')} compact />
-                </div>
-              </div>
-            )}
-            </div>
-            <button
-              type="button"
-              onClick={() => setShowAdvancedRules(true)}
-              className="h-9 rounded-md border border-slate-200 bg-white px-2 text-[10px] font-black uppercase text-slate-700 shadow-sm hover:border-violet-300 hover:text-violet-700"
-            >
-              <SlidersHorizontal size={13} className="mr-1 inline-block" /> Perfil
-            </button>
-            <button
-              type="button"
-              onClick={requestGenerateTransferSuggestions}
-              disabled={!canGenerateSuggestions || !canUseStockSnapshot || stockLoading || generatingSuggestions}
-              title={generateButtonTitle}
-              className="col-span-2 h-10 rounded-md bg-violet-600 px-2 text-[10px] font-black uppercase text-white shadow-sm disabled:opacity-40"
-            >
-              <Shuffle size={13} className="mr-1 inline-block" /> {stockLoading ? 'Carregando' : generatingSuggestions ? 'Gerando' : 'Atualizar'}
-            </button>
-          </div>
         </div>
         ) : (
           <div className="relative z-[70] flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-wide">
@@ -3166,24 +3185,16 @@ export function ReallocationManager({
               </>
             )}
             {hasPendingSuggestionSettings && (
-              <span className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-amber-700">
-                filtros alterados, clique em atualizar
-              </span>
+              <ReallocationStatusNotice tone="warning" label="Filtros alterados" message="Os filtros ou o perfil mudaram. Clique em Atualizar para recalcular." />
             )}
             {stockSnapshotStaleMessage && (
-              <span className="max-w-full truncate rounded-md border border-red-200 bg-red-50 px-2 py-1 text-red-700">
-                {stockSnapshotStaleMessage}
-              </span>
+              <ReallocationStatusNotice tone="danger" label="Estoque antigo" message={stockSnapshotStaleMessage} />
             )}
             {suggestionExportWarningMessage && (
-              <span className="max-w-full truncate rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-amber-700">
-                {suggestionExportWarningMessage}
-              </span>
+              <ReallocationStatusNotice tone="warning" label="Exportação disponível" message={suggestionExportWarningMessage} />
             )}
-            {suggestionMessage && (
-              <span className="max-w-full truncate rounded-md border border-violet-100 bg-violet-50 px-2 py-1 text-violet-700">
-                {suggestionMessage.replace(/\s+pelo motor [^.]+/i, '')}
-              </span>
+            {compactSuggestionMessage && suggestionMessage !== stockSnapshotStaleMessage && suggestionMessage !== suggestionExportWarningMessage && (
+              <ReallocationStatusNotice tone="info" label={suggestionNoticeLabel} message={compactSuggestionMessage} />
             )}
             {showReallocationTechDiagnostics && (
               <span className="rounded-md bg-slate-100 px-2 py-1 text-slate-500">
@@ -3230,7 +3241,7 @@ export function ReallocationManager({
           </div>
         )}
 
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2">
+        {suggestionView !== 'unmet' && <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2">
           <div className="flex w-full min-w-0 flex-wrap items-center gap-2">
             {suggestionView === 'draft' ? (
               <button
@@ -3251,6 +3262,14 @@ export function ReallocationManager({
                 <Trash2 size={13} className="mr-1 inline-block" /> Remover selecionadas
               </button>
             ) : null}
+            {suggestionView !== 'orders' && (
+              <button type="button" aria-pressed={showInspection}
+                aria-controls={showInspection ? 'reallocation-row-inspection' : undefined}
+                onClick={() => setShowInspection(current => !current)}
+                className={`inline-flex h-8 items-center gap-1.5 rounded-md border px-2 text-[10px] font-black uppercase ${showInspection ? 'border-violet-300 bg-violet-50 text-violet-800' : 'border-slate-200 bg-white text-slate-700 hover:border-violet-300'}`}>
+                <ScanLine size={14} aria-hidden="true" /> Raio-X
+              </button>
+            )}
             {hiddenSuggestionColumns.length > 0 && suggestionView !== 'orders' && (
               <button
                 type="button"
@@ -3267,12 +3286,9 @@ export function ReallocationManager({
             {suggestionView !== 'orders' && (
             <div role="group" aria-label="Filtrar por tipo de linha" className="flex flex-wrap items-center gap-2">
               {([
-                { key: 'shared', label: 'Rota compartilhada nos dois lados', tone: 'border-teal-200 bg-teal-50 text-teal-950', swatch: 'border-teal-600 bg-teal-300' },
-                { key: 'multiDestination', label: 'Origem p/ varios destinos', tone: 'border-amber-200 bg-amber-50 text-amber-950', swatch: 'border-amber-500 bg-amber-300' },
-                { key: 'multiOrigin', label: 'Destino recebe varias origens', tone: 'border-sky-200 bg-sky-50 text-sky-950', swatch: 'border-sky-500 bg-sky-300' },
                 { key: 'manual', label: 'Manual', tone: 'border-violet-200 bg-violet-50 text-violet-950', swatch: 'border-violet-500 bg-violet-300' },
                 { key: 'minimum', label: 'Estoque mínimo', tone: 'border-lime-300 bg-lime-50 text-lime-950', swatch: 'border-lime-600 bg-lime-200' },
-                { key: 'tie', label: 'Empate', tone: 'border-orange-200 bg-orange-50 text-orange-950', swatch: 'border-orange-500 bg-orange-300' },
+                { key: 'split', label: 'Rateio automático', tone: 'border-orange-200 bg-orange-50 text-orange-950', swatch: 'border-orange-500 bg-orange-300' },
               ] as const).map((marker) => (
                 <button
                   key={marker.key}
@@ -3322,9 +3338,11 @@ export function ReallocationManager({
             </div>
           </div>
           </div>
-        </div>
+        </div>}
 
-        {suggestionView === 'orders' ? (
+        {suggestionView === 'unmet' ? (
+          <ReallocationUnmetNeeds report={unmetNeeds} calculatedAt={suggestionGenerationContext?.generatedAt} stale={hasPendingSuggestionSettings} />
+        ) : suggestionView === 'orders' ? (
           <div className="min-h-0 flex-1 overflow-auto rounded-2xl border border-slate-200 bg-white p-3">
             <div className="grid grid-cols-[minmax(0,1fr)] gap-2">
               {displayedTransferOrders.map((order) => (
@@ -3373,7 +3391,7 @@ export function ReallocationManager({
           </div>
         ) : (
         <div className="min-h-0 flex-1 overflow-auto rounded-2xl border border-slate-200 bg-white">
-          <table className="table-fixed border-separate border-spacing-0 text-sm whitespace-nowrap" style={{ width: `${suggestionTableWidth}px`, minWidth: `${suggestionTableWidth}px` }}>
+          <table className="reallocation-suggestions-grid table-fixed border-separate border-spacing-0 text-sm whitespace-nowrap" style={{ width: `${suggestionTableWidth}px`, minWidth: `${suggestionTableWidth}px` }}>
             <colgroup>
               {orderedSuggestionColumns.map((column) => (
                 <col key={column.key} style={{ width: `${suggestionColumnWidths[column.key] || column.width}px` }} />
@@ -3386,7 +3404,11 @@ export function ReallocationManager({
             </thead>
             <tbody>
               {sortedTransferSuggestions.map((suggestion, suggestionIndex) => (
-                <tr key={suggestion.id} className={`group transition-colors ${getSuggestionRowClass(suggestion)}`}>
+                <tr key={suggestion.id}
+                  data-reallocation-suggestion-id={suggestion.id}
+                  onPointerDown={() => setFocusedSuggestionId(suggestion.id)}
+                  onFocus={() => setFocusedSuggestionId(suggestion.id)}
+                  className={`group transition-colors ${getSuggestionRowClass(suggestion)} ${focusedSuggestionId === suggestion.id ? 'wally-table-focused-row' : ''}`}>
                   {orderedSuggestionColumns.map((column) => renderSuggestionCell(suggestion, suggestionIndex, column))}
                 </tr>
               ))}
@@ -3400,6 +3422,9 @@ export function ReallocationManager({
             </tbody>
           </table>
         </div>
+        )}
+        {showInspection && (suggestionView === 'draft' || suggestionView === 'confirmed') && (
+          <ReallocationRowInspection row={inspectionRow} routes={inspectionRoutes} />
         )}
       </section>
 
@@ -3511,7 +3536,7 @@ export function ReallocationManager({
               ))}
               </div>
 
-              <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2 lg:grid-cols-4">
+              <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2 lg:grid-cols-5">
                 <TransferRuleInput
                   label="Segurança origem (dias)"
                   value={originMinimumDays}
@@ -3527,11 +3552,19 @@ export function ReallocationManager({
                   max={9999}
                 />
                 <TransferRuleInput
-                  label="Meta destino"
+                  label="Meta destino (dias)"
                   value={destinationTargetDays}
-                  onChange={setDestinationTargetDays}
+                  onChange={updateDestinationTargetDays}
                   min={1}
                   max={9999}
+                />
+                <TransferRuleInput
+                  label="Gatilho destino (dias)"
+                  value={destinationTriggerDays}
+                  onChange={setDestinationTriggerDays}
+                  min={0}
+                  max={destinationTargetDays}
+                  placeholder="Usar a meta"
                 />
                 <TransferRuleInput
                   label="Limite rota"
@@ -3759,18 +3792,112 @@ export function ReallocationManager({
   );
 }
 
+const STATUS_NOTICE_TONES = {
+  danger: 'border-red-200 bg-red-50 text-red-700',
+  warning: 'border-amber-200 bg-amber-50 text-amber-800',
+  info: 'border-violet-200 bg-violet-50 text-violet-700',
+};
+
+function ReallocationStatusNotice({ label, message, tone }: {
+  label: string;
+  message: string;
+  tone: keyof typeof STATUS_NOTICE_TONES;
+}) {
+  const id = useId();
+  const trigger = useRef<HTMLButtonElement>(null);
+  const tooltip = useRef<HTMLDivElement>(null);
+  const closeTimer = useRef<number | undefined>(undefined);
+  const [pinned, setPinned] = useState(false);
+  const [position, setPosition] = useState<{ top: number; left: number; maxHeight: number; transform?: string } | null>(null);
+  const Icon = tone === 'info' ? Info : CircleAlert;
+
+  const show = () => {
+    window.clearTimeout(closeTimer.current);
+    const bounds = trigger.current?.getBoundingClientRect();
+    if (!bounds) return;
+    const width = Math.min(320, window.innerWidth - 24);
+    const above = window.innerHeight - bounds.bottom < 130 && bounds.top > window.innerHeight - bounds.bottom;
+    setPosition({
+      top: above ? bounds.top - 6 : bounds.bottom + 6,
+      left: Math.max(12, Math.min(bounds.left, window.innerWidth - width - 12)),
+      maxHeight: (above ? bounds.top : window.innerHeight - bounds.bottom) - 18,
+      transform: above ? 'translateY(-100%)' : undefined,
+    });
+  };
+
+  const dismiss = useCallback(() => {
+    window.clearTimeout(closeTimer.current);
+    setPinned(false);
+    setPosition(null);
+  }, []);
+
+  const scheduleClose = () => {
+    window.clearTimeout(closeTimer.current);
+    if (pinned || trigger.current?.matches(':focus-visible')) return;
+    closeTimer.current = window.setTimeout(() => setPosition(null), 150);
+  };
+
+  useEffect(() => () => window.clearTimeout(closeTimer.current), []);
+
+  useEffect(() => {
+    if (!position) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (!trigger.current?.contains(target) && !tooltip.current?.contains(target)) dismiss();
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') dismiss();
+    };
+    const onScroll = (event: Event) => {
+      if (event.target !== tooltip.current) dismiss();
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', dismiss);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', dismiss);
+    };
+  }, [dismiss, position]);
+
+  return <>
+    <button ref={trigger} type="button" aria-expanded={Boolean(position)} aria-describedby={position ? id : undefined}
+      onPointerEnter={(event) => { if (event.pointerType === 'mouse') show(); }}
+      onPointerLeave={scheduleClose}
+      onFocus={(event) => { if (event.currentTarget.matches(':focus-visible')) show(); }}
+      onBlur={dismiss}
+      onClick={() => { if (pinned) dismiss(); else { show(); setPinned(true); } }}
+      className={`inline-flex h-6 max-w-40 items-center gap-1 rounded border px-1.5 uppercase focus-visible:outline-2 focus-visible:outline-offset-1 ${STATUS_NOTICE_TONES[tone]}`}>
+      <Icon size={12} className="shrink-0" aria-hidden="true" />
+      <span className="truncate">{label}</span>
+    </button>
+    {position && createPortal(
+      <div id={id} ref={tooltip} role="tooltip" style={position}
+        onPointerEnter={() => window.clearTimeout(closeTimer.current)} onPointerLeave={scheduleClose}
+        className="fixed z-[1000] w-[min(320px,calc(100vw-24px))] overflow-auto rounded-md border border-slate-200 bg-white px-3 py-2 text-xs leading-relaxed whitespace-normal text-slate-800 shadow-lg [overflow-wrap:anywhere]">
+        {message}
+      </div>, document.body,
+    )}
+  </>;
+}
+
 function TransferRuleInput({
   label,
   value,
   onChange,
   min,
   max,
+  placeholder,
 }: {
   label: string;
   value: number;
   onChange: (value: number) => void;
   min: number;
   max: number;
+  placeholder?: string;
 }) {
   return (
     <label className="rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
@@ -3780,6 +3907,7 @@ function TransferRuleInput({
         value={value === 0 ? '' : value}
         min={min}
         max={max}
+        placeholder={placeholder}
         onFocus={(event) => event.currentTarget.select()}
         onChange={(event) => {
           const nextValue = Math.max(min, Math.min(max, Number(event.target.value) || 0));

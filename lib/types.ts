@@ -422,8 +422,8 @@ export interface ReallocationStockItem {
   curve: string | null;
   confirmed_purchase: number;
   confirmed_transfer: number;
-  last_sale_days?: number;
-  last_purchase_days?: number;
+  last_sale_days?: number | null;
+  last_purchase_days?: number | null;
   last_purchase_supplier?: string | null;
   need_type?: string | null;
   rupture_sales?: number;

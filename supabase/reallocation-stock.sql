@@ -31,8 +31,8 @@ create table if not exists public.reallocation_stock_items (
   curve text,
   confirmed_purchase numeric not null default 0,
   confirmed_transfer numeric not null default 0,
-  last_sale_days numeric not null default 0,
-  last_purchase_days numeric not null default 0,
+  last_sale_days numeric,
+  last_purchase_days numeric,
   last_purchase_supplier text,
   need_type text,
   rupture_sales numeric not null default 0,
@@ -44,10 +44,10 @@ create table if not exists public.reallocation_stock_items (
 );
 
 alter table public.reallocation_stock_items
-add column if not exists last_sale_days numeric not null default 0;
+add column if not exists last_sale_days numeric;
 
 alter table public.reallocation_stock_items
-add column if not exists last_purchase_days numeric not null default 0;
+add column if not exists last_purchase_days numeric;
 
 alter table public.reallocation_stock_items
 add column if not exists last_purchase_supplier text;

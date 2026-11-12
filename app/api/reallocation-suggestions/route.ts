@@ -2,11 +2,13 @@ import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase-admin";
 import { requireAuthenticatedProfile } from "@/lib/server-auth";
 import { normalizeReallocationSector } from "@/lib/reallocation-sector";
+import type { ReallocationNeedReason, ReallocationUnmetNeed } from "@/lib/reallocation-needs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const REALLOCATION_API_VERSION = "reallocation-api-2026-06-19-v4";
+const REALLOCATION_API_VERSION = "reallocation-api-v8";
+const UNMET_NEED_ROW_LIMIT = 2000;
 const STOCK_SNAPSHOT_MAX_AGE_MINUTES = 30;
 const STOCK_SNAPSHOT_MAX_AGE_MS = STOCK_SNAPSHOT_MAX_AGE_MINUTES * 60 * 1000;
 
@@ -56,6 +58,7 @@ type SuggestionOrigin = {
   item: StockItem;
   availableStock: number;
   stockFloor: number;
+  protectedStock: number;
   remaining: number;
 };
 
@@ -67,6 +70,12 @@ type SuggestionDestination = {
 function numberValue(value: unknown) {
   const parsed = Number(value || 0);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function movementDays(value: number | string | null | undefined) {
+  if (value == null || String(value).trim() === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.round(parsed) : null;
 }
 
 function storeCode(value: unknown) {
@@ -158,8 +167,12 @@ function inferredStoreArea(item: StockItem) {
   return parts.join(" ");
 }
 
-function availableStock(item: StockItem) {
-  return Math.max(0, numberValue(item.stock), numberValue(item.confirmed_stock));
+function destinationAvailableStock(item: StockItem) {
+  const confirmed = item.confirmed_stock;
+  if (confirmed == null || String(confirmed).trim() === "" || !Number.isFinite(Number(confirmed))) {
+    return realStock(item);
+  }
+  return Math.max(0, Number(confirmed));
 }
 
 function realStock(item: StockItem) {
@@ -195,7 +208,7 @@ function ownDailySales(item: StockItem) {
 
 function effectiveStockDays(item: StockItem, dailySales: number) {
   const stockDays = numberValue(item.stock_days);
-  if (dailySales > 0) return availableStock(item) / dailySales;
+  if (dailySales > 0) return destinationAvailableStock(item) / dailySales;
   return stockDays > 0 ? stockDays : 0;
 }
 
@@ -299,8 +312,26 @@ function destinationTieKey(origin: SuggestionOrigin, destination: SuggestionDest
   ].join("|");
 }
 
-function formatTieQuantity(value: number) {
-  return Math.max(0, Math.floor(Number(value) || 0)).toLocaleString("pt-BR");
+function splitTiedDestinations(
+  ean: string,
+  candidates: ReturnType<typeof findTiedDestinations>,
+  stock: number,
+) {
+  const byStore = [...candidates].sort((left, right) => {
+    const a = destinationAllocationKey(left.destination);
+    const b = destinationAllocationKey(right.destination);
+    return a < b ? -1 : a > b ? 1 : 0;
+  });
+  let hash = 0;
+  for (const char of ean) hash = (Math.imul(hash, 31) + char.charCodeAt(0)) >>> 0;
+  const offset = hash % byStore.length;
+  const ranked = [...byStore.slice(offset), ...byStore.slice(0, offset)].sort((left, right) =>
+    ownDailySales(right.destination.item) - ownDailySales(left.destination.item));
+
+  // The tie key guarantees the same whole-unit need for every candidate.
+  const share = Math.floor(stock / ranked.length);
+  const extra = stock % ranked.length;
+  return ranked.map((candidate, index) => ({ ...candidate, quantity: share + Number(index < extra) }));
 }
 
 function buildSuggestion(
@@ -311,10 +342,7 @@ function buildSuggestion(
   need: number,
   priority: number,
   index: number,
-  tieCandidateCount = 0,
-  tieTotalNeed = 0,
-  tieOriginStock = 0,
-  decisionGroupKey = "",
+  automaticSplitDestinations = 0,
 ) {
   const originItem = origin.item;
   const destinationItem = destination.item;
@@ -332,9 +360,13 @@ function buildSuggestion(
     maxQuantity: quantity,
     originStock: numberValue(originItem.stock),
     originAvailableStock: transferableSurplus(origin.availableStock, origin.stockFloor),
+    originProtectedStock: origin.protectedStock,
+    originSurplusBeforeAllocation: transferableSurplus(origin.availableStock, origin.protectedStock),
     originConfirmedStock: numberValue(originItem.confirmed_stock),
     originMinimumStock: numberValue(originItem.min_stock),
     originMonthlyAvgSales: normalizeMonthlyAvgSales(numberValue(originItem.monthly_avg_sales)),
+    originLastSaleDays: movementDays(originItem.last_sale_days),
+    originLastPurchaseDays: movementDays(originItem.last_purchase_days),
     originCurve: originItem.curve || "",
     originConfirmedPurchase: numberValue(originItem.confirmed_purchase),
     originConfirmedTransfer: numberValue(originItem.confirmed_transfer),
@@ -342,21 +374,20 @@ function buildSuggestion(
     destinationConfirmedStock: numberValue(destinationItem.confirmed_stock),
     destinationMinimumStock: numberValue(destinationItem.min_stock),
     destinationMonthlyAvgSales: normalizeMonthlyAvgSales(numberValue(destinationItem.monthly_avg_sales)),
+    destinationLastSaleDays: movementDays(destinationItem.last_sale_days),
+    destinationLastPurchaseDays: movementDays(destinationItem.last_purchase_days),
     destinationCurve: destinationItem.curve || "",
     destinationConfirmedPurchase: numberValue(destinationItem.confirmed_purchase),
     destinationConfirmedTransfer: numberValue(destinationItem.confirmed_transfer),
     originDailySales: monthlyToDaily(originItem.monthly_avg_sales),
     destinationDailySales: monthlyToDaily(destinationItem.monthly_avg_sales),
     originStockDays: numberValue(originItem.stock_days),
-    destinationStockDays: numberValue(destinationItem.stock_days),
+    destinationStockDays: effectiveStockDays(destinationItem, ownDailySales(destinationItem)),
     destinationNeed: need,
     minimumStockQuantity: 0,
     routePriority: priority,
-    decisionRequired: tieCandidateCount > 1,
-    decisionResolved: false,
-    decisionReason: tieCandidateCount > 1 ? `Empate de calculo: ${tieCandidateCount} destinos disputam ${formatTieQuantity(tieTotalNeed)} un. da origem ${originItem.store_name || storeCode(originItem.store_code)}, que tem ${formatTieQuantity(tieOriginStock)} un. disponivel. Ajuste as quantidades ou aceite a sugestao antes de confirmar.` : "",
-    decisionGroupKey,
-    tieCandidateCount,
+    automaticSplitGroups: undefined as string[] | undefined,
+    ...(automaticSplitDestinations > 1 ? { automaticSplitDestinations } : {}),
   };
 }
 
@@ -368,8 +399,7 @@ function destinationOpenNeed(destination: SuggestionDestination, allocatedByDest
   return Math.max(0, destination.need - (allocatedByDestination.get(destinationAllocationKey(destination)) || 0));
 }
 
-function destinationTieInfo(
-  ean: string,
+function findTiedDestinations(
   origin: SuggestionOrigin,
   destination: SuggestionDestination,
   priority: number,
@@ -380,6 +410,8 @@ function destinationTieInfo(
 ) {
   const currentOpenNeed = destinationOpenNeed(destination, allocatedByDestination);
   const tieKey = destinationTieKey(origin, destination, priority, currentOpenNeed);
+  const originCode = storeCode(origin.item.store_code);
+  const matchedStores = new Set<string>();
   const tiedDestinations = destinations
     .map((candidate) => {
       const openNeed = destinationOpenNeed(candidate, allocatedByDestination);
@@ -388,20 +420,14 @@ function destinationTieInfo(
     })
     .filter((candidate) => {
       if (candidate.openNeed <= 0) return false;
-      if (storeCode(candidate.destination.item.store_code) === storeCode(origin.item.store_code)) return false;
+      const code = destinationAllocationKey(candidate.destination);
+      if (code === originCode || matchedStores.has(code)) return false;
       if (candidate.priority > maxRoutePriority) return false;
-      return destinationTieKey(origin, candidate.destination, candidate.priority, candidate.openNeed) === tieKey;
+      if (destinationTieKey(origin, candidate.destination, candidate.priority, candidate.openNeed) !== tieKey) return false;
+      matchedStores.add(code);
+      return true;
     });
-  const totalNeed = tiedDestinations.reduce((sum, candidate) => sum + candidate.openNeed, 0);
-  const originStock = Math.max(0, Math.floor(origin.remaining));
-
-  return {
-    groupKey: `${ean}:${storeCode(origin.item.store_code)}:${tieKey}`,
-    tiedDestinations,
-    totalNeed,
-    originStock,
-    decisionRequired: tiedDestinations.length > 1 && totalNeed > originStock,
-  };
+  return tiedDestinations;
 }
 function calculate(payload: {
   snapshotId?: string;
@@ -425,6 +451,7 @@ function calculate(payload: {
     stockFloor?: number;
     originMinimumDays?: number;
     destinationTargetDays?: number;
+    destinationTriggerDays?: number;
     maxRoutePriority?: number;
     originCurves?: string[];
     destinationCurves?: string[];
@@ -447,6 +474,10 @@ function calculate(payload: {
   const originMinimumDays = numberValue(rules.originMinimumDays);
   const stockFloor = Math.max(0, Math.ceil(numberValue(rules.stockFloor)));
   const destinationTargetDays = numberValue(rules.destinationTargetDays);
+  const configuredTriggerDays = numberValue(rules.destinationTriggerDays);
+  const destinationTriggerDays = configuredTriggerDays > 0
+    ? Math.min(configuredTriggerDays, destinationTargetDays)
+    : destinationTargetDays;
   const maxRoutePriority = numberValue(rules.maxRoutePriority);
   const lastSaleMaxDays = numberValue(rules.lastSaleMaxDays);
   const lastPurchaseMaxDays = numberValue(rules.lastPurchaseMaxDays);
@@ -472,6 +503,8 @@ function calculate(payload: {
   }
 
   const suggestions = [];
+  const unmetNeeds: ReallocationUnmetNeed[] = [];
+  let missingUnits = 0;
   let eligibleOrigins = 0;
   let eligibleDestinations = 0;
   let blockedDifferentUf = 0;
@@ -504,6 +537,7 @@ function calculate(payload: {
           },
           availableStock: stock,
           stockFloor: originFloor,
+          protectedStock,
           remaining,
         });
       }
@@ -521,17 +555,18 @@ function calculate(payload: {
       if (!branchCanReceive(code, branchLogistics)) continue;
       if (selectedDestinationCurves.size > 0 && !selectedDestinationCurves.has(stockCurve(item.curve))) continue;
 
-      const stock = availableStock(item);
+      const stock = destinationAvailableStock(item);
       const dailySales = ownDailySales(item);
-      const stockDays = effectiveStockDays(item, dailySales);
-      if (dailySales <= 0 || stockDays >= destinationTargetDays) continue;
+      if (dailySales <= 0) continue;
+      const triggerStock = dailySales * destinationTriggerDays;
+      if (stock >= triggerStock - stockArithmeticTolerance(stock, triggerStock)) continue;
+      const stockDays = stock / dailySales;
 
       const need = destinationNeedQuantity(stock, dailySales, destinationTargetDays);
       if (need > 0) {
         destinations.push({
           item: {
             ...item,
-            stock,
             monthly_avg_sales: dailyToMonthly(dailySales),
             stock_days: stockDays,
           },
@@ -550,7 +585,7 @@ function calculate(payload: {
     eligibleDestinations += destinations.length;
 
     const allocatedByDestination = new Map<string, number>();
-    const handledDestinationTieGroups = new Set<string>();
+    const splitDestinationsByOrigin = new Map<string, Set<string>>();
 
     for (const destination of destinations) {
       let remainingNeed = destinationOpenNeed(destination, allocatedByDestination);
@@ -578,17 +613,18 @@ function calculate(payload: {
 
       for (const { origin, priority } of rankedOrigins) {
         remainingNeed = destinationOpenNeed(destination, allocatedByDestination);
-        if (remainingNeed <= 0 || origin.remaining <= 0) break;
+        if (remainingNeed <= 0) break;
+        if (origin.remaining <= 0) continue;
 
-        const tieInfo = destinationTieInfo(ean, origin, destination, priority, destinations, allocatedByDestination, branchLogistics, maxRoutePriority);
-        if (tieInfo.decisionRequired) {
-          if (handledDestinationTieGroups.has(tieInfo.groupKey)) continue;
-
-          handledDestinationTieGroups.add(tieInfo.groupKey);
-          let remainingOriginStock = tieInfo.originStock;
-
-          for (const candidate of tieInfo.tiedDestinations) {
-            const quantity = Math.min(remainingOriginStock, candidate.openNeed);
+        const tiedDestinations = findTiedDestinations(origin, destination, priority, destinations, allocatedByDestination, branchLogistics, maxRoutePriority);
+        if (tiedDestinations.length > 1 && remainingNeed * tiedDestinations.length > origin.remaining) {
+          const stock = origin.remaining;
+          splitDestinationsByOrigin.set(storeCode(origin.item.store_code), new Set(
+            tiedDestinations.map((candidate) => destinationAllocationKey(candidate.destination)),
+          ));
+          for (const candidate of splitTiedDestinations(ean, tiedDestinations, stock)) {
+            const { quantity } = candidate;
+            if (quantity <= 0) continue;
             const candidateKey = destinationAllocationKey(candidate.destination);
 
             suggestions.push(buildSuggestion(
@@ -599,19 +635,11 @@ function calculate(payload: {
               candidate.destination.need,
               candidate.priority,
               suggestions.length,
-              tieInfo.tiedDestinations.length,
-              tieInfo.totalNeed,
-              tieInfo.originStock,
-              tieInfo.groupKey,
+              tiedDestinations.length,
             ));
-
-            if (quantity > 0) {
-              remainingOriginStock -= quantity;
-              allocatedByDestination.set(candidateKey, (allocatedByDestination.get(candidateKey) || 0) + quantity);
-            }
+            allocatedByDestination.set(candidateKey, (allocatedByDestination.get(candidateKey) || 0) + quantity);
           }
-
-          origin.remaining = remainingOriginStock;
+          origin.remaining = 0;
           continue;
         }
 
@@ -624,6 +652,13 @@ function calculate(payload: {
         suggestions.push(buildSuggestion(ean, origin, destination, quantity, destination.need, priority, suggestions.length));
       }
     }
+
+    const needsByStore = new Map<string, SuggestionDestination>();
+    const rememberNeed = (destination: SuggestionDestination) => {
+      const code = destinationAllocationKey(destination);
+      if ((needsByStore.get(code)?.need ?? 0) < destination.need) needsByStore.set(code, destination);
+    };
+    destinations.forEach(rememberNeed);
 
     // Minimum stock only uses surplus left after every normal allocation for this product.
     if ((rules.considerDestinationMinimumStock ?? rules.considerMinimumStock) === true) {
@@ -641,13 +676,11 @@ function calculate(payload: {
         if (!branchCanReceive(code, branchLogistics)) continue;
         if (selectedDestinationCurves.size > 0 && !selectedDestinationCurves.has(stockCurve(item.curve))) continue;
         const minimum = Math.max(0, numberValue(item.min_stock));
-        const confirmed = item.confirmed_stock;
-        const currentStock = confirmed === null || confirmed === undefined || String(confirmed).trim() === ""
-          ? realStock(item)
-          : Math.max(0, numberValue(confirmed));
+        const currentStock = destinationAvailableStock(item);
         const need = Math.max(0, Math.ceil(minimum - currentStock + (sentByOrigin.get(code) || 0)));
         const destination = { item, need };
         if (destinationOpenNeed(destination, allocatedByDestination) <= 0) continue;
+        rememberNeed(destination);
         minimumDestinations.push(destination);
       }
 
@@ -703,11 +736,58 @@ function calculate(payload: {
         }
       }
     }
+
+    // Include every destination served by a splitting origin, and any other routes serving those destinations.
+    const splitGroupsByDestination = new Map<string, string[]>();
+    if (splitDestinationsByOrigin.size > 0) {
+      for (let index = productSuggestionStart; index < suggestions.length; index++) {
+        const suggestion = suggestions[index];
+        splitDestinationsByOrigin.get(suggestion.originCode)?.add(suggestion.destinationCode);
+      }
+      for (const [originCode, destinations] of splitDestinationsByOrigin) {
+        for (const destinationCode of destinations) {
+          const groups = splitGroupsByDestination.get(destinationCode) ?? [];
+          groups.push(originCode);
+          splitGroupsByDestination.set(destinationCode, groups);
+        }
+      }
+    }
+    for (let index = productSuggestionStart; index < suggestions.length; index++) {
+      const suggestion = suggestions[index];
+      suggestion.destinationNeed = needsByStore.get(suggestion.destinationCode)?.need ?? suggestion.destinationNeed;
+      suggestion.automaticSplitGroups = splitGroupsByDestination.get(suggestion.destinationCode);
+    }
+    for (const [code, destination] of needsByStore) {
+      const suggested = allocatedByDestination.get(code) ?? 0;
+      if (suggested >= destination.need) continue;
+      const otherOrigins = origins.filter((origin) => storeCode(origin.item.store_code) !== code);
+      const allowed = otherOrigins.filter((origin) => routePriority(origin.item, destination.item, branchLogistics) <= maxRoutePriority);
+      const reason: ReallocationNeedReason = otherOrigins.length === 0 ? 'no-surplus'
+        : allowed.length === 0 ? 'route'
+        : allowed.every((origin) => origin.remaining <= 0) ? 'insufficient'
+        : 'unallocated';
+      missingUnits += destination.need - suggested;
+      unmetNeeds.push({
+        ean,
+        product: destination.item.product_description || '',
+        destinationCode: code,
+        destinationName: destination.item.store_name || '',
+        needed: destination.need,
+        suggested,
+        reason,
+      });
+    }
   }
 
   return {
     engine: "typescript",
     suggestions,
+    unmetNeeds: {
+      rows: unmetNeeds.sort((a, b) => (b.needed - b.suggested) - (a.needed - a.suggested)
+        || a.ean.localeCompare(b.ean) || a.destinationCode.localeCompare(b.destinationCode)).slice(0, UNMET_NEED_ROW_LIMIT),
+      total: unmetNeeds.length,
+      missingUnits,
+    },
     productGroups: grouped.size,
     stockRows: stockItems.length,
     eligibleOrigins,

@@ -803,6 +803,42 @@ html[data-theme="dark"] :where(table tbody tr.wally-table-focused-row) {
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--table-focus-color) 26%, transparent), 0 0 0 4px color-mix(in srgb, var(--table-focus-color) 14%, transparent);
 }
 
+.reallocation-suggestions-grid {
+  --table-focus-color: var(--color-violet-600);
+}
+
+table.reallocation-suggestions-grid :where(tr.wally-table-focused-row) {
+  outline: none;
+  box-shadow: none;
+}
+
+table.reallocation-suggestions-grid tr.wally-table-focused-row > td {
+  position: relative;
+  border-right-width: 0;
+  border-bottom-color: var(--table-focus-color) !important;
+  box-shadow: none;
+}
+
+/* Paint above the cell content, including the full-height quantity input. */
+.reallocation-suggestions-grid :where(tr.wally-table-focused-row > td)::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border-top: 1px solid var(--table-focus-color);
+  box-shadow: inset -1px 0 0 var(--app-border);
+  pointer-events: none;
+}
+
+.reallocation-suggestions-grid :where(tr.wally-table-focused-row > td:first-child)::after {
+  border-left: 1px solid var(--table-focus-color);
+}
+
+.reallocation-suggestions-grid :where(tr.wally-table-focused-row > td:last-child)::after {
+  border-right: 1px solid var(--table-focus-color);
+  box-shadow: none;
+}
+
 .login-screen {
   --login-field-bg: #edf3fc;
   --login-field-text: #0f172a;

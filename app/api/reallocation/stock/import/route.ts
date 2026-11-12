@@ -27,8 +27,8 @@ interface StockRow {
   curve: string;
   confirmed_purchase: number;
   confirmed_transfer: number;
-  last_sale_days: number;
-  last_purchase_days: number;
+  last_sale_days: number | null;
+  last_purchase_days: number | null;
   last_purchase_supplier: string | null;
   need_type: string | null;
   rupture_sales: number;
@@ -126,12 +126,12 @@ function normalizeStoreCode(value: string) {
   return /^\d+$/.test(cleaned) ? cleaned.padStart(2, "0") : cleaned.toUpperCase();
 }
 
-function parseNumber(value: string) {
+function parseOptionalNumber(value: string) {
   const numericText = String(value || "")
     .replace(/[^\d,.-]/g, "")
     .trim();
 
-  if (!numericText) return 0;
+  if (!/\d/.test(numericText)) return null;
 
   const lastComma = numericText.lastIndexOf(",");
   const lastDot = numericText.lastIndexOf(".");
@@ -143,7 +143,18 @@ function parseNumber(value: string) {
     : numericText.replace(",", ".");
 
   const parsed = Number(cleaned);
-  return Number.isFinite(parsed) ? parsed : 0;
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseNumber(value: string) {
+  return parseOptionalNumber(value) ?? 0;
+}
+
+function parseMovementDays(value: string) {
+  if (!/^\+?\d+(?:[.,]\d+)*$/.test(value)) return null;
+  const normalized = /^\+?\d{1,3}(?:\.\d{3})+(?:,\d+)?$/.test(value) ? value.replace(/\./g, "") : value;
+  const parsed = parseOptionalNumber(normalized);
+  return parsed !== null && Number.isSafeInteger(parsed) ? parsed : null;
 }
 
 function getAvailableStock(stock: number, confirmedStock: number) {
@@ -206,8 +217,20 @@ function findHeader(
   return bestIndex;
 }
 
+function findMovementDaysHeader(headers: string[], movement: "VENDA" | "COMPRA") {
+  const aliases = [`ULT ${movement} DIAS`, `ULTIMA ${movement} DIAS`, `DIAS SEM ${movement}`, `ULT ${movement}`, `ULTIMA ${movement}`];
+  const reject = ["FORNECEDOR", "DATA", "VALOR", "PRECO", "CUSTO", "QTD", "QUANTIDADE"];
+  const explicit = findHeader(headers.map((header) => /\bDIAS?\b/.test(header) ? header : ""), aliases, { reject });
+  if (explicit >= 0) return explicit;
+  const abbreviation = `ULT ${movement[0]}`;
+  const shortWithDays = headers.indexOf(`${abbreviation} DIAS`);
+  if (shortWithDays >= 0) return shortWithDays;
+  const full = findHeader(headers, aliases, { reject });
+  return full >= 0 ? full : headers.indexOf(abbreviation);
+}
+
 function requiredCell(cells: string[], index: number) {
-  return index >= 0 ? String(cells[index] || "").trim() : "";
+  return index >= 0 ? String(cells[index] ?? "").trim() : "";
 }
 
 function parseStockCsv(csvText: string) {
@@ -286,8 +309,8 @@ function parseStockRows(allRows: string[][]) {
   });
   const confirmedPurchaseIndex = findHeader(headers, ["COMPRA CONFIRMADA", "COMPRA CONF", "COMPRA"]);
   const confirmedTransferIndex = findHeader(headers, ["TRANSF CONFIRMADA", "TRANSFERENCIA CONFIRMADA", "TRANSF CONF", "TRANSFERENCIA CONF"]);
-  const lastSaleDaysIndex = findHeader(headers, ["ULT VENDA DIAS", "ULTIMA VENDA DIAS", "ULT VENDA", "ULTIMA VENDA"]);
-  const lastPurchaseDaysIndex = findHeader(headers, ["ULT COMPRA DIAS", "ULTIMA COMPRA DIAS", "ULT COMPRA", "ULTIMA COMPRA"]);
+  const lastSaleDaysIndex = findMovementDaysHeader(headers, "VENDA");
+  const lastPurchaseDaysIndex = findMovementDaysHeader(headers, "COMPRA");
   const lastPurchaseSupplierIndex = findHeader(headers, ["FORNECEDOR ULT COMPRA", "FORNECEDOR ULTIMA COMPRA", "ULTIMO FORNECEDOR"]);
   const needTypeIndex = findHeader(headers, ["TIPO NECESSIDADE", "NECESSIDADE TIPO"]);
   const ruptureSalesIndex = findHeader(headers, ["RUPTURA VENDA"]);
@@ -321,9 +344,7 @@ function parseStockRows(allRows: string[][]) {
     validRowDetails.push(detail);
 
     const stock = parseNumber(requiredCell(cells, stockIndex));
-    const confirmedStock = confirmedStockIndex >= 0
-      ? parseNumber(requiredCell(cells, confirmedStockIndex))
-      : stock;
+    const confirmedStock = parseOptionalNumber(requiredCell(cells, confirmedStockIndex)) ?? stock;
     const monthlyAvgSalesFromColumn = parseNumber(requiredCell(cells, monthlyAvgIndex));
     const monthlyAvgSales = normalizeMonthlyAvgSales(monthlyAvgSalesFromColumn);
     const manufacturer = normalizeAttribute(requiredCell(cells, manufacturerIndex));
@@ -351,8 +372,8 @@ function parseStockRows(allRows: string[][]) {
       curve: requiredCell(cells, curveIndex).toUpperCase(),
       confirmed_purchase: parseNumber(requiredCell(cells, confirmedPurchaseIndex)),
       confirmed_transfer: parseNumber(requiredCell(cells, confirmedTransferIndex)),
-      last_sale_days: parseNumber(requiredCell(cells, lastSaleDaysIndex)),
-      last_purchase_days: parseNumber(requiredCell(cells, lastPurchaseDaysIndex)),
+      last_sale_days: parseMovementDays(requiredCell(cells, lastSaleDaysIndex)),
+      last_purchase_days: parseMovementDays(requiredCell(cells, lastPurchaseDaysIndex)),
       last_purchase_supplier: requiredCell(cells, lastPurchaseSupplierIndex).toUpperCase() || null,
       need_type: requiredCell(cells, needTypeIndex).toUpperCase() || null,
       rupture_sales: parseNumber(requiredCell(cells, ruptureSalesIndex)),
@@ -556,23 +577,28 @@ export async function POST(request: Request) {
     }));
 
     importStage = "salvar linhas de estoque";
-    const insertChunkSize = 1000;
+    const minimumInsertChunkSize = 125;
+    let insertChunkSize = 1000;
     let movementColumnsAvailable = true;
-    for (let index = 0; index < payload.length; index += insertChunkSize) {
+    for (let index = 0; index < payload.length;) {
       const chunk = payload.slice(index, index + insertChunkSize);
       let { error } = await supabase
         .from("reallocation_stock_items")
-        .insert(chunk);
+        .insert(movementColumnsAvailable ? chunk : stripMovementColumns(chunk));
 
-      if (error && /last_sale_days|last_purchase_days|last_purchase_supplier|need_type|rupture_sales|supplied_percent|min_stock|max_stock|need_cost|schema cache/i.test(error.message || "")) {
+      if (movementColumnsAvailable && error && (error.code === "PGRST204" || error.code === "42703")
+        && /last_sale_days|last_purchase_days|last_purchase_supplier|need_type|rupture_sales|supplied_percent|min_stock|max_stock|need_cost|schema cache/i.test(error.message || "")) {
         movementColumnsAvailable = false;
-        const fallback = await supabase
-          .from("reallocation_stock_items")
-          .insert(stripMovementColumns(chunk));
-        error = fallback.error;
+        ({ error } = await supabase.from("reallocation_stock_items").insert(stripMovementColumns(chunk)));
       }
 
+      // PostgreSQL canceled the entire insert; a smaller retry cannot duplicate rows.
+      if (error?.code === "57014" && chunk.length > minimumInsertChunkSize) {
+        insertChunkSize = Math.max(minimumInsertChunkSize, Math.floor(chunk.length / 2));
+        continue;
+      }
       if (error) throw error;
+      index += chunk.length;
     }
 
     const matchedProducts = payload.filter((row) => row.erp_code).length;
@@ -693,7 +719,9 @@ export async function POST(request: Request) {
     const friendlyMessage = /sector|schema cache/.test(lowerMessage)
       ? "A separacao de estoque por setor ainda nao foi aplicada no banco. Rode o SQL atualizado de reallocation-stock.sql no Supabase e tente importar novamente."
       : /statement timeout|timeout|timed out/.test(lowerMessage)
-        ? "A importacao demorou mais que o banco permitiu. A base anterior foi preservada; tente novamente com o arquivo completo."
+        ? `A importacao demorou mais que o banco permitiu ao ${importStage}. ${databaseError?.code === "57014" || importStage !== "substituir base ativa do setor"
+          ? "A base anterior foi preservada."
+          : "Confira se a base ativa foi atualizada."} Se precisar tentar novamente, use o arquivo completo.`
         : baseMessage;
     const message = /^(Arquivo|Nenhuma|Importe|Envie|A separacao|A importacao)/i.test(friendlyMessage)
       ? friendlyMessage
