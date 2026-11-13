@@ -20,9 +20,10 @@ import type { ExpiringDiscountRule, ExpiringDiscountType, ExpiringInventoryItem,
 import { MultiCheckboxFilter } from '@/app/components/multi-checkbox-filter';
 import { expiringClassificationParts } from '@/lib/expiring-classification';
 import { expiringRuleTargets } from '@/lib/expiring-rule-targets';
-import { classifyExpiringItem, sortExpiringRules } from '@/lib/expiring-rule-calculation';
+import { classifyExpiringItem, expiringBalancesByDeadline, expiringDateReview, expiringDemandProjection, expiringRuleType, groupExpiringOffers, sortExpiringRules, type ExpiringRuleTrace } from '@/lib/expiring-rule-calculation';
 import { expiringA7Kind, isMarkupOffer, isStructuredOffer, quantityOfferTypes } from '@/lib/expiring-a7-offer';
 import { RuleTargetFilter } from '@/app/components/rule-target-filter';
+import { TableColumnMenu } from '@/app/components/table-column-menu';
 import { ruleTargetPlacement, type RuleTargetPlacement } from '@/lib/rule-target-placement';
 
 interface RuleSelectOption {
@@ -59,13 +60,15 @@ const SCOPE_LABELS: Record<ExpiringRuleScopeType, string> = {
 
 const blankRule: ExpiringDiscountRuleInput = {
   name: '',
-  scope_type: 'category',
-  scope_value: '',
-  scope_values: [],
+  rule_type: 'general',
+  scope_type: 'validity',
+  scope_value: 'VALIDADE',
+  scope_values: ['VALIDADE'],
   discount_type: 'percent',
   discount_value: 0,
   min_days_to_expire: 0,
   max_days_to_expire: 90,
+  skip_if_demand_covers_balance: false,
   priority: 100,
   is_active: true,
 };
@@ -78,6 +81,16 @@ function money(value: number) {
   return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
+function importedPrice(value: number | null | undefined) {
+  const amount = Number(value);
+  return Number.isFinite(amount) && amount > 0 ? amount : null;
+}
+
+function ImportedPriceCell({ value }: { value: number | null | undefined }) {
+  const amount = importedPrice(value);
+  return <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{amount === null ? '' : money(amount)}</td>;
+}
+
 function formatTxtNumber(value: number) {
   return String(Number(Number(value || 0).toFixed(4)));
 }
@@ -86,27 +99,6 @@ function formatTxtNumber(value: number) {
 function safeFilePart(value: string) {
   return normalize(value).replace(/[^A-Z0-9]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'loja';
 }
-function numericValue(value: string) {
-  return Number(value.replace(',', '.')) || 0;
-}
-
-function monthsToDays(value: string) {
-  return Math.max(0, Math.round(numericValue(value) * 30));
-}
-
-function daysToEditableMonths(value: number) {
-  const months = Number(value || 0) / 30;
-  if (!months) return '';
-  return Number.isInteger(months) ? String(months) : months.toFixed(1).replace('.', ',');
-}
-
-function monthsRangeLabel(minDays: number, maxDays: number) {
-  const minMonths = Number(minDays || 0) / 30;
-  const maxMonths = Number(maxDays || 0) / 30;
-  const format = (value: number) => (Number.isInteger(value) ? String(value) : value.toFixed(1).replace('.', ','));
-  return `${format(minMonths)}-${format(maxMonths)} meses`;
-}
-
 function downloadTextFile(filename: string, content: string) {
   const blob = new Blob([content], { type: 'text/plain;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
@@ -150,11 +142,39 @@ function basePriceForItem(item: ExpiringInventoryItem, pricingByEan: Map<string,
   return Number(product.store_prices?.[item.branch_code] || product.sale_price || 0);
 }
 
+const costPriceOption = 'at_imported_cost';
+
+const reportColumns = [
+  { key: 'description', label: 'Produto / lote', width: 290 }, { key: 'branch', label: 'Loja', width: 150 },
+  { key: 'balance', label: 'Saldo', width: 80 }, { key: 'days', label: 'Dias', width: 90 },
+  { key: 'expiration', label: 'Validade', width: 110 }, { key: 'manufacturer', label: 'Fabricante', width: 145 },
+  { key: 'rule', label: 'Regra', width: 145 }, { key: 'cost', label: 'Custo importado', width: 125 },
+  { key: 'sale', label: 'Venda importada', width: 125 }, { key: 'base', label: 'Preco base', width: 105 },
+  { key: 'offer', label: 'Oferta', width: 100 },
+] as const;
+type ReportColumn = typeof reportColumns[number];
+type ReportKey = ReportColumn['key'];
+type OfferReportRow = ReturnType<typeof classifyExpiringItem>;
+const reportNumbers = new Set<ReportKey>(['balance', 'days', 'cost', 'sale', 'base', 'offer']);
+
+function reportValues({ item, rule, basePrice, price }: OfferReportRow) {
+  return {
+    description: `${item.description} · ${item.ean} · ${item.lot || '-'}`, branch: normalizeBranchCode(item.branch_code), balance: Number(item.balance_quantity || 0),
+    days: item.days_to_expire, expiration: item.expiration_date, manufacturer: item.manufacturer, rule: rule?.name,
+    cost: importedPrice(item.cost_price), sale: importedPrice(item.sale_price), base: basePrice || null, offer: price || null,
+  };
+}
+
+function isAtImportedCost(rule: Pick<ExpiringDiscountRule, 'discount_type' | 'discount_value'>) {
+  return rule.discount_type === 'cost_percent_price' && Number(rule.discount_value) === 100;
+}
+
 function discountLabel(rule: ExpiringDiscountRule) {
   if (rule.discount_type === 'buy_pay') return `C - Leve ${rule.offer_config?.take}, pague ${rule.offer_config?.pay}`;
   if (rule.discount_type === 'quantity_discount') return `D - ${rule.offer_config?.tiers?.length ?? 0} faixa(s)`;
   if (isMarkupOffer(rule.discount_type)) return `${expiringA7Kind[rule.discount_type]} - ${Number(rule.discount_value)}% markup`;
   if (rule.discount_type === 'half_cost_price') return 'A - 50% do custo';
+  if (isAtImportedCost(rule)) return 'A - Preço de custo';
   if (rule.discount_type === 'cost_percent_price' || rule.discount_type === 'sale_percent_price') {
     return `A - ${formatTxtNumber(Number(rule.discount_value))}% ${rule.discount_type === 'cost_percent_price' ? 'do custo' : 'da venda'}`;
   }
@@ -330,6 +350,14 @@ export function ExpiringProductsManager() {
   const [calculatedItemIds, setCalculatedItemIds] = useState<string[]>([]);
   const [calculatedAt, setCalculatedAt] = useState<string | null>(null);
   const [reportMode, setReportMode] = useState<'offers' | 'excluded'>('offers');
+  const [columnFilters, setColumnFilters] = useState<Partial<Record<ReportKey, string[]>>>({});
+  const [columnOrder, setColumnOrder] = useState<readonly ReportColumn[]>(reportColumns);
+  const [columnWidths, setColumnWidths] = useState<Partial<Record<ReportKey, number>>>({});
+  const [hiddenColumns, setHiddenColumns] = useState<ReportKey[]>([]);
+  const [columnMenu, setColumnMenu] = useState<{ x: number; y: number; column: ReportColumn | null } | null>(null);
+  const draggedColumn = useRef<ReportKey | null>(null);
+  const [inspectionId, setInspectionId] = useState<string | null>(null);
+  const [exportChoices, setExportChoices] = useState<Record<string, string>>({});
   const [ruleDraft, setRuleDraft] = useState<ExpiringDiscountRuleInput>(blankRule);
   const [ruleEditorOpen, setRuleEditorOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<ExpiringTab>('rules');
@@ -420,10 +448,13 @@ export function ExpiringProductsManager() {
     });
     return map;
   }, [branches]);
-  const scopeTypeOptions = useMemo<RuleSelectOption[]>(() => Object.entries(SCOPE_LABELS).map(([value, label]) => ({ value, label })), []);
+  const scopeTypeOptions = useMemo<RuleSelectOption[]>(() => Object.entries(SCOPE_LABELS)
+    .filter(([value]) => value !== 'validity' || expiringRuleType(ruleDraft) === 'general')
+    .map(([value, label]) => ({ value, label: value === 'validity' ? 'Todos os produtos' : label })), [ruleDraft.rule_type, ruleDraft.scope_type]);
   const discountTypeOptions = useMemo<RuleSelectOption[]>(() => [
     { value: 'percent', label: 'B - Desconto %' },
     { value: 'fixed_price', label: 'A - Preco fixo' },
+    { value: costPriceOption, label: 'A - Preço de custo' },
     { value: 'half_cost_price', label: 'A - Metade do custo' },
     { value: 'cost_percent_price', label: 'A - Preço final: % do custo importado' },
     { value: 'sale_percent_price', label: 'A - Preço final: % da venda importada' },
@@ -458,10 +489,21 @@ export function ExpiringProductsManager() {
     } satisfies Record<ExpiringRuleScopeType, Array<{ value: string; label: string }>>;
   }, [items, manufacturerOptions, masterClassificationPaths, masterProducts]);
 
-  const classifiedRows = useMemo(() => {
-    const sortedRules = sortExpiringRules(activeProcessRules);
-    return items.map(item => classifyExpiringItem(item, sortedRules, basePriceForItem(item, pricingByEan)));
-  }, [activeProcessRules, items, pricingByEan]);
+  const sortedRules = useMemo(() => sortExpiringRules(activeProcessRules), [activeProcessRules]);
+  const balances = useMemo(() => sortedRules.some(rule => rule.skip_if_demand_covers_balance) ? expiringBalancesByDeadline(items) : null, [sortedRules, items]);
+  const classifiedRows = useMemo(() => items.map(item => classifyExpiringItem(item, sortedRules, basePriceForItem(item, pricingByEan), balances?.get(item))), [items, sortedRules, pricingByEan, balances]);
+  const inspected = inspectionId ? classifiedRows.find(row => row.item.id === inspectionId) : undefined;
+  const trace: ExpiringRuleTrace = [];
+  if (inspected) classifyExpiringItem(inspected.item, sortedRules, inspected.basePrice, balances?.get(inspected.item), trace);
+  const projection = inspected && trace.some(entry => entry.rule.skip_if_demand_covers_balance)
+    ? expiringDemandProjection(inspected.item, balances?.get(inspected.item) ?? Number(inspected.item.balance_quantity)) : null;
+  const dateReview = useMemo(() => {
+    const now = new Date();
+    return new Map(items.map(item => [item.id, expiringDateReview(item, now)]));
+  }, [items]);
+  const staleImport = [...dateReview.values()].some(review => review.stale);
+  const dateMismatchCount = [...dateReview.values()].filter(review => review.mismatch).length;
+  const inspectedDate = inspected && dateReview.get(inspected.item.id);
 
   const eligibleRows = useMemo(() => classifiedRows.filter(row => row.line !== null), [classifiedRows]);
   const calculatedSet = useMemo(() => new Set(calculatedItemIds), [calculatedItemIds]);
@@ -471,7 +513,7 @@ export function ExpiringProductsManager() {
   const exportExcluded = async () => {
     try {
       const XLSX = await import('xlsx-js-style');
-      const sheet = XLSX.utils.json_to_sheet(excludedRows.map(({ item, exclusionReason, rejectedRule }) => ({
+      const sheet = XLSX.utils.json_to_sheet(excludedRows.map(({ item, exclusionReason, rejectedRule, demandNote }) => ({
         EAN: item.ean,
         Produto: item.description,
         Lote: item.lot,
@@ -483,9 +525,11 @@ export function ExpiringProductsManager() {
         Classificação: item.classification_path,
         Validade: dateLabel(item.expiration_date),
         'Dias para vencer': item.days_to_expire,
+        'Média de venda mensal': item.monthly_average ?? '',
+        'Aviso de demanda': demandNote || '',
         Saldo: Number(item.balance_quantity),
-        Custo: Number(item.cost_price) || null,
-        Venda: Number(item.sale_price) || null,
+        Custo: importedPrice(item.cost_price),
+        Venda: importedPrice(item.sale_price),
         'Regra não aplicada': rejectedRule?.name || '',
         Motivo: exclusionReason,
       })));
@@ -497,7 +541,7 @@ export function ExpiringProductsManager() {
     }
   };
 
-  const visibleRows = useMemo(() => {
+  const searchedRows = useMemo(() => {
     const normalizedQuery = normalize(query);
     const maxDaysValue = maxDays.trim() ? Number(maxDays.replace(',', '.')) : null;
     return reportRows.filter(({ item }) => {
@@ -519,16 +563,24 @@ export function ExpiringProductsManager() {
   const reportSort = useColumnSort();
   const excludedSort = useColumnSort();
   const exportSort = useColumnSort();
-  const sortedVisibleRows = reportSort.sortRowsBy(visibleRows, ({ item, rule, basePrice, price }) => ({
-    description: item.description, branch: item.branch_code, balance: Number(item.balance_quantity || 0),
-    days: item.days_to_expire, expiration: item.expiration_date, manufacturer: item.manufacturer, rule: rule?.name,
-    base: basePrice, offer: price,
-  }));
+  const filterableRows = useMemo(() => searchedRows.map(row => ({ row, values: reportValues(row) })), [searchedRows]);
+  const activeColumnFilters = useMemo(() => reportColumns.flatMap(({ key }) => columnFilters[key]?.length ? [[key, new Set(columnFilters[key])] as const] : []), [columnFilters]);
+  const visibleRows = useMemo(() => filterableRows.filter(({ values }) => activeColumnFilters.every(([key, filter]) => filter.has(String(values[key] ?? '')))).map(({ row }) => row), [filterableRows, activeColumnFilters]);
+  const sortedVisibleRows = reportSort.sortRowsBy(visibleRows, reportValues);
+  const shownColumns = columnOrder.filter(column => !hiddenColumns.includes(column.key));
+  const reportTableWidth = 30 + shownColumns.reduce((sum, column) => sum + (columnWidths[column.key] ?? column.width), 0);
   const visibleItems = useMemo(() => visibleRows.map((row) => row.item), [visibleRows]);
 
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
   const rowsForExport = selectedIds.length ? visibleRows.filter(({ item }) => selectedSet.has(item.id)) : visibleRows;
-  const exportableRows = rowsForExport;
+  const exportGroups = groupExpiringOffers(rowsForExport, row => exportMode === 'byBranch' ? normalizeBranchCode(row.item.branch_code) : '');
+  const exportConflicts = exportGroups.filter(group => group.offers.length > 1);
+  const unresolvedConflicts = exportConflicts.filter(group => !group.offers.some(offer => offer.line === exportChoices[group.key]));
+  const exportableRows = exportGroups.flatMap(group => {
+    const chosen = group.offers.length === 1 ? group.offers[0] : group.offers.find(offer => offer.line === exportChoices[group.key]);
+    return chosen ? [chosen] : [];
+  });
+  const priceWarningCount = exportableRows.filter(row => row.warnings.length).length;
   const exportBranchCount = useMemo(() => new Set(exportableRows.map(({ item }) => normalizeBranchCode(item.branch_code))).size, [exportableRows]);
 
   const branchOptions = useMemo(() => {
@@ -569,6 +621,8 @@ export function ExpiringProductsManager() {
       if (!response.ok) throw new Error(data?.error || 'Erro ao importar pre-vencidos.');
       const importedItems = (data?.items || []) as ExpiringInventoryItem[];
       setItems(importedItems);
+      setInspectionId(null);
+      setExportChoices({});
       setDisabledRuleIds([]);
       if (expiringManagerCache) expiringManagerCache = { ...expiringManagerCache, items: importedItems, disabledRuleIds: [] };
       else expiringManagerCache = {
@@ -597,6 +651,11 @@ export function ExpiringProductsManager() {
   };
 
   const saveRule = async () => {
+    if (![ruleDraft.min_days_to_expire, ruleDraft.max_days_to_expire].every(day => Number.isInteger(day) && day >= 0) ||
+      ruleDraft.max_days_to_expire < ruleDraft.min_days_to_expire) {
+      alert('Informe um intervalo válido em dias inteiros.');
+      return;
+    }
     setSavingRule(true);
     try {
       const payload: ExpiringDiscountRuleInput = ruleDraft.scope_type === 'validity'
@@ -626,12 +685,14 @@ export function ExpiringProductsManager() {
     setRuleDraft({
       id: rule.id,
       name: rule.name,
+      rule_type: expiringRuleType(rule),
       scope_type: rule.scope_type,
       scope_value: rule.scope_value,
       scope_values: expiringRuleTargets(rule),
       discount_type: rule.discount_type,
       discount_value: Number(rule.discount_value || 0),
       offer_config: rule.offer_config,
+      skip_if_demand_covers_balance: rule.skip_if_demand_covers_balance ?? false,
       min_days_to_expire: Number(rule.min_days_to_expire || 0),
       max_days_to_expire: Number(rule.max_days_to_expire || 0),
       priority: Number(rule.priority || 100),
@@ -683,6 +744,8 @@ export function ExpiringProductsManager() {
     }
 
     const ids = eligibleRows.map(({ item }) => item.id);
+    setInspectionId(null);
+    setExportChoices({});
     setCalculatedItemIds(ids);
     setCalculatedAt(new Date().toISOString());
     setSelectedIds([]);
@@ -696,18 +759,8 @@ export function ExpiringProductsManager() {
 
     alert('Calculo concluido: ' + ids.length + ' item' + (ids.length === 1 ? '' : 's') + ' entraram no relatorio.');
   };
-  const clearImportedProcess = () => {
-    setItems([]);
-    setCalculatedItemIds([]);
-    setCalculatedAt(null);
-    setSelectedIds([]);
-    setDisabledRuleIds([]);
-    if (fileInputRef.current) fileInputRef.current.value = '';
-    if (expiringManagerCache) expiringManagerCache = { ...expiringManagerCache, items: [], disabledRuleIds: [] };
-    setActiveTab('import');
-  };
-
   const exportTxt = () => {
+    if (unresolvedConflicts.length) return;
     const lineForRow = (row: (typeof exportableRows)[number]) => row.line;
     const ruleFilePart = (rows: typeof exportableRows) => {
       const names = Array.from(new Set(rows.map(({ rule }) => rule?.name || '').filter(Boolean)));
@@ -730,7 +783,6 @@ export function ExpiringProductsManager() {
 
     if (exportMode === 'single') {
       downloadTextFile(`pre-vencidos-${kindFilePart(exportableRows)}-${exportedRule}-${date}.txt`, exportableRows.map(lineForRow).join('\r\n'));
-      clearImportedProcess();
       return;
     }
 
@@ -749,7 +801,6 @@ export function ExpiringProductsManager() {
 
     const zip = zipSync(zipEntries, { level: 6 });
     downloadBinaryFile(`pre-vencidos-por-loja-${exportedRule}-${date}.zip`, zip, 'application/zip');
-    clearImportedProcess();
   };
 
   const toggleSelected = (id: string) => {
@@ -762,10 +813,56 @@ export function ExpiringProductsManager() {
     setSelectedIds(allSelected ? selectedIds.filter((id) => !ids.includes(id)) : Array.from(new Set([...selectedIds, ...ids])));
   };
 
+  const columnOptions = (key: ReportKey) => {
+    const values = new Map<string, string>();
+    for (const entry of filterableRows) {
+      const raw = entry.values[key];
+      const value = String(raw ?? '');
+      if (!values.has(value)) values.set(value, !value ? 'Sem valor' : key === 'expiration' ? dateLabel(value)
+        : ['cost', 'sale', 'base', 'offer'].includes(key) ? money(Number(raw)) : value);
+    }
+    return [...values].map(([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label, 'pt-BR', { numeric: true }));
+  };
+  const resizeColumn = (event: React.PointerEvent<HTMLButtonElement>, column: ReportColumn) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const handle = event.currentTarget;
+    const start = event.clientX;
+    const width = columnWidths[column.key] ?? column.width;
+    handle.setPointerCapture(event.pointerId);
+    const move = (pointer: PointerEvent) => setColumnWidths(current => ({ ...current, [column.key]: Math.max(24, width + pointer.clientX - start) }));
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('lostpointercapture', () => handle.removeEventListener('pointermove', move), { once: true });
+  };
+  const renderReportCell = (key: ReportKey, { item, rule, basePrice: base, price, demandNote }: OfferReportRow) => {
+    switch (key) {
+      case 'description': return <><button type="button" title="Abrir Raio-X da regra" aria-pressed={inspectionId === item.id} className="block max-w-full truncate text-left font-black uppercase text-slate-950 hover:underline" onClick={() => setInspectionId(item.id)}>{item.description}</button><p className="truncate text-[10px] font-bold text-slate-500">EAN {item.ean} - Lote {item.lot}</p></>;
+      case 'branch': return `${normalizeBranchCode(item.branch_code)} - ${branchByCode.get(normalizeBranchCode(item.branch_code))?.name || item.branch_name || 'LOJA NAO CADASTRADA'}`;
+      case 'balance': return <strong className="font-black">{Number(item.balance_quantity || 0).toLocaleString('pt-BR')}</strong>;
+      case 'days': {
+        const days = item.days_to_expire;
+        const tone = days <= 60 ? 'text-red-600' : days <= 120 ? 'text-amber-700' : 'text-slate-700';
+        const review = dateReview.get(item.id);
+        return <><strong className={`font-black ${tone}`}>{days}</strong>{review?.mismatch && <p className="text-amber-800">Validade: {review.actualDays}</p>}</>;
+      }
+      case 'expiration': return dateLabel(item.expiration_date);
+      case 'manufacturer': return item.manufacturer || '-';
+      case 'rule': return <>{rule && <span className="inline-block max-w-full truncate rounded-full bg-[color-mix(in_srgb,var(--section-accent)_10%,white)] px-2 py-0.5 align-middle text-[10px] font-black uppercase text-amber-800 dark:bg-amber-950 dark:text-amber-200">{rule.name}</span>}{demandNote && <p className="text-amber-800">{demandNote}</p>}</>;
+      case 'cost': { const value = importedPrice(item.cost_price); return value === null ? '' : money(value); }
+      case 'sale': { const value = importedPrice(item.sale_price); return value === null ? '' : money(value); }
+      case 'base': return base ? <strong className="font-bold">{money(base)}</strong> : '-';
+      case 'offer': return price ? <strong className="font-black text-blue-600">{money(price)}</strong> : '-';
+    }
+  };
+
   return (
     <main className="mx-auto flex h-[calc(100dvh-4rem)] max-w-[1760px] flex-col overflow-hidden px-3 py-3 pb-24 md:pb-3">
       <div className="flex h-full min-h-0 flex-col gap-3 overflow-hidden">
         {loadError && <div role="alert" className="shrink-0 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{loadError}</div>}
+        {(staleImport || dateMismatchCount > 0) && <div role="status" className="shrink-0 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900">
+          {staleImport && <p>A importação é de um dia anterior. Importe uma planilha atual antes de recalcular ou exportar.</p>}
+          {dateMismatchCount > 0 && <p>{dateMismatchCount} lote(s) com dias divergentes da validade. O cálculo continua usando os dias da importação.</p>}
+        </div>}
         {missingTable && (
           <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-black uppercase text-amber-700">
             Rode o SQL <span className="font-mono">supabase/expiring-products.sql</span> no Supabase para ativar a aba de pre-vencidos.
@@ -856,27 +953,42 @@ export function ExpiringProductsManager() {
               ))}
               {reportMode === 'excluded' && <button type="button" disabled={!excludedRows.length} onClick={() => void exportExcluded()} className="ml-auto inline-flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-50"><Download size={15} /> Exportar XLSX</button>}
             </div>
+            {inspected && <aside aria-label="Raio-X da regra" className="max-h-[35dvh] shrink-0 overflow-auto border-b border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
+              <div className="flex items-start justify-between gap-3">
+                <h2 className="min-w-0 break-words font-bold text-slate-900">Raio-X · {inspected.item.description} · Lote {inspected.item.lot}</h2>
+                <button type="button" aria-label="Fechar Raio-X" title="Fechar Raio-X" className="shrink-0 rounded p-1 hover:bg-slate-200" onClick={() => setInspectionId(null)}><X size={16} /></button>
+              </div>
+              <p className="mt-1">{inspected.rule ? `Regra aplicada: ${inspected.rule.name}` : inspected.exclusionReason}</p>
+              <p className="mt-1">Dias usados: {inspected.item.days_to_expire} · Pela validade: {inspectedDate?.actualDays ?? 'sem data válida'}{inspectedDate?.mismatch && <strong className="text-amber-800"> · Divergência</strong>}</p>
+              {projection && <p className="mt-1">Demanda: {projection.monthly.toLocaleString('pt-BR')} un./mês × {inspected.item.days_to_expire} ÷ 30 = <strong>{projection.projected.toLocaleString('pt-BR')} un. estimadas</strong> · Saldo até o prazo: {projection.balance.toLocaleString('pt-BR')} un.</p>}
+              {inspected.demandNote && <p className="mt-1 text-amber-800">{inspected.demandNote}</p>}
+              {!!trace.length && <ul className="mt-2 divide-y divide-slate-200 border-t border-slate-200">{trace.map(({ rule, reason }) => <li className="py-1" key={rule.id}><strong>{rule.name}</strong> ({rule.min_days_to_expire}–{rule.max_days_to_expire} dias) · {reason}</li>)}</ul>}
+            </aside>}
             {reportMode === 'excluded' ? (
               <div className="min-h-0 flex-1 overflow-auto">
-                <table className="w-full min-w-[850px] text-left text-xs">
+                <table className="w-full min-w-[1080px] text-left text-xs">
                   <thead className="text-slate-600"><tr>
-                    {['Produto / lote', 'Loja', 'Validade', 'Fabricante', 'Classificação', 'Motivo'].map(label => <SortableTableHeader key={label} sort={excludedSort} column={label} className="px-3 py-3" />)}
+                    {['Produto / lote', 'Loja', 'Validade', 'Dias', 'Fabricante', 'Classificação', 'Custo importado', 'Venda importada', 'Motivo'].map(label => <SortableTableHeader key={label} sort={excludedSort} column={label} className={`px-3 py-3 ${label.endsWith('importado') || label.endsWith('importada') ? 'text-right' : ''}`} />)}
                   </tr></thead>
                   <tbody>
                     {excludedSort.sortRowsBy(excludedRows, ({ item, exclusionReason }) => ({
-                      'Produto / lote': item.description, Loja: item.branch_code, Validade: item.expiration_date,
-                      Fabricante: item.manufacturer, 'Classificação': item.classification_path, Motivo: exclusionReason,
-                    })).map(({ item, exclusionReason, rejectedRule }) => (
+                      'Produto / lote': item.description, Loja: item.branch_code, Validade: item.expiration_date, Dias: item.days_to_expire,
+                      Fabricante: item.manufacturer, 'Classificação': item.classification_path,
+                      'Custo importado': importedPrice(item.cost_price), 'Venda importada': importedPrice(item.sale_price), Motivo: exclusionReason,
+                    })).map(({ item, exclusionReason, rejectedRule, demandNote }) => (
                       <tr key={item.id} className="border-t border-slate-100">
-                        <td className="px-3 py-3"><strong>{item.description}</strong><p>{item.ean} · {item.lot}</p></td>
+                        <td className="px-3 py-3"><button type="button" title="Abrir Raio-X da regra" aria-pressed={inspectionId === item.id} className="text-left font-bold hover:underline" onClick={() => setInspectionId(item.id)}>{item.description}</button><p>{item.ean} · {item.lot}</p></td>
                         <td className="px-3 py-3">{item.branch_code}</td>
                         <td className="px-3 py-3">{dateLabel(item.expiration_date)}</td>
+                        <td className="px-3 py-3 tabular-nums">{item.days_to_expire}{dateReview.get(item.id)?.mismatch && <p className="text-amber-800">Validade: {dateReview.get(item.id)?.actualDays}</p>}</td>
                         <td className="px-3 py-3">{item.manufacturer || '-'}</td>
                         <td className="px-3 py-3">{item.classification_path || '-'}</td>
-                        <td className="px-3 py-3">{exclusionReason}{rejectedRule && <p className="text-slate-500">{rejectedRule.name}</p>}</td>
+                        <ImportedPriceCell value={item.cost_price} />
+                        <ImportedPriceCell value={item.sale_price} />
+                        <td className="px-3 py-3">{exclusionReason}{rejectedRule && <p className="text-slate-500">{rejectedRule.name}</p>}{demandNote && <p className="text-amber-800">{demandNote}</p>}</td>
                       </tr>
                     ))}
-                    {!excludedRows.length && <tr><td colSpan={6} className="px-3 py-10 text-center text-slate-500">{calculatedAt ? 'Todos os itens entraram em oferta.' : 'Calcule para listar os itens fora das regras.'}</td></tr>}
+                    {!excludedRows.length && <tr><td colSpan={9} className="px-3 py-10 text-center text-slate-500">{calculatedAt ? 'Todos os itens entraram em oferta.' : 'Calcule para listar os itens fora das regras.'}</td></tr>}
                   </tbody>
                 </table>
               </div>
@@ -894,46 +1006,57 @@ export function ExpiringProductsManager() {
                 <MultiCheckboxFilter label="Loja" options={branchOptions} selectedValues={branchFilters} onChange={setBranchFilters} allLabel="Todas as lojas" />
                 <MultiCheckboxFilter label="Fabricante" options={manufacturerOptions} selectedValues={manufacturerFilters} onChange={setManufacturerFilters} allLabel="Todos fabricantes" />
               </div>
+              <div className="mt-2 flex flex-wrap items-center gap-3 text-xs font-semibold text-slate-700">
+                <button type="button" onClick={event => { const rect = event.currentTarget.getBoundingClientRect(); setColumnMenu({ x: rect.left, y: rect.bottom + 4, column: null }); }}>Configurar colunas{hiddenColumns.length > 0 && ` · ${hiddenColumns.length} ocultas`}</button>
+                {activeColumnFilters.length > 0 && <button type="button" className="text-amber-800" onClick={() => setColumnFilters({})}>Limpar filtros das colunas ({activeColumnFilters.length})</button>}
+              </div>
             </div>
 
             <div className="min-h-0 flex-1 overflow-auto">
-              <table className="w-full min-w-[1180px] text-xs">
-                <thead className="bg-slate-50 text-[10px] uppercase text-slate-500">
+              <table className="table-fixed border-separate border-spacing-0 text-xs" style={{ width: reportTableWidth }}>
+                <colgroup><col style={{ width: 30 }} />{shownColumns.map(column => <col key={column.key} style={{ width: columnWidths[column.key] ?? column.width }} />)}</colgroup>
+                <thead className="sticky top-0 z-10 bg-slate-50 text-[10px] uppercase text-slate-500">
                   <tr>
-                    <th className="w-10 px-3 py-3 text-left"><input type="checkbox" checked={visibleItems.length > 0 && visibleItems.every((item) => selectedSet.has(item.id))} onChange={toggleAllVisible} /></th>
-                    <SortableTableHeader sort={reportSort} column="description" className="px-3 py-3 text-left">Produto / lote</SortableTableHeader>
-                    <SortableTableHeader sort={reportSort} column="branch" className="px-3 py-3 text-left">Loja</SortableTableHeader>
-                    <SortableTableHeader sort={reportSort} column="balance" className="px-3 py-3 text-right">Saldo</SortableTableHeader>
-                    <SortableTableHeader sort={reportSort} column="days" className="px-3 py-3 text-right">Dias</SortableTableHeader>
-                    <SortableTableHeader sort={reportSort} column="expiration" className="px-3 py-3 text-left">Validade</SortableTableHeader>
-                    <SortableTableHeader sort={reportSort} column="manufacturer" className="px-3 py-3 text-left">Fabricante</SortableTableHeader>
-                    <SortableTableHeader sort={reportSort} column="rule" className="px-3 py-3 text-left">Regra</SortableTableHeader>
-                    <SortableTableHeader sort={reportSort} column="base" className="px-3 py-3 text-right">Preco base</SortableTableHeader>
-                    <SortableTableHeader sort={reportSort} column="offer" className="px-3 py-3 text-right">Oferta</SortableTableHeader>
+                    <th className="border-b border-r border-slate-200 text-center"><input type="checkbox" aria-label="Selecionar itens filtrados" checked={visibleItems.length > 0 && visibleItems.every((item) => selectedSet.has(item.id))} onChange={toggleAllVisible} /></th>
+                    {shownColumns.map(column => <SortableTableHeader key={column.key} sort={reportSort} column={column.key} className="relative border-b border-r border-slate-200 px-1 py-2 text-left"
+                      draggable onDragStart={event => { draggedColumn.current = column.key; event.dataTransfer.setData('text/plain', column.key); }} onDragEnd={() => { draggedColumn.current = null; }}
+                      onDragOver={event => { if (draggedColumn.current) event.preventDefault(); }} onDrop={event => {
+                        event.preventDefault();
+                        const source = draggedColumn.current;
+                        if (!source || source === column.key) return;
+                        setColumnOrder(current => { const from = current.findIndex(item => item.key === source); const to = current.findIndex(item => item.key === column.key); const next = [...current]; next.splice(to, 0, ...next.splice(from, 1)); return next; });
+                        draggedColumn.current = null;
+                      }} onContextMenu={event => { event.preventDefault(); setColumnMenu({ x: event.clientX, y: event.clientY, column }); }}>
+                      <span className="inline-block max-w-[calc(100%-24px)] truncate align-middle" title={column.label}>{column.label}</span>
+                      <div className="absolute right-1 top-1/2 -translate-y-1/2" onDoubleClick={event => event.stopPropagation()}><RuleTargetFilter compact label={column.label} options={columnOptions(column.key)} selectedValues={columnFilters[column.key] ?? []} onChange={values => setColumnFilters(current => ({ ...current, [column.key]: values }))} /></div>
+                      <button type="button" aria-label={`Redimensionar ${column.label}`} title={`Redimensionar ${column.label}`} className="absolute inset-y-0 right-0 w-1 touch-none cursor-col-resize hover:bg-amber-400" onPointerDown={event => resizeColumn(event, column)} onDoubleClick={event => { event.stopPropagation(); setColumnWidths(current => ({ ...current, [column.key]: column.width })); }} onKeyDown={event => { if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return; event.preventDefault(); setColumnWidths(current => ({ ...current, [column.key]: Math.max(24, (current[column.key] ?? column.width) + (event.key === 'ArrowLeft' ? -8 : 8)) })); }} />
+                    </SortableTableHeader>)}
                   </tr>
                 </thead>
                 <tbody>
                   {loading ? (
-                    <tr><td colSpan={10} className="px-4 py-12 text-center font-black uppercase text-slate-300">Carregando...</td></tr>
+                    <tr><td colSpan={shownColumns.length + 1} className="px-4 py-12 text-center font-black uppercase text-slate-300">Carregando...</td></tr>
                   ) : visibleItems.length === 0 ? (
-                    <tr><td colSpan={10} className="px-4 py-12 text-center font-black uppercase text-slate-300">{calculatedAt ? 'Nenhum item bateu nas regras ativas' : 'Importe o arquivo e clique em calcular para gerar o relatorio'}</td></tr>
-                  ) : sortedVisibleRows.map(({ item, rule, basePrice: base, price }) => (
-                    <tr key={item.id} className="border-t border-slate-100 odd:bg-white even:bg-slate-50/60">
-                      <td className="px-3 py-3"><input type="checkbox" checked={selectedSet.has(item.id)} onChange={() => toggleSelected(item.id)} /></td>
-                      <td className="px-3 py-3"><p className="font-black uppercase text-slate-950">{item.description}</p><p className="mt-1 text-[10px] font-bold text-slate-400">EAN {item.ean} - Lote {item.lot}</p></td>
-                      <td className="px-3 py-3 font-bold text-slate-600">{normalizeBranchCode(item.branch_code)} - {branchByCode.get(normalizeBranchCode(item.branch_code))?.name || item.branch_name || 'LOJA NAO CADASTRADA'}</td>
-                      <td className="px-3 py-3 text-right font-black">{Number(item.balance_quantity || 0).toLocaleString('pt-BR')}</td>
-                      <td className={['px-3 py-3 text-right font-black', item.days_to_expire <= 60 ? 'text-red-600' : item.days_to_expire <= 120 ? 'text-amber-600' : 'text-slate-700'].join(' ')}>{item.days_to_expire}</td>
-                      <td className="px-3 py-3 font-bold text-slate-600">{dateLabel(item.expiration_date)}</td>
-                      <td className="px-3 py-3 font-bold text-slate-600">{item.manufacturer || '-'}</td>
-                      <td className="px-3 py-3"><span className="rounded-full bg-[color-mix(in_srgb,var(--section-accent)_10%,white)] px-2 py-1 text-[10px] font-black uppercase text-[var(--section-accent)]">{rule?.name}</span></td>
-                      <td className="px-3 py-3 text-right font-bold">{base ? money(base) : '-'}</td>
-                      <td className="px-3 py-3 text-right font-black text-blue-600">{price ? money(price) : '-'}</td>
+                    <tr><td colSpan={shownColumns.length + 1} className="px-4 py-12 text-center font-black uppercase text-slate-300">{calculatedAt ? 'Nenhum item encontrado com os filtros atuais' : 'Importe o arquivo e clique em calcular para gerar o relatorio'}</td></tr>
+                  ) : sortedVisibleRows.map(row => {
+                    const values = reportValues(row);
+                    return (
+                    <tr key={row.item.id} className="odd:bg-white even:bg-slate-50/60">
+                      <td className="border-b border-r border-slate-200 text-center"><input type="checkbox" aria-label={`Selecionar ${row.item.description}`} checked={selectedSet.has(row.item.id)} onChange={() => toggleSelected(row.item.id)} /></td>
+                      {shownColumns.map(({ key }) => <td key={key} className={`truncate border-b border-r border-slate-200 px-2 py-1 ${reportNumbers.has(key) ? 'text-right tabular-nums' : ''}`} title={String(values[key] ?? '')}>{renderReportCell(key, row)}</td>)}
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
+            {columnMenu && <TableColumnMenu x={columnMenu.x} y={columnMenu.y} column={columnMenu.column} columns={reportColumns} hidden={hiddenColumns}
+              configure={!columnMenu.column} canSort={Boolean(columnMenu.column)}
+              onSort={direction => { if (columnMenu.column) reportSort.toggle(columnMenu.column.key, direction); }} onClearSort={reportSort.clear}
+              onRestoreWidth={() => { const column = columnMenu.column; if (column) setColumnWidths(current => ({ ...current, [column.key]: column.width })); }}
+              onRestoreAll={() => { setColumnOrder(reportColumns); setColumnWidths({}); setHiddenColumns([]); }}
+              onToggle={key => setHiddenColumns(current => current.includes(key) ? current.filter(item => item !== key) : current.length < reportColumns.length - 1 ? [...current, key] : current)}
+              onShowAll={() => setHiddenColumns([])} onClose={() => setColumnMenu(null)} />}
             </>}
           </section>
         )}
@@ -976,13 +1099,13 @@ export function ExpiringProductsManager() {
                       <article key={rule.id} className={['grid grid-cols-1 gap-3 rounded-3xl border bg-white px-4 py-3 shadow-sm shadow-slate-200/70 transition hover:shadow-md md:grid-cols-[minmax(180px,1fr)_minmax(260px,1.4fr)_130px_110px_150px_auto] md:items-center', usableInCurrentImport ? 'border-blue-100 hover:border-blue-200' : 'border-slate-100 opacity-70'].join(' ')}>
                         <div className="min-w-0">
                           <p className="truncate text-sm font-black uppercase text-slate-950" title={rule.name}>{rule.name}</p>
-                          <p className="mt-1 text-[10px] font-black uppercase tracking-widest text-slate-400 md:hidden">{SCOPE_LABELS[rule.scope_type]}</p>
+                          <p className="mt-1 text-[10px] font-bold uppercase text-slate-500">{expiringRuleType(rule) === 'general' ? 'Geral' : 'Específica'}{rule.skip_if_demand_covers_balance && ' · Demanda mensal'}</p>
                         </div>
                         <div className="min-w-0 rounded-2xl bg-slate-50 px-3 py-2">
                           <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">{SCOPE_LABELS[rule.scope_type]}</p>
                           <p className="mt-1 truncate text-xs font-black uppercase text-slate-700" title={rule.scope_type === 'validity' ? 'Todos os produtos dentro do periodo' : expiringRuleTargets(rule).join(', ')}>{rule.scope_type === 'validity' ? 'Todos os produtos dentro do periodo' : expiringRuleTargets(rule).join(', ')}</p>
                         </div>
-                        <span className="text-xs font-black uppercase text-slate-700 md:text-right">{monthsRangeLabel(rule.min_days_to_expire, rule.max_days_to_expire)}</span>
+                        <span className="text-xs font-black uppercase text-slate-700 md:text-right">{rule.min_days_to_expire}–{rule.max_days_to_expire} dias</span>
                         <span className="rounded-2xl bg-[color-mix(in_srgb,var(--section-accent)_10%,white)] px-3 py-2 text-center text-sm font-black text-[var(--section-accent)]">{discountLabel(rule)}</span>
                         <button
                           type="button"
@@ -1036,38 +1159,60 @@ export function ExpiringProductsManager() {
                   <input value={ruleDraft.name} onChange={(event) => setRuleDraft({ ...ruleDraft, name: event.target.value })} placeholder="Nome da regra" className="h-12 w-full min-w-0 rounded-2xl border-0 bg-white px-4 text-xs font-black uppercase text-slate-900 outline-none ring-1 ring-slate-100 transition placeholder:text-slate-400 hover:ring-blue-100 focus:ring-2 focus:ring-blue-200" />
                 </div>
 
+                <label className="rounded-3xl border border-slate-100 bg-slate-50/60 p-4 text-xs font-bold text-slate-700">
+                  Tipo de regra
+                  <select className="mt-3 h-12 w-full rounded-2xl border border-slate-200 bg-white px-3" value={expiringRuleType(ruleDraft)} onChange={event => {
+                    const rule_type = event.target.value === 'specific' ? 'specific' : 'general';
+                    setRuleDraft(current => rule_type === 'specific' && current.scope_type === 'validity'
+                      ? { ...current, rule_type, scope_type: 'category', scope_value: '', scope_values: [] }
+                      : { ...current, rule_type });
+                  }}>
+                    <option value="general">Geral</option>
+                    <option value="specific">Específica</option>
+                  </select>
+                </label>
+
                 <div className="rounded-3xl border border-slate-100 bg-slate-50/60 p-4 lg:col-span-2">
-                  <p className="mb-3 text-[10px] font-black uppercase tracking-widest text-slate-400">Alvo da regra</p>
+                  <p className="mb-3 text-[10px] font-black uppercase tracking-widest text-slate-400">{expiringRuleType(ruleDraft) === 'specific' ? 'Grupo exclusivo desta regra' : 'Filtro da regra'}</p>
                   <div className="grid grid-cols-1 gap-3 md:grid-cols-[220px_1fr]">
                     <RuleSearchableSelect value={ruleDraft.scope_type} options={scopeTypeOptions} placeholder="Tipo" onChange={(value) => {
                       const nextScope = (value || 'category') as ExpiringRuleScopeType;
+                      if (nextScope === ruleDraft.scope_type) return;
                       setRuleDraft({ ...ruleDraft, scope_type: nextScope, scope_value: nextScope === 'validity' ? 'VALIDADE' : '', scope_values: nextScope === 'validity' ? ['VALIDADE'] : [] });
                     }} />
-                    {ruleDraft.scope_type === 'validity' ? (
-                      <div className="flex h-12 items-center rounded-2xl bg-white px-4 text-xs font-black uppercase text-slate-500 ring-1 ring-slate-100">Todos os produtos dentro do periodo</div>
-                    ) : (
-                      <RuleTargetFilter key={ruleDraft.scope_type} label={SCOPE_LABELS[ruleDraft.scope_type]} options={ruleScopeOptions[ruleDraft.scope_type]} selectedValues={ruleDraft.scope_values ?? (ruleDraft.scope_value ? [ruleDraft.scope_value] : [])} onChange={values => setRuleDraft({ ...ruleDraft, scope_value: values[0] || '', scope_values: values })} />
-                    )}
+                    {ruleDraft.scope_type !== 'validity' && <RuleTargetFilter key={ruleDraft.scope_type} label={SCOPE_LABELS[ruleDraft.scope_type]} options={ruleScopeOptions[ruleDraft.scope_type]} selectedValues={ruleDraft.scope_values ?? (ruleDraft.scope_value ? [ruleDraft.scope_value] : [])} onChange={values => setRuleDraft({ ...ruleDraft, scope_value: values[0] || '', scope_values: values })} />}
                   </div>
                 </div>
 
                 <div className="rounded-3xl border border-slate-100 bg-slate-50/60 p-4">
                   <p className="mb-3 text-[10px] font-black uppercase tracking-widest text-slate-400">Prazo para vencer</p>
                   <div className="grid grid-cols-2 gap-3">
-                    <label className="text-[9px] font-black uppercase tracking-widest text-slate-400">Min. meses<input value={daysToEditableMonths(ruleDraft.min_days_to_expire)} onChange={(event) => setRuleDraft({ ...ruleDraft, min_days_to_expire: monthsToDays(event.target.value) })} placeholder="0" className="mt-1 h-12 w-full rounded-2xl border-0 bg-white px-4 text-xs font-black text-slate-900 outline-none ring-1 ring-slate-100 transition hover:ring-blue-100 focus:ring-2 focus:ring-blue-200" /></label>
-                    <label className="text-[9px] font-black uppercase tracking-widest text-slate-400">Max. meses<input value={daysToEditableMonths(ruleDraft.max_days_to_expire)} onChange={(event) => setRuleDraft({ ...ruleDraft, max_days_to_expire: monthsToDays(event.target.value) })} placeholder="3" className="mt-1 h-12 w-full rounded-2xl border-0 bg-white px-4 text-xs font-black text-slate-900 outline-none ring-1 ring-slate-100 transition hover:ring-blue-100 focus:ring-2 focus:ring-blue-200" /></label>
+                    {([['min_days_to_expire', 'Mínimo (dias)'], ['max_days_to_expire', 'Máximo (dias)']] as const).map(([key, label]) => (
+                      <label key={key} className="text-xs font-bold text-slate-600">{label}
+                        <input type="number" min="0" step="1" value={Number.isNaN(ruleDraft[key]) ? '' : ruleDraft[key]} onChange={event => setRuleDraft({ ...ruleDraft, [key]: event.target.valueAsNumber })} className="mt-1 h-11 w-full rounded-lg border border-slate-200 bg-white px-3" />
+                      </label>
+                    ))}
                   </div>
+                  <fieldset className="mt-4 border-t border-slate-200 pt-3">
+                    <legend className="pr-2 text-xs font-bold text-slate-700">Sub-regras</legend>
+                    <label className="flex items-start gap-2 text-xs font-semibold text-slate-700">
+                      <input type="checkbox" className="mt-0.5 size-4 shrink-0 accent-[var(--section-accent)]" checked={ruleDraft.skip_if_demand_covers_balance ?? false} onChange={event => setRuleDraft({ ...ruleDraft, skip_if_demand_covers_balance: event.target.checked })} />
+                      Não aplicar oferta se a demanda mensal da loja cobrir o saldo até o vencimento
+                    </label>
+                  </fieldset>
                 </div>
 
                 <div className="rounded-3xl border border-slate-100 bg-slate-50/60 p-4">
                   <p className="mb-3 text-[10px] font-black uppercase tracking-widest text-slate-400">Tipo de oferta A7</p>
                   <div className="grid gap-3">
-                    <RuleSearchableSelect value={ruleDraft.discount_type} options={discountTypeOptions} placeholder="Tipo de oferta" onChange={(value) => {
-                      const type = (value || 'percent') as ExpiringDiscountType;
-                      if (type === ruleDraft.discount_type) return;
-                      setRuleDraft({ ...ruleDraft, discount_type: type, discount_value: 0, offer_config: type === 'quantity_discount' ? { quantityType: 'A', aboveQuantity: 'A', tiers: [{ quantity: 1, value: 0 }] } : null });
+                    <RuleSearchableSelect value={isAtImportedCost(ruleDraft) ? costPriceOption : ruleDraft.discount_type} options={discountTypeOptions} placeholder="Tipo de oferta" onChange={(value) => {
+                      const atCost = value === costPriceOption;
+                      const type = (atCost ? 'cost_percent_price' : value || 'percent') as ExpiringDiscountType;
+                      if (type === ruleDraft.discount_type && atCost === isAtImportedCost(ruleDraft)) return;
+                      setRuleDraft({ ...ruleDraft, discount_type: type, discount_value: atCost ? 100 : 0, offer_config: type === 'quantity_discount' ? { quantityType: 'A', aboveQuantity: 'A', tiers: [{ quantity: 1, value: 0 }] } : null });
                     }} />
-                    {!isStructuredOffer(ruleDraft.discount_type) && (
+                    {isAtImportedCost(ruleDraft) && <p className="text-xs font-semibold text-slate-600">Preço final igual ao custo importado na planilha.</p>}
+                    {!isAtImportedCost(ruleDraft) && !isStructuredOffer(ruleDraft.discount_type) && (
                       <label className="text-xs font-bold text-slate-600">
                         {ruleDraft.discount_type === 'fixed_price' ? 'Preço (R$)' : 'Percentual (%)'}
                         <input type="number" min="0.0001" step="0.0001" value={ruleDraft.discount_type === 'half_cost_price' ? 50 : ruleDraft.discount_value || ''} onChange={(event) => setRuleDraft({ ...ruleDraft, discount_value: Number(event.target.value) })} disabled={ruleDraft.discount_type === 'half_cost_price'} className="mt-1 h-11 w-full rounded-lg border border-slate-200 bg-white px-3 disabled:opacity-60" />
@@ -1151,12 +1296,24 @@ export function ExpiringProductsManager() {
                     <button type="button" onClick={() => setExportMode('single')} className={['min-h-12 rounded-2xl px-4 text-[11px] font-black uppercase tracking-widest transition', exportMode === 'single' ? 'bg-blue-600 text-white shadow-lg shadow-blue-200' : 'bg-white/70 text-slate-500 hover:bg-white'].join(' ')}>Arquivo unico</button>
                     <button type="button" onClick={() => setExportMode('byBranch')} className={['min-h-12 rounded-2xl px-4 text-[11px] font-black uppercase tracking-widest transition', exportMode === 'byBranch' ? 'bg-blue-600 text-white shadow-lg shadow-blue-200' : 'bg-white/70 text-slate-500 hover:bg-white'].join(' ')}>Separado por loja</button>
                   </div>
-                  <button onClick={exportTxt} className="inline-flex h-[54px] items-center justify-center gap-2 rounded-2xl bg-blue-600 px-5 text-xs font-black uppercase tracking-widest text-white shadow-lg shadow-blue-200"><Download size={15} /> Exportar Arquivo</button>
+                  <button onClick={exportTxt} disabled={unresolvedConflicts.length > 0 || !exportableRows.length} className="inline-flex h-[54px] items-center justify-center gap-2 rounded-2xl bg-blue-600 px-5 text-xs font-black uppercase tracking-widest text-white shadow-lg shadow-blue-200 disabled:opacity-50"><Download size={15} /> Exportar Arquivo</button>
                 </div>
               </div>
             </div>
 
             <div className="min-h-0 flex-1 overflow-auto">
+              {exportConflicts.length > 0 && <section aria-label="Conflitos de oferta" className="space-y-2 border-b border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                <h3 className="font-bold">Conflitos de oferta · {unresolvedConflicts.length} pendente(s)</h3>
+                <p>O TXT aceita uma oferta por EAN em cada arquivo. Escolha qual enviar{exportMode === 'single' ? ' ou separe por loja' : ''}.</p>
+                {exportConflicts.map(({ key, offers }) => <label key={key} className="grid min-w-0 gap-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] sm:items-center">
+                  <span className="break-words font-semibold">{offers[0].item.description} · {offers[0].item.ean}{exportMode === 'byBranch' && ` · Loja ${offers[0].item.branch_code}`}</span>
+                  <select className="h-9 min-w-0 rounded border border-amber-300 bg-white px-2 text-slate-900" value={offers.some(row => row.line === exportChoices[key]) ? exportChoices[key] : ''} onChange={event => setExportChoices(current => ({ ...current, [key]: event.target.value }))}>
+                    <option value="">Escolha a oferta</option>
+                    {offers.map(({ item, rule, line }) => <option key={line} value={line ?? ''}>Loja {item.branch_code} · Lote {item.lot} · {rule?.name} · {line}</option>)}
+                  </select>
+                </label>)}
+              </section>}
+              {priceWarningCount > 0 && <p className="border-b border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900">{priceWarningCount} oferta(s) com aviso de preço. Confira os avisos na tabela antes de exportar.</p>}
               <table className="w-full min-w-[920px] text-xs">
                 <thead className="bg-slate-50 text-[10px] uppercase text-slate-500">
                   <tr>
@@ -1175,13 +1332,13 @@ export function ExpiringProductsManager() {
                   ) : exportSort.sortRowsBy(exportableRows, ({ item, rule, price, line }) => ({
                     ean: item.ean, description: item.description, branch: item.branch_code, rule: rule?.name, price,
                     discount: rule ? discountLabel(rule) : '', line,
-                  })).map(({ item, rule, price, line }) => (
+                  })).map(({ item, rule, price, line, warnings }) => (
                       <tr key={item.id} className="border-t border-slate-100 odd:bg-white even:bg-slate-50/60">
                         <td className="px-3 py-3 font-black">{item.ean}</td>
                         <td className="px-3 py-3 font-bold uppercase text-slate-700">{item.description}</td>
                         <td className="px-3 py-3 font-bold text-slate-500">{normalizeBranchCode(item.branch_code)} - {branchByCode.get(normalizeBranchCode(item.branch_code))?.name || item.branch_name || 'LOJA NAO CADASTRADA'}</td>
                         <td className="px-3 py-3 font-bold uppercase text-slate-500">{rule?.name}</td>
-                        <td className="px-3 py-3 text-right font-black text-blue-700">{price ? money(price) : '-'}</td>
+                        <td className="px-3 py-3 text-right font-black text-blue-700">{price ? money(price) : '-'}{warnings.map(warning => <p key={warning} className="mt-1 text-amber-800">{warning}</p>)}</td>
                         <td className="px-3 py-3 text-right font-black text-[var(--section-accent)]">{rule ? discountLabel(rule) : '-'}</td>
                         <td className="px-3 py-3 font-mono text-[11px] text-slate-500">{line}</td>
                       </tr>

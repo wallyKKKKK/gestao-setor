@@ -136,6 +136,7 @@ export interface PricingBranch {
 
 
 export type ExpiringRuleScopeType = "product" | "manufacturer" | "line" | "department" | "category" | "classification" | "validity";
+export type ExpiringRuleType = "general" | "specific";
 export type ExpiringDiscountType = "percent" | "fixed_price" | "half_cost_price" | "cost_percent_price" | "sale_percent_price" | "buy_pay" | "quantity_discount" | "cost_markup" | "average_cost_markup" | "reference_price_markup";
 export type ExpiringOfferConfig = {
   take?: number;
@@ -170,7 +171,7 @@ export interface ExpiringInventoryItem {
   abc_value: string;
   imported_user: string;
   included_at: string | null;
-  monthly_average: number;
+  monthly_average?: number | null;
   purchase_demand_30d: number;
   cost_price: number;
   sale_price: number;
@@ -183,6 +184,8 @@ export interface ExpiringInventoryItem {
 }
 
 export interface ExpiringDiscountRule {
+  rule_type?: ExpiringRuleType | null;
+  skip_if_demand_covers_balance?: boolean;
   id: string;
   name: string;
   scope_type: ExpiringRuleScopeType;

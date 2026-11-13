@@ -35,7 +35,7 @@ interface ParsedExpiringInventoryItem {
   abc_value: string;
   imported_user: string;
   included_at: string | null;
-  monthly_average: number;
+  monthly_average: number | null;
   purchase_demand_30d: number;
   cost_price: number;
   sale_price: number;
@@ -107,6 +107,13 @@ function numberValue(value: unknown) {
 
 function integerValue(value: unknown) {
   return Math.trunc(numberValue(value));
+}
+
+function monthlySalesValue(value: unknown) {
+  const text = String(value ?? '').trim();
+  if (typeof value !== 'number' && !/^\d+(?:[.,]\d+)?$|^\d{1,3}(?:\.\d{3})+,\d+$/.test(text)) return null;
+  const sales = typeof value === 'number' ? value : Number(text.includes(',') ? text.replace(/\./g, '').replace(',', '.') : text);
+  return Number.isFinite(sales) && sales >= 0 ? sales : null;
 }
 
 function priceValue(value: unknown) {
@@ -251,7 +258,7 @@ export async function POST(request: Request) {
         abc_value: normalizeText(cell(row, ["Curva ABC Valor"])),
         imported_user: normalizeText(cell(row, ["Usuario", "Usuário", "User", "Operador"])),
         included_at: timestampValue(cell(row, ["Data Hora Inclusao", "Data Hora Inclusão", "Data Inclusao", "Inclusao"])),
-        monthly_average: numberValue(cell(row, ["Media Venda Mensal", "Média Venda Mensal", "Media Mensal", "Media Venda"])),
+        monthly_average: monthlySalesValue(cell(row, ["Demanda Mensal", "Venda Mensal", "Media Venda Mensal", "Media de Venda Mensal", "Media Mensal", "Media Venda"], true)),
         purchase_demand_30d: numberValue(cell(row, ["Demanda de Compra (Ult. 30 Dias)", "Demanda de Compra (Últ. 30 Dias)", "Demanda Compra 30 Dias", "Demanda Compra"])),
         cost_price: priceValue(cell(row, ["Custo", "Preco Custo", "Preco de Custo", "Custo Unitario", "Custo Medio", "Custo Real", "Valor Custo", "Custo Produto"], true)),
         sale_price: priceValue(cell(row, ["Preco Venda", "Preco de Venda", "Venda", "Valor Venda", "Venda Unitaria", "Preco Atual", "Preco Loja", "Preco Produto", "Preco Base"], true)),

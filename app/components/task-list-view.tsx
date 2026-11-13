@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { CalendarDays, CheckCircle2 } from 'lucide-react';
 import type { User as SupabaseUser } from '@supabase/supabase-js';
 import { TaskItem } from '@/app/components/task-item';
 import { getTaskCardTone, taskCardSurfaceClass, taskCardToneClasses, type TaskCardTone } from '@/lib/task-card-tone';
@@ -34,6 +35,8 @@ interface TaskListViewProps {
   tradeNoteTaskIds: string[];
   userRole: UserRole;
   currentUser: SupabaseUser | null;
+  personalTodayProgress: { completed: number; pending: number } | null;
+  personalOverdueClear: boolean;
   onToggle: (task: ProcessedTask) => void;
   onView: (task: ProcessedTask) => void;
   onEdit: (task: ProcessedTask) => void;
@@ -52,6 +55,8 @@ export function TaskListView({
   tradeNoteTaskIds,
   userRole,
   currentUser,
+  personalTodayProgress,
+  personalOverdueClear,
   onToggle,
   onView,
   onEdit,
@@ -130,6 +135,12 @@ export function TaskListView({
     const count = counts.get(marker.tone);
     return count ? [{ ...marker, count }] : [];
   });
+  const completedToday = personalTodayProgress?.completed ?? 0;
+  const hasExitingTasks = Object.values(exitingTasks).some((item) => item.tab === activeTab);
+  const showTodayStatus = activeTab === 'HOJE' && personalTodayProgress?.pending === 0 &&
+    (completedToday > 0 || displayTasks.length === 0);
+  const showOverdueStatus = activeTab === 'ATRASADOS' && personalOverdueClear;
+  const firstName = profiles.find((profile) => profile.id === currentUser?.id)?.full_name?.trim().split(/\s+/)[0];
 
   return (
     <div className="mx-auto w-full max-w-[1180px] space-y-5 px-2 pt-12 sm:px-[30px]">
@@ -143,6 +154,28 @@ export function TaskListView({
         ))}
         </div>
       </div>, legendTarget)}
+      {!hasExitingTasks && (showTodayStatus || showOverdueStatus) && (
+        <div role="status" className="mx-auto max-w-md px-4 py-8 text-center sm:py-12">
+          {showOverdueStatus ? (
+            <>
+              <CheckCircle2 aria-hidden="true" className="mx-auto mb-3 size-10 text-emerald-600 dark:text-emerald-400" />
+              <h2 className="text-xl font-bold text-slate-900">Sem atrasos{firstName ? `, ${firstName}` : ''}!</h2>
+              <p className="mt-1 text-sm text-slate-600">Você não tem tarefas atrasadas.</p>
+            </>
+          ) : completedToday > 0 ? (
+            <>
+              <CheckCircle2 aria-hidden="true" className="mx-auto mb-3 size-10 text-emerald-600 dark:text-emerald-400" />
+              <h2 className="text-xl font-bold text-slate-900">Tudo em dia{firstName ? `, ${firstName}` : ''}!</h2>
+              <p className="mt-1 text-sm text-slate-600">Você concluiu {completedToday === 1 ? 'sua tarefa de hoje' : `suas ${completedToday} tarefas de hoje`}. Bom trabalho!</p>
+            </>
+          ) : (
+            <>
+              <CalendarDays aria-hidden="true" className="mx-auto mb-3 size-8 text-slate-500" />
+              <h2 className="text-lg font-semibold text-slate-900">Nenhuma tarefa para hoje</h2>
+            </>
+          )}
+        </div>
+      )}
       {displayTasks.map((task) => {
         const isExiting = exitingTasks[task.id]?.tab === activeTab;
 

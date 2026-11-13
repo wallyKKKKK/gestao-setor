@@ -27,6 +27,18 @@ export type QuotationOrder = {
 export type SettlementRound = { id: string; title: string; draft_revision: number; buyer_items: BuyerItem[]; supplier_items: SupplierItem[] };
 export type SettlementRecord = { revision: number; decisions: SettlementDecisions; orders: QuotationOrder[] | null; closed_at: string | null };
 
+export function groupQuotationOrderByBranch(order: QuotationOrder, branchNames: ReadonlyMap<string, string>) {
+  const branches = new Map<string, { cnpj: string; name: string; totalCents: number; lines: OrderLine[] }>();
+  for (const line of order.lines) {
+    const cnpj = line.branchCnpj.replace(/\D/g, '') || line.branchCnpj;
+    const branch = branches.get(cnpj) ?? { cnpj, name: branchNames.get(cnpj) || cnpj, totalCents: 0, lines: [] };
+    branch.totalCents += line.totalCents;
+    branch.lines.push(line);
+    branches.set(cnpj, branch);
+  }
+  return [...branches.values()].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR', { numeric: true }) || a.cnpj.localeCompare(b.cnpj));
+}
+
 const asObject = (value: unknown): Record<string, unknown> => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Dados de apuração inválidos.');
   return value as Record<string, unknown>;

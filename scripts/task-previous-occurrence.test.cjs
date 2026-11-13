@@ -36,7 +36,7 @@ function load(file) {
 }
 
 const { getPreviousIncompleteOccurrence, getLastOccurrence } = load('lib/task-recurrence.ts');
-const { weeklyTaskAdvanceBlockedReason, processTasks, filterTasks } = load('lib/task-selectors.ts');
+const { getPersonalTodayProgress, hasPersonalOverdueTasks, weeklyTaskAdvanceBlockedReason, processTasks, filterTasks } = load('lib/task-selectors.ts');
 const base = {
   id: 'test', title: 'Conferir estoque', notes: '', assigned_to: 'user', category: 'Geral',
   status: 'pendente', last_done_date: null, repeat_days: 'ter', repeat_interval: 1,
@@ -44,6 +44,72 @@ const base = {
   created_at: '2026-09-01T12:00:00-03:00', sector: 'Geral',
   schedule_override_date: null, schedule_override_type: null, priority: 'normal', workflow_status: 'pendente',
 };
+
+test('personal daily progress includes completed one-offs and advanced tasks, but ignores team, meetings and older completions', () => {
+  const today = '2026-10-27';
+  const tasks = [
+    { ...base, id: 'recurring', last_done_date: today },
+    { ...base, id: 'advanced', repeat_days: 'sex', last_done_date: today },
+    { ...base, id: 'one-off', is_one_off: true, last_done_date: today, archived_at: `${today}T12:00:00Z` },
+    { ...base, id: 'older', is_one_off: true, last_done_date: '2026-10-26', archived_at: '2026-10-26T12:00:00Z' },
+    { ...base, id: 'team', assigned_to: 'other' },
+    { ...base, id: 'meeting', category: 'Reunião' },
+  ];
+  const progress = (rows, user = 'user') => ({ ...getPersonalTodayProgress(processTasks(rows, today), rows, user, today) });
+
+  assert.deepEqual(progress(tasks), { completed: 3, pending: 0 });
+  assert.deepEqual(progress(tasks, 'unknown'), { completed: 0, pending: 0 });
+  assert.deepEqual(progress([...tasks, { ...base, id: 'new' }]), { completed: 3, pending: 1 });
+  assert.deepEqual(progress(tasks.map((task) => task.id === 'recurring' ? { ...task, last_done_date: null } : task)), { completed: 2, pending: 1 });
+});
+
+test('Hoje distinguishes an empty schedule from a completed personal day', () => {
+  const React = require('react');
+  const { renderToStaticMarkup } = require('react-dom/server');
+  const { TaskListView } = load('app/components/task-list-view.tsx');
+  const render = (personalTodayProgress, activeTab = 'HOJE', tasks = []) => renderToStaticMarkup(React.createElement(TaskListView, {
+    activeTab, tasks, profiles: [{ id: 'user', full_name: 'Wally Lohan' }], tradeNoteTaskIds: [],
+    currentUser: { id: 'user' }, personalTodayProgress,
+  }));
+
+  const teamTasks = processTasks([{ ...base, title: 'Tarefa da equipe', assigned_to: 'other' }]);
+  const done = render({ completed: 2, pending: 0 }, 'HOJE', teamTasks);
+  assert.match(done, /Tudo em dia, Wally!/);
+  assert.match(done, /suas 2 tarefas de hoje/);
+  assert.match(done, /Tarefa da equipe/i);
+  assert.match(render({ completed: 0, pending: 0 }), /Nenhuma tarefa para hoje/);
+  assert.doesNotMatch(render({ completed: 2, pending: 1 }), /Tudo em dia|Nenhuma tarefa/);
+  assert.doesNotMatch(render(null), /Tudo em dia|Nenhuma tarefa/);
+  assert.doesNotMatch(render({ completed: 2, pending: 0 }, 'Todas'), /Tudo em dia/);
+});
+
+test('Atrasados shows personal status without hiding overdue tasks from the team', () => {
+  const React = require('react');
+  const { renderToStaticMarkup } = require('react-dom/server');
+  const { TaskListView } = load('app/components/task-list-view.tsx');
+  const today = '2026-10-27';
+  const overdue = { ...base, is_one_off: true, repeat_days: '', due_date: '2026-10-26' };
+  const tasks = processTasks([
+    { ...overdue, id: 'team', title: 'Atraso da equipe', assigned_to: 'other' },
+    { ...overdue, id: 'meeting', category: 'Reunião' },
+    { ...overdue, id: 'completed', last_done_date: today },
+    { ...base, id: 'today' },
+  ], today);
+  const render = (personalOverdueClear, visibleTasks, activeTab = 'ATRASADOS') => renderToStaticMarkup(React.createElement(TaskListView, {
+    activeTab, tasks: visibleTasks, profiles: [{ id: 'user', full_name: 'Wally Lohan' }], tradeNoteTaskIds: [],
+    currentUser: { id: 'user' }, personalTodayProgress: null, personalOverdueClear,
+  }));
+
+  assert.equal(hasPersonalOverdueTasks(tasks, 'user', today), false);
+  const visible = filterTasks({ tasks, activeTab: 'ATRASADOS', filterUsers: [], userRole: 'admin', userSector: 'Geral', searchTerm: '' });
+  const clear = render(true, visible);
+  assert.match(clear, /Sem atrasos, Wally!/);
+  assert.match(clear, /Atraso da equipe/i);
+  const hasOverdue = hasPersonalOverdueTasks([...tasks, ...processTasks([overdue], today)], 'user', today);
+  assert.equal(hasOverdue, true);
+  assert.doesNotMatch(render(!hasOverdue, []), /Sem atrasos/);
+  assert.doesNotMatch(render(true, [], 'HOJE'), /Sem atrasos/);
+});
 
 test('weekly task identifies previous date, including when nothing was ever completed', () => {
   assert.equal(getLastOccurrence(base), '2026-10-27');

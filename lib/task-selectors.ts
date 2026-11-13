@@ -73,9 +73,7 @@ function compareFlowTasks(left: ProcessedTask, right: ProcessedTask) {
   return right.created_at.localeCompare(left.created_at) || left.title.localeCompare(right.title, "pt-BR");
 }
 
-export function processTasks(tasks: Task[]): ProcessedTask[] {
-  const today = getTodayStr();
-
+export function processTasks(tasks: Task[], today = getTodayStr()): ProcessedTask[] {
   return tasks.filter((task) => !task.archived_at).map((task) => {
     const baseLastOcc = getLastOccurrence(task);
     const baseNextOcc = getNextOccurrence(task);
@@ -114,6 +112,37 @@ export function processTasks(tasks: Task[]): ProcessedTask[] {
   });
 }
 
+export function getPersonalTodayProgress(
+  tasks: ProcessedTask[],
+  rawTasks: Task[],
+  userId: string,
+  today: string,
+) {
+  const isPersonalTask = (task: Task) => task.assigned_to === userId && task.category !== "Reunião";
+  let completed = 0;
+  let pending = 0;
+
+  for (const task of tasks) {
+    if (!isPersonalTask(task)) continue;
+    if (task.lastOcc === today && !task.isDoneToday) pending++;
+    else if (task.last_done_date === today || (task.lastOcc === today && task.isDoneToday)) completed++;
+  }
+
+  for (const task of rawTasks) {
+    if (task.archived_at && task.is_one_off && task.last_done_date === today && isPersonalTask(task)) completed++;
+  }
+
+  return { completed, pending };
+}
+
+function isOverdueTask(task: ProcessedTask, today: string) {
+  return !task.isDoneToday && task.lastOcc < today;
+}
+
+export function hasPersonalOverdueTasks(tasks: ProcessedTask[], userId: string, today: string) {
+  return tasks.some((task) => task.assigned_to === userId && task.category !== "Reunião" && isOverdueTask(task, today));
+}
+
 export function filterTasks({
   tasks,
   activeTab,
@@ -148,7 +177,7 @@ export function filterTasks({
     if (userRole === "membro" && !GLOBAL_MEMBER_TABS.includes(activeTab) && task.assigned_to !== userId) return false;
     if (filterUsers.length > 0 && !filterUsers.includes(task.assigned_to)) return false;
 
-    if (activeTab === "ATRASADOS") return !task.isDoneToday && task.lastOcc < today;
+    if (activeTab === "ATRASADOS") return isOverdueTask(task, today);
     if (activeTab === "HOJE") return task.lastOcc === today && !task.isDoneToday;
     if (activeTab === "SEMANA") return true;
     if (activeTab === "Minhas") return task.assigned_to === userId;

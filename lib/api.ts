@@ -157,14 +157,16 @@ export async function fetchCurrentProfile(userId: string) {
   return data as Profile;
 }
 
-export async function fetchTasks() {
+export async function fetchTasks(includeCompletedOn?: string) {
   const { data, error } = await supabase
     .from("tasks")
     .select("*")
     .order("created_at", { ascending: false });
 
   if (error) throw error;
-  return ((data || []) as Task[]).filter((task) => !task.archived_at);
+  return ((data || []) as Task[]).filter((task) => !task.archived_at || (
+    includeCompletedOn && task.is_one_off && task.last_done_date === includeCompletedOn
+  ));
 }
 
 export async function fetchTaskHistory() {
@@ -540,6 +542,8 @@ export async function deletePricingProduct(productId: string) {
 
 
 export interface ExpiringDiscountRuleInput {
+  rule_type?: NonNullable<ExpiringDiscountRule['rule_type']>;
+  skip_if_demand_covers_balance?: boolean;
   id?: string;
   name: string;
   scope_type: ExpiringRuleScopeType;

@@ -122,6 +122,17 @@ test('API persists both new price types and rejects invalid percentages', async 
   }
 });
 
+test('API persists inclusive day ranges and the optional monthly demand condition', async () => {
+  const api = route();
+  assert.equal((await api.post({ scope_type: 'validity', min_days_to_expire: 31, max_days_to_expire: 89, skip_if_demand_covers_balance: true })).status, 200);
+  assert.equal(api.writes[0].skip_if_demand_covers_balance, true);
+  assert.equal(api.writes[0].min_days_to_expire, 31);
+  assert.equal(api.writes[0].max_days_to_expire, 89);
+  for (const [min_days_to_expire, max_days_to_expire] of [[-1, 30], [31, 30], [0, 31.5], [null, 30], [0, '']]) {
+    assert.equal((await api.post({ scope_type: 'validity', min_days_to_expire, max_days_to_expire })).status, 400);
+  }
+});
+
 test('API saves structured offers and rejects impossible or unordered quantities', async () => {
   const api = route();
   const buyPay = offer_config => api.post({ scope_value: 'A', discount_type: 'buy_pay', offer_config });
@@ -133,4 +144,13 @@ test('API saves structured offers and rejects impossible or unordered quantities
   assert.equal(api.writes.at(-1).offer_config.tiers[0].value, 5.1234);
   assert.equal((await quantity([{ quantity: 2, value: 5 }, { quantity: 1, value: 10 }])).status, 400);
   assert.equal((await quantity([{ quantity: 1, value: 101 }])).status, 400);
+});
+
+test('API stores rule type separately from the selected filter', async () => {
+  const api = route();
+  assert.equal((await api.post({ rule_type: 'general', scope_values: ['DOVE'] })).status, 200);
+  assert.equal(api.writes[0].rule_type, 'general');
+  assert.equal(api.writes[0].scope_type, 'manufacturer');
+  assert.equal((await api.post({ rule_type: 'specific', scope_type: 'validity' })).status, 400);
+  assert.equal((await api.post({ rule_type: 'unknown', scope_value: 'A' })).status, 400);
 });

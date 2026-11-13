@@ -66,6 +66,13 @@ export async function POST(request: Request) {
     const body = await request.json();
     const requestedScopeType = String(body.scope_type || "category");
     const scopeType = allowedScopeTypes.has(requestedScopeType) ? requestedScopeType : "category";
+    const ruleType = body.rule_type;
+    if (ruleType !== undefined && ruleType !== 'general' && ruleType !== 'specific') {
+      return NextResponse.json({ error: 'Tipo de regra inválido.' }, { status: 400 });
+    }
+    if (ruleType === 'specific' && scopeType === 'validity') {
+      return NextResponse.json({ error: 'Uma regra específica precisa de um filtro de produto, fabricante, classificação ou outro grupo.' }, { status: 400 });
+    }
     const requestedDiscountType = String(body.discount_type || "percent");
     if (!Object.prototype.hasOwnProperty.call(expiringA7Kind, requestedDiscountType)) {
       return NextResponse.json({ error: "Tipo de desconto inválido." }, { status: 400 });
@@ -88,6 +95,7 @@ export async function POST(request: Request) {
     const payload = {
       name: cleanText(body.name),
       scope_type: scopeType,
+      ...(ruleType !== undefined && { rule_type: ruleType }),
       scope_value: scopeValues[0] || '',
       scope_values: scopeValues,
       discount_type: discountType,
@@ -95,6 +103,9 @@ export async function POST(request: Request) {
       offer_config: config,
       min_days_to_expire: intValue(body.min_days_to_expire, 0),
       max_days_to_expire: intValue(body.max_days_to_expire, 99999),
+      ...(body.skip_if_demand_covers_balance !== undefined && {
+        skip_if_demand_covers_balance: body.skip_if_demand_covers_balance === true,
+      }),
       priority: intValue(body.priority, 100),
       is_active: body.is_active !== false,
       created_by: auth.userId,
@@ -103,7 +114,9 @@ export async function POST(request: Request) {
     if (!payload.name || !payload.scope_value) {
       return NextResponse.json({ error: "Informe nome e valor da regra." }, { status: 400 });
     }
-    if (payload.min_days_to_expire < 0 || payload.max_days_to_expire < payload.min_days_to_expire) {
+    if ([body.min_days_to_expire, body.max_days_to_expire].some(value => value !== undefined &&
+      (value === null || value === '' || !Number.isSafeInteger(Number(value)) || Number(value) > 2147483647)) ||
+      payload.min_days_to_expire < 0 || payload.max_days_to_expire < payload.min_days_to_expire) {
       return NextResponse.json({ error: "Informe um intervalo de validade válido." }, { status: 400 });
     }
 

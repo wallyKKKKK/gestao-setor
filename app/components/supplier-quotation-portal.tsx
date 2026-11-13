@@ -2,7 +2,7 @@
 
 import { SortableTableHeader, useColumnSort } from '@/app/components/table-sort';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { CheckCircle2, FileUp, Save, Send } from 'lucide-react';
 import type { SupplierItem, SupplierProposal } from '@/lib/purchase-quotation-supplier';
 import { readSupplierPriceFile } from '@/lib/supplier-quotation-price-import';
@@ -14,6 +14,11 @@ type Invitation = {
 type OfferFields = { price: string; available: string; multiple: string; note: string; status: 'unspecified' | 'available' | 'unavailable' };
 const blankOffer: OfferFields = { price: '', available: '', multiple: '1', note: '', status: 'unspecified' };
 const fieldClass = 'w-full min-w-0 rounded-md border border-slate-200 bg-white px-2 py-2 text-sm disabled:bg-slate-50';
+const gridCell = 'border-b border-r border-slate-200 last:border-r-0';
+const editableCell = `${gridCell} focus-within:bg-emerald-50 focus-within:ring-2 focus-within:ring-inset focus-within:ring-emerald-600 dark:focus-within:bg-emerald-950`;
+const gridField = 'block h-9 w-full min-w-0 bg-transparent px-2 outline-none disabled:bg-slate-100 disabled:text-slate-500';
+const offerColumns = ['status', 'price', 'available', 'multiple', 'note'] as const;
+type OfferColumn = typeof offerColumns[number];
 const pageSize = 50;
 const number = new Intl.NumberFormat('pt-BR');
 
@@ -31,6 +36,9 @@ export function SupplierQuotationPortal() {
   const [importResult, setImportResult] = useState<{ filled: number; replaced: number; kept: number; unavailable: number; ignored: number; examples: string[] } | null>(null);
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState('');
+  const tableRef = useRef<HTMLTableElement>(null);
+  const pendingFocus = useRef<{ index: number; column: OfferColumn } | null>(null);
+  const [sortSnapshot, setSortSnapshot] = useState<Record<string, OfferFields> | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -128,7 +136,7 @@ export function SupplierQuotationPortal() {
   const visible = invite?.items.filter(item => `${item.description} ${item.ean} ${item.code}`.toLocaleLowerCase('pt-BR').includes(search.trim().toLocaleLowerCase('pt-BR'))) ?? [];
   const rowSort = useColumnSort();
   const sorted = rowSort.sortRowsBy(visible, item => {
-    const values = offers[item.id] ?? blankOffer;
+    const values = (sortSnapshot ?? offers)[item.id] ?? blankOffer;
     return ({
       Produto: item.description, 'Qtd. solicitada': item.quantity,
       Disponibilidade: { unspecified: 'Não informado', available: 'Tenho', unavailable: 'Não tenho' }[values.status],
@@ -140,8 +148,62 @@ export function SupplierQuotationPortal() {
   const readonly = busy || importing || !!invite?.submittedAt;
   const setField = (itemId: string, patch: Partial<OfferFields>) => setOffers(current => ({ ...current, [itemId]: { ...blankOffer, ...current[itemId], ...patch } }));
 
+  function focusOffer(index: number, column: OfferColumn) {
+    const control = tableRef.current?.querySelector<HTMLInputElement | HTMLSelectElement>(
+      `tr[data-offer-index="${index}"] [data-offer-column="${column}"]:not(:disabled)`,
+    );
+    control?.focus();
+    if (control instanceof HTMLInputElement) control.select();
+  }
+
+  useLayoutEffect(() => {
+    if (!pendingFocus.current) return;
+    const { index, column } = pendingFocus.current;
+    pendingFocus.current = null;
+    focusOffer(index, column);
+  }, [page]);
+
+  function navigateOffers(event: KeyboardEvent<HTMLTableElement>) {
+    const target = event.target;
+    if (readonly || event.nativeEvent.isComposing || event.ctrlKey || event.metaKey || event.altKey ||
+      !(target instanceof HTMLInputElement || target instanceof HTMLSelectElement)) return;
+    const column = target.dataset.offerColumn as OfferColumn;
+    const columnIndex = offerColumns.indexOf(column);
+    const index = Number(target.closest('tr')?.dataset.offerIndex);
+    if (columnIndex < 0 || !Number.isInteger(index)) return;
+
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      if (event.shiftKey) return;
+      const left = event.key === 'ArrowLeft';
+      if (target instanceof HTMLInputElement) {
+        const wholeValueSelected = target.selectionStart === 0 && target.selectionEnd === target.value.length;
+        const edge = left ? 0 : target.value.length;
+        if (!wholeValueSelected && (target.selectionStart !== edge || target.selectionEnd !== edge)) return;
+      }
+      const nextColumn = offerColumns[columnIndex + (left ? -1 : 1)];
+      if (!nextColumn) return;
+      event.preventDefault();
+      focusOffer(index, nextColumn);
+      return;
+    }
+
+    if (!(target instanceof HTMLInputElement) || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown' && event.key !== 'Enter')) return;
+    event.preventDefault();
+    const step = event.key === 'ArrowUp' || (event.key === 'Enter' && event.shiftKey) ? -1 : 1;
+    for (let next = index + step; next >= 0 && next < sorted.length; next += step) {
+      if (offers[sorted[next].id]?.status === 'unavailable') continue;
+      const nextPage = Math.floor(next / pageSize);
+      if (nextPage === page) focusOffer(next, column);
+      else {
+        pendingFocus.current = { index: next, column };
+        setPage(nextPage);
+      }
+      break;
+    }
+  }
+
   return (
-    <main className="mx-auto min-h-dvh max-w-6xl space-y-4 px-3 py-6 sm:px-6">
+    <main className="mx-auto min-h-dvh max-w-screen-2xl space-y-4 px-3 py-6 sm:px-6">
       <h1 className="text-xl font-bold text-slate-900">Cotação de compras</h1>
       {error && <p role="alert" className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p>}
       {!invite ? (!error && <p role="status" className="text-sm text-slate-600">Carregando cotação...</p>) : <>
@@ -180,15 +242,18 @@ export function SupplierQuotationPortal() {
             </details>}
           </div>}
           <div className="max-h-[65dvh] overflow-auto">
-            <table className="w-full min-w-[880px] text-left text-sm">
-              <thead><tr>{['Produto', 'Qtd. solicitada', 'Disponibilidade', 'Preço unitário (R$)', 'Qtd. disponível', 'Múltiplo', 'Observação'].map(label => <SortableTableHeader key={label} column={label} sort={rowSort} className={"px-2 py-2"} />)}</tr></thead>
-              <tbody>{sorted.slice(page * pageSize, (page + 1) * pageSize).map(item => {
+            <table ref={tableRef} onKeyDown={navigateOffers} className="w-full min-w-[880px] table-fixed border-separate border-spacing-0 text-left text-sm"
+              onFocusCapture={event => { if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) setSortSnapshot(current => current ?? offers); }}
+              onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget) && !pendingFocus.current) setSortSnapshot(null); }}>
+              <colgroup><col className="w-[29%]" /><col className="w-[9%]" /><col className="w-[14%]" /><col className="w-[13%]" /><col className="w-[11%]" /><col className="w-[8%]" /><col className="w-[16%]" /></colgroup>
+              <thead className="sticky top-0 z-10 bg-slate-50"><tr>{['Produto', 'Qtd. solicitada', 'Disponibilidade', 'Preço unitário (R$)', 'Qtd. disponível', 'Múltiplo', 'Observação'].map(label => <SortableTableHeader key={label} column={label} sort={rowSort} className={`${gridCell} px-2 py-2 text-xs`} />)}</tr></thead>
+              <tbody>{sorted.slice(page * pageSize, (page + 1) * pageSize).map((item, index) => {
                 const values = offers[item.id] ?? blankOffer;
-                return <tr key={item.id} className="border-t border-slate-100">
-                  <td className="min-w-48 p-2"><p className="font-semibold">{item.description}</p><p className="text-xs text-slate-500">{item.code} · {item.ean}</p></td>
-                  <td className="p-2">{number.format(item.quantity)}</td>
-                  <td className="min-w-36 p-2">
-                    <select className={fieldClass} aria-label={`Disponibilidade: ${item.description}`} value={values.status} disabled={readonly} onChange={event => {
+                return <tr key={item.id} data-offer-index={page * pageSize + index} className="odd:bg-white even:bg-slate-50 focus-within:[&>td]:border-b-emerald-500">
+                  <td className={`${gridCell} px-2 py-1`}><p className="break-words font-semibold leading-tight">{item.description}</p><p className="text-xs text-slate-500">{item.code} · {item.ean}</p></td>
+                  <td className={`${gridCell} px-2 text-center tabular-nums`}>{number.format(item.quantity)}</td>
+                  <td className={editableCell}>
+                    <select data-offer-column="status" className={gridField} aria-label={`Disponibilidade: ${item.description}`} value={values.status} disabled={readonly} onChange={event => {
                       const status = event.target.value as OfferFields['status'];
                       setField(item.id, status === 'unspecified' ? blankOffer : { status });
                     }}>
@@ -198,7 +263,7 @@ export function SupplierQuotationPortal() {
                     </select>
                   </td>
                   {([['price', 'Preço', 'decimal'], ['available', 'Quantidade disponível', 'numeric'], ['multiple', 'Múltiplo', 'numeric'], ['note', 'Observação', 'text']] as const).map(([key, label, mode]) => (
-                    <td key={key} className={`p-2 ${key === 'note' ? 'min-w-36' : 'w-28'}`}><input className={fieldClass} inputMode={mode} maxLength={key === 'note' ? 300 : 16} disabled={readonly || values.status === 'unavailable'} aria-label={`${label}: ${item.description}`} value={values.status === 'unavailable' ? '' : values[key]} onChange={event => setField(item.id, { [key]: event.target.value, status: 'available' })} /></td>
+                    <td key={key} className={editableCell}><input data-offer-column={key} className={`${gridField} ${key === 'note' ? '' : 'text-center tabular-nums'}`} inputMode={mode} maxLength={key === 'note' ? 300 : 16} disabled={readonly || values.status === 'unavailable'} aria-label={`${label}: ${item.description}`} value={values.status === 'unavailable' ? '' : values[key]} onChange={event => setField(item.id, { [key]: event.target.value, status: 'available' })} /></td>
                   ))}
                 </tr>;
               })}</tbody>

@@ -9,7 +9,7 @@ const compiled = ts.transpileModule(fs.readFileSync('lib/purchase-quotation-sett
 }).outputText;
 const exportsByFile = {};
 vm.runInNewContext(compiled, { exports: exportsByFile });
-const { assessQuotation, emptySettlement, normalizeSettlement } = exportsByFile;
+const { assessQuotation, emptySettlement, groupQuotationOrderByBranch, normalizeSettlement } = exportsByFile;
 
 const item = { id: '1', code: '123', ean: '0000123', description: 'Produto', quantity: 5 };
 const branch = { itemId: '1', branchCnpj: '0001', quantity: 2, a7Reference: 1234, cost: { unitCost: 4 } };
@@ -23,6 +23,46 @@ function invite(id, price, options = {}) {
 }
 const decision = (value, minimumApprovals = {}) => ({ items: { '1': value }, minimumApprovals });
 const clone = value => JSON.parse(JSON.stringify(value));
+
+test('closed orders group stores by CNPJ without changing original lines or totals', () => {
+  const order = { lines: [
+    { itemId: 'first', branchCnpj: '01.234.567/0001-89', totalCents: 199 },
+    { itemId: 'second', branchCnpj: '01234567000189', totalCents: 302 },
+    { itemId: 'third', branchCnpj: '01234567000260', totalCents: 410 },
+  ] };
+  const original = clone(order);
+  const groups = clone(groupQuotationOrderByBranch(order, new Map([['01234567000189', 'Castanhal II']])));
+  assert.deepEqual(groups.map(({ name, totalCents, lines }) => [name, totalCents, lines.length]), [
+    ['01234567000260', 410, 1], ['Castanhal II', 501, 2],
+  ]);
+  assert.deepEqual(order, original);
+});
+
+test('orders show supplier, representative, store subtotal and only approved lines', () => {
+  const { createElement } = require('react');
+  const { renderToStaticMarkup } = require('react-dom/server');
+  const exports = {};
+  const source = ts.transpileModule(fs.readFileSync('app/components/purchase-quotation-settlement.tsx', 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, jsx: ts.JsxEmit.ReactJSX },
+  }).outputText;
+  new Function('exports', 'require', source)(exports, name => {
+    if (name === '@/lib/purchase-quotation-settlement') return exportsByFile;
+    if (name === '@/lib/auth-headers') return {};
+    if (name === '@/app/components/table-sort') return { useColumnSort: () => ({ sortRows: rows => rows }), SortableTableHeader: ({ children }) => createElement('th', null, children) };
+    return require(name);
+  });
+  const order = { supplierId: 's1', supplierName: 'Fornecedor A', totalCents: 3250, paymentDays: 30, deliveryDays: 5, lines: [
+    { itemId: 'one', description: 'Item aprovado', branchCnpj: '01234567000189', originalQuantity: 2, quantity: 2, unitPrice: 10, totalCents: 2000 },
+    { itemId: 'two', description: 'Outro item', branchCnpj: '01234567000260', originalQuantity: 1, quantity: 1, unitPrice: 12.5, totalCents: 1250 },
+  ] };
+  const html = renderToStaticMarkup(createElement(exports.QuotationOrdersList, { orders: [order], labels: {
+    contacts: [{ id: 's1', contact: 'Maria' }], branches: [{ cnpj: '01.234.567/0001-89', name: 'Castanhal II' }],
+  }, onDownload() {} }));
+  assert.match(html, /Fornecedor A.*Total do pedido: R\$\s*32,50.*Representante: Maria/);
+  assert.match(html, /Castanhal II.*Sem retorno de faturamento.*R\$\s*20,00.*Item aprovado/);
+  assert.match(html, /Loja 01234567000260.*R\$\s*12,50.*Outro item/);
+  assert.equal((html.match(/Baixar pedido da loja/g) || []).length, 2);
+});
 
 test('ignores unavailable quantities and multiples and breaks ties by payment, then delivery', () => {
   const suppliers = [invite('low-stock', 1, { available: 4 }), invite('pack', 2, { multiple: 2 }),

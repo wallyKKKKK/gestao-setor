@@ -116,3 +116,33 @@ test('an existing quotation can accept an invite without reopening its original 
   assert.equal(inserted.round_id, round.id);
   assert.equal(inserted.user_id, 'buyer');
 });
+
+test('closed quotation detail resolves labels only for ordered stores and owner suppliers', async () => {
+  const reads = [];
+  const id = '31a1b8bf-e410-4d93-8b44-53f823ca97d4';
+  const rows = {
+    rounds: { data: { id } }, invites: { data: [] },
+    purchase_quotation_settlements: { data: { closed_at: '2026-11-10', orders: [{ supplierId: 's1', lines: [{ branchCnpj: '01234567000189' }] }] } },
+    suppliers: { data: [{ id: 's1', contact: 'Maria' }] }, pricing_branches: { data: [{ cnpj: '01.234.567/0001-89', name: 'Loja A' }] },
+  };
+  const { GET } = load('app/api/purchase-quotation/settlement/route.ts', {
+    '@/lib/purchase-quotation-workflow': workflow, '@/lib/purchase-quotation-supplier': {}, '@/lib/purchase-quotation-settlement': {},
+    '@/lib/purchase-quotation-server': {
+      inviteTable: 'invites', roundTable: 'rounds', supplierTable: 'suppliers', isQuotationUuid: value => value === id,
+      requireQuotationBuyer: async () => ({ ok: true, userId: 'buyer' }), quoteJson: Response.json,
+      quoteError: (error, status) => Response.json({ error }, { status }),
+    },
+    '@/lib/supabase-admin': { getSupabaseAdmin: () => ({ from(table) {
+      const filters = [];
+      reads.push({ table, filters });
+      const query = { then: resolve => resolve(rows[table]), maybeSingle: async () => rows[table] };
+      for (const method of ['select', 'eq', 'is', 'not', 'order', 'limit', 'in']) query[method] = (...args) => { filters.push([method, ...args]); return query; };
+      return query;
+    } }) },
+  });
+  const response = await GET(new Request(`http://localhost/api/purchase-quotation/settlement?roundId=${id}`));
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).orderLabels, { contacts: rows.suppliers.data, branches: rows.pricing_branches.data });
+  assert.deepEqual(reads.find(read => read.table === 'suppliers').filters, [['select', 'id,contact'], ['eq', 'user_id', 'buyer'], ['in', 'id', ['s1']]]);
+  assert.deepEqual(reads.find(read => read.table === 'pricing_branches').filters[1], ['in', 'cnpj', ['01234567000189', '01.234.567/0001-89']]);
+});

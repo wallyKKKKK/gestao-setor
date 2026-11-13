@@ -2,17 +2,18 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, ChevronDown, Search, X } from 'lucide-react';
+import { Check, ChevronDown, Filter, Search, X } from 'lucide-react';
 import { ruleTargetPlacement, type RuleTargetPlacement } from '@/lib/rule-target-placement';
 
 interface TargetOption { value: string; label: string }
 const normalize = (text: string) => text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLocaleLowerCase('pt-BR');
 
-export function RuleTargetFilter({ label, options, selectedValues, onChange }: {
+export function RuleTargetFilter({ label, options, selectedValues, onChange, compact = false }: {
   label: string;
   options: TargetOption[];
   selectedValues: string[];
   onChange: (values: string[]) => void;
+  compact?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -56,10 +57,11 @@ export function RuleTargetFilter({ label, options, selectedValues, onChange }: {
   };
 
   return <div className="relative min-w-0">
+    {compact ? <button ref={trigger} type="button" aria-label={`Filtrar ${label}: ${summary}`} aria-haspopup="dialog" aria-expanded={open} title={`Filtrar ${label}: ${summary}`} onClick={() => { setDraft([...selectedValues]); setQuery(''); positionPanel(); setOpen(true); }} className={`grid size-5 shrink-0 place-items-center rounded border ${selectedValues.length ? 'border-amber-500 bg-amber-100 text-amber-900' : 'border-slate-200 text-slate-500 hover:text-slate-900'}`}><Filter size={12} /></button> :
     <button ref={trigger} type="button" aria-haspopup="dialog" aria-expanded={open} onClick={() => { setDraft([...selectedValues]); setQuery(''); positionPanel(); setOpen(true); }} title={summary}
       className={`flex min-h-12 w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left ${selectedValues.length ? 'border-amber-400 bg-amber-50 text-amber-800' : 'border-slate-200 bg-white text-slate-700'}`}>
       <span className="min-w-0"><span className="block text-[9px] font-bold uppercase text-slate-500">{label}</span><span className="block truncate text-xs font-semibold">{summary}</span></span><ChevronDown size={16} className="shrink-0" />
-    </button>
+    </button>}
     {open && createPortal(<>
       <div className="fixed inset-0 z-[310]" onClick={() => setOpen(false)} />
       <div role="dialog" data-rule-target-popup aria-label={`Selecionar ${label.toLowerCase()}`} style={placement} className="fixed z-[311] flex flex-col overflow-hidden rounded-lg border border-slate-200 bg-white p-3 text-slate-800 shadow-xl">

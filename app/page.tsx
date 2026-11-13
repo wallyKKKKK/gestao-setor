@@ -53,7 +53,7 @@ import { supabase } from '@/lib/supabase'
 import { getAppPermissions, getPermissionDeniedMessage, isPerfumePurchasingSector, isPricingSector } from '@/lib/permissions'
 import type { RealtimeChannel, User as SupabaseUser } from '@supabase/supabase-js'
 import { addDaysToDateStr, formatToBR, getTodayStr, parseMonthlyWeekdayRepeat } from '@/lib/task-recurrence'
-import { filterTasks, getSectorStats, getTaskStats, processTasks } from '@/lib/task-selectors'
+import { filterTasks, getPersonalTodayProgress, getSectorStats, getTaskStats, hasPersonalOverdueTasks, processTasks } from '@/lib/task-selectors'
 import type { CreateMeetingInput } from '@/lib/api'
 import { DEFAULT_TASK_PRIORITY } from '@/lib/task-priority'
 import { MARGIN_FLOW_CATEGORY, canUseMarginFlowTasks, marginFlowTaskTitle, parseMarginFlowTaskNotes } from '@/lib/margin-flow-task'
@@ -249,6 +249,7 @@ export default function App() {
   const [userRole, setUserRole] = useState<UserRole>('membro')
   const [profiles, setProfiles] = useState<Profile[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
+  const [tasksLoaded, setTasksLoaded] = useState(false)
   const [tradeNoteTaskIds, setTradeNoteTaskIds] = useState<string[]>([])
   const [history, setHistory] = useState<TaskHistory[]>([])
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([])
@@ -535,7 +536,14 @@ useEffect(() => {
   return () => window.removeEventListener('keydown', handleGlobalShortcut);
 }, []);
 
-  const processedTasks = useMemo(() => processTasks(tasks), [tasks]);
+  const today = getTodayStr();
+  const processedTasks = useMemo(() => processTasks(tasks, today), [tasks, today]);
+  const personalTodayProgress = activeTab === 'HOJE' && tasksLoaded && user
+    ? getPersonalTodayProgress(processedTasks, tasks, user.id, today)
+    : null;
+  const personalOverdueClear = activeTab === 'ATRASADOS' && tasksLoaded && user
+    ? !hasPersonalOverdueTasks(processedTasks, user.id, today)
+    : false;
 
   const fetchProfiles = useCallback(async () => {
     const data = await fetchProfilesApi();
@@ -544,15 +552,16 @@ useEffect(() => {
 
   const fetchTradeNoteIndicators = useCallback(async (taskRows: Task[]) => {
     const tradeTaskIds = taskRows
-      .filter((task) => task.category === 'Trade')
+      .filter((task) => !task.archived_at && task.category === 'Trade')
       .map((task) => task.id);
     const ids = await fetchTradeTaskNoteTaskIds(tradeTaskIds).catch(() => []);
     setTradeNoteTaskIds(ids);
   }, []);
 
   const fetchTasks = useCallback(async () => {
-    const data = await fetchTasksApi();
+    const data = await fetchTasksApi(getTodayStr());
     setTasks(data);
+    setTasksLoaded(true);
     await fetchTradeNoteIndicators(data);
   }, [fetchTradeNoteIndicators]);
 
@@ -923,7 +932,6 @@ const toggleDayInEdit = (day: string) => {
       schedule_override_type: null,
       archived_at: shouldArchive ? new Date().toISOString() : t.archived_at,
     } : t)
-    .filter((t) => !t.archived_at)
   );
 
   if (!isCurrentlyDone) {
@@ -1998,6 +2006,8 @@ const toggleMeetingComplete = useCallback(async (task: ProcessedTask) => {
           tradeNoteTaskIds={tradeNoteTaskIds}
           userRole={userRole}
           currentUser={user}
+          personalTodayProgress={personalTodayProgress}
+          personalOverdueClear={personalOverdueClear}
           onToggle={toggleComplete}
           onView={setViewingTask}
           onEdit={openEditTaskModal}

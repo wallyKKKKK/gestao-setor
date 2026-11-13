@@ -8,7 +8,7 @@ export function useColumnSort() {
   const [rules, setRules] = useState<ReallocationSortRule<string>[]>([]);
   return {
     rules,
-    toggle: (column: string) => setRules(current => nextReallocationSort(current, column)),
+    toggle: (column: string, direction?: 'asc' | 'desc') => setRules(current => nextReallocationSort(current, column, direction)),
     clear: () => setRules([]),
     sortRows: <Row,>(rows: Row[], getValue: (row: Row, column: string) => string | number | null | undefined) =>
       sortReallocationRows(rows, rules, (row, column) => getValue(row, column) ?? ''),

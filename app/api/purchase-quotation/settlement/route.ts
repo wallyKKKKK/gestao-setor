@@ -1,5 +1,5 @@
 import { getSupabaseAdmin } from '@/lib/supabase-admin';
-import { inviteTable, isQuotationUuid, quoteError, quoteJson, readQuotationJson, requireQuotationBuyer, roundTable } from '@/lib/purchase-quotation-server';
+import { inviteTable, isQuotationUuid, quoteError, quoteJson, readQuotationJson, requireQuotationBuyer, roundTable, supplierTable } from '@/lib/purchase-quotation-server';
 import { assessQuotation, normalizeSettlement, type SettlementRound, type SettlementInvite, type SettlementRecord } from '@/lib/purchase-quotation-settlement';
 import { quotationObject } from '@/lib/purchase-quotation-supplier';
 import { quotationInviteProgress, quotationListPageSize } from '@/lib/purchase-quotation-workflow';
@@ -7,6 +7,26 @@ import { quotationInviteProgress, quotationListPageSize } from '@/lib/purchase-q
 export const runtime = 'nodejs';
 const table = 'purchase_quotation_settlements';
 const columns = 'revision,decisions,orders,closed_at';
+
+async function loadOrderLabels(orders: NonNullable<SettlementRecord['orders']>, owner: string) {
+  const db = getSupabaseAdmin();
+  const supplierIds = [...new Set(orders.map(order => order.supplierId))];
+  const branchIds = [...new Set(orders.flatMap(order => order.lines.flatMap(line => {
+    const cnpj = line.branchCnpj.replace(/\D/g, '');
+    return cnpj.length === 14 ? [cnpj, cnpj.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5')] : [];
+  })))];
+  const contacts: Array<{ id: string; contact: string }> = [];
+  const branches: Array<{ cnpj: string; name: string }> = [];
+  for (let offset = 0; offset < supplierIds.length; offset += 100) {
+    const { data, error } = await db.from(supplierTable).select('id,contact').eq('user_id', owner).in('id', supplierIds.slice(offset, offset + 100));
+    if (!error && data) contacts.push(...data);
+  }
+  for (let offset = 0; offset < branchIds.length; offset += 100) {
+    const { data, error } = await db.from('pricing_branches').select('cnpj,name').in('cnpj', branchIds.slice(offset, offset + 100)).order('is_active', { ascending: false }).order('code');
+    if (!error && data) branches.push(...data);
+  }
+  return { contacts, branches };
+}
 
 async function load(id: string, owner: string) {
   const db = getSupabaseAdmin();
@@ -70,7 +90,10 @@ export async function GET(request: Request) {
     }
     if (!isQuotationUuid(id)) return quoteError('Cotação inválida.', 400);
     const data = await load(id, auth.userId);
-    return data ? quoteJson(data) : quoteError('Cotação não encontrada.', 404);
+    if (!data) return quoteError('Cotação não encontrada.', 404);
+    return quoteJson(data.settlement?.closed_at && data.settlement.orders
+      ? { ...data, orderLabels: await loadOrderLabels(data.settlement.orders, auth.userId) }
+      : data);
   } catch {
     return quoteError('Não foi possível carregar a apuração.', 500);
   }
@@ -111,6 +134,7 @@ export async function POST(request: Request) {
       if (!assessment.orders.length) return quoteError('Selecione ao menos um item para comprar.', 422);
       orders = assessment.orders;
     }
+    const orderLabels = orders ? await loadOrderLabels(orders, auth.userId) : undefined;
     const db = getSupabaseAdmin();
     const values = {
       decisions, orders, closed_at: close ? new Date().toISOString() : null, revision: (revision ?? 0) + 1,
@@ -124,7 +148,7 @@ export async function POST(request: Request) {
       return quoteError('A cotação mudou enquanto você salvava. Recarregue e confira os convites e a apuração.', 409);
     }
     if (result.error) throw new Error('save');
-    return quoteJson({ settlement: result.data });
+    return quoteJson({ settlement: result.data, orderLabels });
   } catch {
     return quoteError('Não foi possível salvar a apuração.', 500);
   }

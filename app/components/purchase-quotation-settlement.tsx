@@ -1,12 +1,13 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Download, LockKeyhole, RefreshCw, Save } from 'lucide-react';
+import { ChevronRight, Download, LockKeyhole, RefreshCw, Save } from 'lucide-react';
 import { getAuthHeaders } from '@/lib/auth-headers';
 import { SortableTableHeader, useColumnSort } from '@/app/components/table-sort';
-import { assessQuotation, emptySettlement, type ItemDecision, type SettlementDecisions, type SettlementInvite, type SettlementRound, type SettlementRecord, type QuotationOrder } from '@/lib/purchase-quotation-settlement';
+import { assessQuotation, emptySettlement, groupQuotationOrderByBranch, type ItemDecision, type SettlementDecisions, type SettlementInvite, type SettlementRound, type SettlementRecord, type QuotationOrder } from '@/lib/purchase-quotation-settlement';
 
-type Detail = { round: SettlementRound; invites: SettlementInvite[]; settlement: SettlementRecord | null };
+type OrderLabels = { contacts: { id: string; contact: string }[]; branches: { cnpj: string; name: string }[] };
+type Detail = { round: SettlementRound; invites: SettlementInvite[]; settlement: SettlementRecord | null; orderLabels?: OrderLabels };
 const endpoint = '/api/purchase-quotation/settlement';
 const money = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 4 });
 const control = 'min-w-0 rounded-md border border-slate-300 bg-white px-2.5 py-2 text-xs text-slate-900';
@@ -25,15 +26,57 @@ async function request<T>(suffix = '', options: RequestInit = {}): Promise<T> {
   return data;
 }
 
-async function downloadOrder(order: QuotationOrder, index: number) {
+async function downloadOrder(order: QuotationOrder, index: number, branch?: ReturnType<typeof groupQuotationOrderByBranch>[number]) {
   const xlsx = await import('xlsx');
   const book = xlsx.utils.book_new();
-  const sheet = xlsx.utils.json_to_sheet(order.lines.map(line => ({
+  const sheet = xlsx.utils.json_to_sheet((branch?.lines ?? order.lines).map(line => ({
     Fornecedor: order.supplierName, Loja: line.branchCnpj, Código: line.code, EAN: line.ean,
     Produto: line.description, Quantidade: line.quantity, 'Preço cotado': line.unitPrice, Total: line.totalCents / 100,
   })));
   xlsx.utils.book_append_sheet(book, sheet, 'Pedido');
-  xlsx.writeFile(book, `pedido-${index + 1}.xlsx`);
+  xlsx.writeFile(book, `pedido-${index + 1}${branch ? `-loja-${branch.cnpj}` : ''}.xlsx`);
+}
+
+export function QuotationOrdersList({ orders, labels, onDownload }: {
+  orders: QuotationOrder[]; labels?: OrderLabels; onDownload: (order: QuotationOrder, index: number, branch?: ReturnType<typeof groupQuotationOrderByBranch>[number]) => void;
+}) {
+  const contacts = new Map(labels?.contacts.map(row => [row.id, row.contact]));
+  const branchNames = new Map<string, string>();
+  for (const row of labels?.branches ?? []) {
+    const cnpj = row.cnpj.replace(/\D/g, '');
+    if (row.name && !branchNames.has(cnpj)) branchNames.set(cnpj, row.name);
+  }
+  if (!orders.length) return <p className="py-5 text-slate-600">Nenhum pedido gerado nesta cotação.</p>;
+
+  return <div className="space-y-2" aria-label="Pedidos por fornecedor e loja">
+    {orders.map((order, index) => {
+      const branches = groupQuotationOrderByBranch(order, branchNames);
+      const contact = contacts.get(order.supplierId)?.trim();
+      return <details key={order.supplierId} open className="group/supplier overflow-hidden rounded-md border border-slate-200 bg-white">
+        <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-x-4 gap-y-1 bg-emerald-50 px-3 py-2 text-emerald-900 [&::-webkit-details-marker]:hidden">
+          <span className="flex min-w-0 items-center gap-2 font-bold"><ChevronRight size={16} className="shrink-0 group-open/supplier:rotate-90" aria-hidden="true" /><span className="break-words [overflow-wrap:anywhere]">{order.supplierName}</span></span>
+          <span className="whitespace-nowrap font-bold tabular-nums">Total do pedido: {money.format(order.totalCents / 100)}</span>
+        </summary>
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+          <div className="min-w-0 break-words"><p className="font-semibold">Representante: {contact || 'Não informado'}</p><p className="mt-0.5">Pagamento: {order.paymentDays ?? '—'} dias · Entrega: {order.deliveryDays ?? '—'} dias</p></div>
+          <button className={button} type="button" onClick={() => onDownload(order, index)}><Download size={14} /> Baixar pedido em Excel</button>
+        </div>
+        {branches.map(branch => <details key={branch.cnpj} className="group/branch border-t border-slate-200">
+          <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-x-4 gap-y-1 px-3 py-2 hover:bg-slate-50 [&::-webkit-details-marker]:hidden">
+            <span className="flex min-w-0 items-center gap-2"><ChevronRight size={14} className="shrink-0 text-slate-500 group-open/branch:rotate-90" aria-hidden="true" /><span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1"><strong className="break-words [overflow-wrap:anywhere]">{branch.name === branch.cnpj ? `Loja ${branch.cnpj}` : branch.name}</strong><span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-semibold text-slate-700">Sem retorno de faturamento</span></span></span>
+            <span className="whitespace-nowrap font-semibold tabular-nums">{money.format(branch.totalCents / 100)}</span>
+          </summary>
+          <div className="border-t border-slate-100 px-3 pb-3 pt-2">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-600">
+              <span>CNPJ: {branch.cnpj} · {branch.lines.length} {branch.lines.length === 1 ? 'item' : 'itens'}</span>
+              <button className={button} type="button" onClick={() => onDownload(order, index, branch)}><Download size={14} /> Baixar pedido da loja</button>
+            </div>
+            <OrderLinesTable lines={branch.lines} />
+          </div>
+        </details>)}
+      </details>;
+    })}
+  </div>;
 }
 
 export function PurchaseQuotationSettlement({ active, roundId, onClosed, onDirtyChange }: {
@@ -122,13 +165,13 @@ export function PurchaseQuotationSettlement({ active, roundId, onClosed, onDirty
     setSaving(true);
     setError('');
     try {
-      const { settlement } = await request<{ settlement: SettlementRecord }>('', {
+      const { settlement, orderLabels } = await request<{ settlement: SettlementRecord; orderLabels?: OrderLabels }>('', {
         method: 'POST', body: JSON.stringify({
           roundId, revision: detail.settlement?.revision ?? null, action, decisions,
           submittedSuppliers: respondents.map(invite => invite.supplier_id),
         }),
       });
-      setDetail({ ...detail, settlement });
+      setDetail({ ...detail, settlement, orderLabels });
       setDecisions(settlement.decisions);
       dirtyRef.current = false;
       setDirty(false);
@@ -147,14 +190,8 @@ export function PurchaseQuotationSettlement({ active, roundId, onClosed, onDirty
     {error && <p role="alert" className="rounded-md bg-red-50 p-3 text-red-800">{error}</p>}
     {loading ? <p role="status">Carregando apuração...</p> : !detail || !assessment ? !error && <p>Nenhuma cotação com convite disponível para apurar.</p> : closed ? <>
       <p className="font-semibold text-emerald-800">Cotação fechada em {new Date(closed).toLocaleString('pt-BR')}</p>
-      {detail.settlement?.orders?.map((order, index) => <details key={order.supplierId} className={section}>
-        <summary className="cursor-pointer font-semibold">{order.supplierName} · {order.lines.length} linhas · {money.format(order.totalCents / 100)}</summary>
-        <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-700">
-          <span>Pagamento: {order.paymentDays ?? '—'} dias · Entrega: {order.deliveryDays ?? '—'} dias</span>
-          <button className={button} type="button" onClick={() => void downloadOrder(order, index).catch(() => setError('Não foi possível baixar o pedido.'))}><Download size={15} /> Baixar pedido em Excel</button>
-        </div>
-        <OrderLinesTable lines={order.lines} />
-      </details>)}
+      <QuotationOrdersList orders={detail.settlement?.orders ?? []} labels={detail.orderLabels}
+        onDownload={(order, index, branch) => void downloadOrder(order, index, branch).catch(() => setError('Não foi possível baixar o pedido.'))} />
     </> : <fieldset disabled={saving} className="min-w-0 space-y-3">
       <div className="flex flex-wrap items-center gap-2">
         <input className={`${control} w-64 max-w-full`} type="search" aria-label="Pesquisar produto" placeholder="Buscar produto, código ou EAN" value={query} onChange={event => { setQuery(event.target.value); setPage(0); }} />
