@@ -851,7 +851,8 @@ export function ExpiringProductsManager() {
       case 'cost': { const value = importedPrice(item.cost_price); return value === null ? '' : money(value); }
       case 'sale': { const value = importedPrice(item.sale_price); return value === null ? '' : money(value); }
       case 'base': return base ? <strong className="font-bold">{money(base)}</strong> : '-';
-      case 'offer': return price ? <strong className="font-black text-blue-600">{money(price)}</strong> : '-';
+      case 'offer': return price ? <><strong className="font-black text-blue-600">{money(price)}</strong>{rule?.discount_type === 'cost_markup' && <p className="text-[10px] text-slate-600">Estimativa</p>}</>
+        : rule?.discount_type === 'cost_markup' ? <span title="Sem custo importado para estimar o preço">Calculado no ERP</span> : '-';
     }
   };
 

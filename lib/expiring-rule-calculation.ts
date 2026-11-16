@@ -93,7 +93,9 @@ export function classifyExpiringItem(item: ExpiringInventoryItem, sortedRules: E
     const usesSale = rule.discount_type === 'sale_percent_price';
     const importedBase = Number(usesCost ? item.cost_price : item.sale_price);
     const erpCalculated = isMarkupOffer(rule.discount_type) || isStructuredOffer(rule.discount_type);
-    const rawPrice = erpCalculated ? 0 : usesCost || usesSale
+    const markupCost = Number(item.cost_price);
+    const canEstimateMarkup = rule.discount_type === 'cost_markup' && Number.isFinite(markupCost) && markupCost > 0;
+    const rawPrice = canEstimateMarkup ? markupCost * (1 + value / 100) : erpCalculated ? 0 : usesCost || usesSale
       ? importedBase * (rule.discount_type === 'half_cost_price' ? 0.5 : value / 100)
       : rule.discount_type === 'fixed_price' ? value : basePrice * (1 - value / 100);
     const precision = rule.discount_type === 'fixed_price' || (rule.discount_type === 'cost_percent_price' && value === 100) ? 10000 : 100;
@@ -140,14 +142,16 @@ export function groupExpiringOffers(rows: ExportRow[], fileKey: (row: ExportRow)
 export function expiringPriceWarnings(row: ExportRow) {
   if (!row.rule) return [];
   const type = row.rule.discount_type;
-  if (isMarkupOffer(type) || isStructuredOffer(type) || (type === 'percent' && !(row.basePrice > 0))) {
-    return ['Preço final a conferir no ERP'];
+  const isCostMarkupEstimate = type === 'cost_markup' && row.price > 0;
+  if (!isCostMarkupEstimate && (isMarkupOffer(type) || isStructuredOffer(type) || (type === 'percent' && !(row.basePrice > 0)))) {
+    return type === 'cost_markup' ? ['Custo importado ausente ou inválido; preço final a conferir no ERP'] : ['Preço final a conferir no ERP'];
   }
   const price = type === 'percent' ? row.basePrice * (1 - row.discount / 100) : row.price;
   const comparablePrice = type === 'percent' ? Math.round(price * 100) * 100 : Math.round(price * 10000);
   const cost = Number(row.item.cost_price);
   const sale = Number(row.item.sale_price) || row.basePrice;
   return [
+    ...(isCostMarkupEstimate ? ['Estimativa pelo custo importado; preço final a conferir no ERP'] : []),
     ...(cost > 0 && comparablePrice < Math.round(cost * 10000) ? ['Abaixo do custo importado'] : []),
     ...(sale > 0 && comparablePrice >= Math.round(sale * 10000) ? ['Não reduz o preço de venda'] : []),
   ];

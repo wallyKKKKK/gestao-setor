@@ -44,7 +44,22 @@ test('TXT review separates stores for ZIP and merges identical lines without los
   assert.ok(groups[0].offers[0].warnings.includes('Abaixo do custo importado'));
   assert.equal(groupExpiringOffers([a, b, c], row => row.item.branch_code).length, 2);
   assert.ok(expiringPriceWarnings(calculate([rule({ discount_type: 'fixed_price', discount_value: 60 })])).includes('Não reduz o preço de venda'));
-  assert.ok(expiringPriceWarnings(calculate([rule({ discount_type: 'cost_markup' })])).includes('Preço final a conferir no ERP'));
+  assert.match(expiringPriceWarnings(calculate([rule({ discount_type: 'cost_markup' })]))[0], /Estimativa/);
+});
+
+test('type E estimates the offer from imported cost but exports the markup percentage', () => {
+  const markup = rule({ discount_type: 'cost_markup', discount_value: 20 });
+  const result = calculate([markup], { cost_price: 12.35, sale_price: 14 });
+  assert.equal(result.price, 14.82);
+  assert.equal(result.line, 'E|00123|||20.0000');
+  assert.ok(expiringPriceWarnings(result).includes('Não reduz o preço de venda'));
+  const missing = calculate([markup], { cost_price: 0 });
+  assert.equal(missing.price, 0);
+  assert.equal(missing.line, result.line);
+  assert.match(expiringPriceWarnings(missing)[0], /Custo importado ausente/);
+  for (const type of ['average_cost_markup', 'reference_price_markup']) {
+    assert.equal(calculate([rule({ discount_type: type, discount_value: 20 })]).price, 0);
+  }
 });
 
 test('Raio-X explains priority, exclusive targets and demand veto', () => {
